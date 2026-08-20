@@ -77,18 +77,25 @@ function parseConfig(content: string) {
 
 function getConflicts(groups: Group[], rules: Rule[]) {
   const groupNames = new Set(groups.map((group) => group.name));
-  const seen = new Map<string, Rule>();
   const conflicts: string[] = [];
   rules.forEach((rule) => {
     const key = `${rule.type},${rule.value}`;
-    const previous = seen.get(key);
-    if (previous && previous.policy !== rule.policy) conflicts.push(`${key} 同时指向「${previous.policy}」和「${rule.policy}」`);
-    else if (!previous) seen.set(key, rule);
     if (![...BUILTINS, "REJECT-DROP", "REJECT-NO-DROP"].includes(rule.policy) && !groupNames.has(rule.policy)) {
       conflicts.push(`${key} 引用了不存在的策略「${rule.policy}」`);
     }
   });
   return Array.from(new Set(conflicts));
+}
+
+function getDuplicateRuleCount(rules: Rule[]) {
+  const policiesByRule = new Map<string, Set<string>>();
+  rules.forEach((rule) => {
+    const key = `${rule.type},${rule.value}`;
+    const policies = policiesByRule.get(key) || new Set<string>();
+    policies.add(rule.policy);
+    policiesByRule.set(key, policies);
+  });
+  return Array.from(policiesByRule.values()).filter((policies) => policies.size > 1).length;
 }
 
 function replaceLine(content: string, index: number, value: string) {
@@ -145,6 +152,7 @@ export default function Home() {
 
   const parsed = useMemo(() => parseConfig(content), [content]);
   const conflicts = useMemo(() => getConflicts(parsed.groups, parsed.rules), [parsed.groups, parsed.rules]);
+  const duplicateRuleCount = useMemo(() => getDuplicateRuleCount(parsed.rules), [parsed.rules]);
   const ruleSets = useMemo(() => parsed.rules.filter((rule) => rule.type === "RULE-SET"), [parsed.rules]);
   const domainRules = useMemo(() => parsed.rules.filter((rule) => rule.type !== "RULE-SET" && rule.type !== "FINAL"), [parsed.rules]);
   const policies = useMemo(() => [...parsed.groups.map((group) => group.name), ...BUILTINS], [parsed.groups]);
@@ -397,8 +405,8 @@ export default function Home() {
         {toast && <div className="toast" onAnimationEnd={() => setToast("")}>{toast}</div>}
 
         {view === "overview" && <>
-          <div className={`notice ${conflicts.length ? "warning" : ""}`}><span>{conflicts.length ? "!" : "✓"}</span><div><strong>{conflicts.length ? `发现 ${conflicts.length} 个问题` : "配置状态正常"}</strong><p>{saveEnabled ? "已连接 GitHub，可直接编辑并保存。" : "已连接只读数据，配置写入凭据后即可在线保存。"}</p></div><button onClick={() => setView("conflicts")}>查看检查结果</button></div>
-          <section className="metrics"><article><span>国家与节点组</span><strong>{parsed.groups.filter((group) => group.items.some((item) => item.startsWith("policy-regex-filter"))).length}</strong><small>动态匹配机场节点</small></article><article><span>全部分组</span><strong>{parsed.groups.length}</strong><small>国家、服务与策略</small></article><article><span>有效规则</span><strong>{parsed.rules.length.toLocaleString()}</strong><small>按优先级顺序执行</small></article><article><span>规则冲突</span><strong className={conflicts.length ? "bad" : "ok"}>{conflicts.length}</strong><small>保存前自动检查</small></article></section>
+          <div className={`notice ${conflicts.length ? "warning" : ""}`}><span>{conflicts.length ? "!" : "✓"}</span><div><strong>{conflicts.length ? `发现 ${conflicts.length} 个问题` : "配置状态正常"}</strong><p>{conflicts.length ? "有规则引用了不存在的策略，请先处理。" : duplicateRuleCount ? `机场原始规则有 ${duplicateRuleCount} 处重叠，按文件顺序执行，不影响保存。` : saveEnabled ? "已连接 GitHub，可直接编辑并保存。" : "已连接只读数据，配置写入凭据后即可在线保存。"}</p></div><button onClick={() => setView("conflicts")}>查看检查结果</button></div>
+          <section className="metrics"><article><span>国家与节点组</span><strong>{parsed.groups.filter((group) => group.items.some((item) => item.startsWith("policy-regex-filter"))).length}</strong><small>动态匹配机场节点</small></article><article><span>全部分组</span><strong>{parsed.groups.length}</strong><small>国家、服务与策略</small></article><article><span>有效规则</span><strong>{parsed.rules.length.toLocaleString()}</strong><small>按优先级顺序执行</small></article><article><span>规则冲突</span><strong className={conflicts.length ? "bad" : "ok"}>{conflicts.length}</strong><small>{duplicateRuleCount ? `另有 ${duplicateRuleCount} 处重叠提示` : "保存前自动检查"}</small></article></section>
           <section className="panel"><div className="panelHead"><div><h2>常用分组</h2><p>节点筛选和分流规则分别管理，但会在这里汇总显示。</p></div><button className="textButton" onClick={() => setView("groups")}>查看全部 →</button></div><div className="groupGrid">{parsed.groups.filter((group) => ["德国", "Google", "PayPal"].includes(group.name)).map((group, i) => <GroupCard key={group.name} group={group} ruleCount={parsed.rules.filter((rule) => rule.policy === group.name).length} tone={["mint", "blue", "amber"][i]} onEdit={() => editGroup(group)} onRules={() => showGroupRules(group)} />)}</div></section>
           <section className="panel compact"><div className="panelHead"><div><h2>工作方式</h2><p>每次保存先检查冲突，再生成一条可追溯的 GitHub 提交。</p></div></div><div className="activity"><span className="activityIcon">↻</span><div><strong>在线配置与小火箭保持同一来源</strong><p>保存后在设备上更新配置即可生效</p></div><a href={sourceUrl} target="_blank" rel="noreferrer">打开仓库</a></div></section>
         </>}
@@ -435,7 +443,7 @@ export default function Home() {
 
         {view === "clash" && <ClashSubscription />}
 
-        {view === "conflicts" && <section className="panel audit"><div className={`auditMark ${conflicts.length ? "warn" : ""}`}>{conflicts.length ? "!" : "✓"}</div><h2>{conflicts.length ? "需要处理后才能保存" : "没有发现相反策略冲突"}</h2><p>{conflicts.length ? "以下规则需要确认优先级或策略。" : "代理分组引用、重复规则与 FINAL 位置均通过检查。"}</p>{conflicts.length > 0 && <ul>{conflicts.map((item) => <li key={item}>{item}</li>)}</ul>}<button className="ghost" onClick={() => setPreview(true)}>查看原始配置</button></section>}
+        {view === "conflicts" && <section className="panel audit"><div className={`auditMark ${conflicts.length ? "warn" : ""}`}>{conflicts.length ? "!" : "✓"}</div><h2>{conflicts.length ? "需要处理后才能保存" : "配置检查通过"}</h2><p>{conflicts.length ? "以下规则需要确认策略名称。" : duplicateRuleCount ? `机场规则中有 ${duplicateRuleCount} 处重复匹配，这是机场原始配置的正常重叠，按规则顺序执行，不阻止保存。` : "代理分组引用与规则顺序均通过检查。"}</p>{conflicts.length > 0 && <ul>{conflicts.map((item) => <li key={item}>{item}</li>)}</ul>}<button className="ghost" onClick={() => setPreview(true)}>查看原始配置</button></section>}
       </section>
 
       {editor && <EditorModal editor={editor} setEditor={setEditor} policies={policies} countryGroups={parsed.groups.filter((group) => COUNTRY_GROUP_NAMES.has(group.name)).map((group) => group.name)} onSubmit={submitEditor} onImportCatalog={importCatalogRules} />}
