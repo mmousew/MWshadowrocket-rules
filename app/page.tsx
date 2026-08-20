@@ -241,6 +241,13 @@ export default function Home() {
     if (target) reorderGroup(group.name, target.name);
   }
 
+  function moveGroupByOffset(group: Group, offset: -1 | 1) {
+    if (query) return;
+    const position = parsed.groups.findIndex((item) => item.name === group.name);
+    const target = parsed.groups[position + offset];
+    if (target) reorderGroup(group.name, target.name);
+  }
+
   function submitEditor(event: FormEvent) {
     event.preventDefault();
     if (!editor) return;
@@ -345,10 +352,14 @@ export default function Home() {
 
         {(view === "groups" || view === "rules" || view === "sets") && <>
           <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label><span>{view === "groups" ? filteredGroups.length : filteredRules.length} 项</span></div>
-          {view === "groups" ? <><p className={`dragHelp ${query ? "disabled" : ""}`}>{query ? "清空搜索后可以拖拽调整完整分组顺序" : "按住左侧拖动排序；键盘可用 ↑ ↓ 调整"}</p><div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); return <div
+          {view === "groups" ? <><p className={`dragHelp ${query ? "disabled" : ""}`}>{query ? "清空搜索后可以拖拽调整完整分组顺序" : "按住左侧或整行拖动排序；也可以用上移/下移"}</p><div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); return <div
             className={`listRow groupListRow ${draggingGroup === group.name ? "dragging" : ""} ${dragTargetGroup === group.name && draggingGroup !== group.name ? "dropTarget" : ""}`}
             data-group-name={group.name}
             key={`${group.index}-${group.name}`}
+            onPointerDown={(event) => { if ((event.target as HTMLElement).closest("button")) return; startTouchGroupDrag(event, group); }}
+            onPointerMove={moveTouchGroupDrag}
+            onPointerUp={() => finishGroupDrag()}
+            onPointerCancel={() => finishGroupDrag("", "")}
             onDragOver={(event) => { if (!dragSourceRef.current) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; dragTargetRef.current = group.name; setDragTargetGroup(group.name); }}
             onDrop={(event) => { event.preventDefault(); finishGroupDrag(event.dataTransfer.getData("text/plain") || dragSourceRef.current, group.name); }}
           ><button
@@ -365,7 +376,7 @@ export default function Home() {
             onPointerUp={() => finishGroupDrag()}
             onPointerCancel={() => finishGroupDrag("", "")}
             onKeyDown={(event) => moveGroupWithKeyboard(event, group)}
-          ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><span className="pill">{linked.length} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div></>
+          ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div><span className="pill">{linked.length} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div></>
           : <div className="listPanel">{filteredRules.slice(0, 250).map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}{filteredRules.length > 250 && <div className="listNote">结果较多，仅显示前 250 项，请使用搜索缩小范围。</div>}</div>}
         </>}
 

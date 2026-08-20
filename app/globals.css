@@ -201,9 +201,17 @@ button,input,select,textarea { max-width:100%; }
 .listRow>button.dragHandle:active { cursor:grabbing; }
 .listRow>button.dragHandle:focus-visible { outline:2px solid #4d9777; outline-offset:2px; }
 .listRow>button.dragHandle:disabled { color:#c2cac5; cursor:not-allowed; background:transparent; }
+.groupListRow { cursor:grab; }
+.groupListRow:active { cursor:grabbing; }
+.groupListRow .reorderButtons { display:flex; flex:0 0 auto; align-items:center; gap:4px; }
+.groupListRow .reorderButton { flex:0 0 30px; min-width:30px; width:30px; height:30px; padding:0; border:1px solid #d6e2da; border-radius:8px; color:#276f53; background:#f5faf7; box-shadow:none; font-size:16px; line-height:1; }
+.groupListRow .reorderButton:hover:not(:disabled) { border-color:#85b89d; color:#155b40; background:#e6f4eb; transform:none; }
+.groupListRow .reorderButton:disabled { color:#b9c4bd; background:#f7f9f7; cursor:not-allowed; }
+.groupListRow .reorderButton:focus-visible { outline:2px solid #4d9777; outline-offset:2px; }
 
 @media(max-width:760px){
   .groupListRow .dragHandle { flex:0 0 34px; min-width:34px; }
   .groupListRow .rowMain { width:calc(100% - 44px); min-width:calc(100% - 44px); }
+  .groupListRow .reorderButtons { width:100%; margin-left:42px; }
   .groupListRow>button:not(.dragHandle) { flex:1 1 30%; }
 }
