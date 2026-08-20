@@ -537,7 +537,7 @@ function ClashSubscription() {
   }
 
   function shadowrocketUrl(value: string) {
-    return `${value}${value.includes("?") ? "&" : "?"}format=shadowrocket`;
+    return value.replace("/api/clash/", "/api/shadowrocket/");
   }
 
   async function showQr(value: string, label: string) {
