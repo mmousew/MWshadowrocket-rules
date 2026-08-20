@@ -165,6 +165,13 @@ button,input,select,textarea { max-width:100%; }
 .clashLinkCard .clashActions { flex-wrap:wrap; margin:10px 0 0; }
 .clashLinkCard .clashActions button,.clashLinkCard .clashActions a { min-height:34px; padding:8px 11px; font-size:11px; }
 .clashLinkCard .danger { border:1px solid #edc7c0; color:#9a4434; background:#fff7f5; }
+.qrModal { width:min(92vw,390px); padding:22px; border:1px solid #dce7e0; border-radius:18px; background:#fff; box-shadow:0 24px 70px #12251b30; text-align:center; }
+.qrModal header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; text-align:left; }
+.qrModal header h2 { margin:0 0 5px; color:#17231e; font-size:20px; }
+.qrModal header p { margin:0; color:#7d8b83; font-size:11px; }
+.qrModal header button { width:32px; min-width:32px; height:32px; padding:0; border:1px solid #dce7e0; border-radius:9px; color:#53635a; background:#f5f9f6; font-size:20px; line-height:1; }
+.qrModal img { display:block; width:min(100%,280px); height:auto; margin:8px auto 16px; border-radius:8px; }
+.qrCopy { width:100%; justify-content:center; }
 
 @media(max-width:600px){
   .clashPanel { padding:22px 17px; }

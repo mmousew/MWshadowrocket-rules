@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent } from "react";
+import QRCode from "qrcode";
 
 type View = "overview" | "groups" | "rules" | "sets" | "clash" | "conflicts";
 type Group = { index: number; name: string; kind: string; items: string[] };
@@ -477,6 +478,8 @@ function ClashSubscription() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [generating, setGenerating] = useState(false);
   const [generatedNodes, setGeneratedNodes] = useState<number | null>(null);
+  const [qrCode, setQrCode] = useState("");
+  const [qrLink, setQrLink] = useState("");
 
   useEffect(() => {
     fetch("/api/clash/link", { cache: "no-store" }).then(async (response) => {
@@ -514,7 +517,17 @@ function ClashSubscription() {
     else setLinks((current) => current.map((item) => item.id === id ? { ...item, status: "revoked" } : item));
   }
 
-  return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">每次生成都会新增一条独立链接。旧链接默认继续可用，只有点击“失效”或“删除”后才会停止访问。</p><form className="sourceForm" onSubmit={generateLink}><label>机场订阅地址 <small>一行一个，可添加多个机场</small><textarea rows={5} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://机场A.example/订阅\nhttps://机场B.example/订阅" autoComplete="off" /></label><button className="primary" type="submit" disabled={generating}>{generating ? "正在验证并合并节点…" : "验证并生成新链接"}</button><small>支持 Clash YAML、Shadowrocket 配置和 SS 订阅；地址会加密保存，不会显示在页面上。</small></form>{error && <div className="clashError">{error}</div>}{generatedNodes !== null && <div className="clashSuccess">新链接已生成，共识别 {generatedNodes} 个节点。</div>}<div className="clashLinkList">{links.length ? links.map((item) => <article className={`clashLinkCard ${item.status === "revoked" ? "revoked" : ""}`} key={item.id}><div className="clashLinkMeta"><strong>{item.legacy ? "旧版订阅链接" : "订阅链接"}</strong><span>{item.status === "active" ? "已启用" : "已失效"} · {item.createdAt ? new Date(item.createdAt).toLocaleString("zh-CN") : "历史链接"}</span></div><input readOnly value={item.url} onFocus={(event) => event.currentTarget.select()} /><div className="clashActions"><button className="primary" onClick={() => copyLink(item.url)}>{copied ? "已复制" : "复制链接"}</button>{item.status === "active" && <button className="ghost" onClick={() => changeLink(item.id, "revoke")}>失效</button>}<button className="danger" onClick={() => changeLink(item.id, "delete")}>删除</button>{item.status === "active" && <a className="ghost" href={`clash://install-config?url=${encodeURIComponent(item.url)}&name=${encodeURIComponent("MW Rules")}`}>打开 ClashX Meta</a>}</div></article>) : <p className="clashLoading">还没有订阅链接，请先验证并生成。</p>}</div><ul><li>同一条链接会随 GitHub 规则和机场节点更新。</li><li>失效会立即阻止访问；删除会从列表移除并同时阻止访问。</li><li>Clash 不支持的 User-Agent 和 URL-REGEX 规则会自动跳过。</li></ul></section>;
+  async function showQr(value: string) {
+    setError("");
+    try {
+      setQrCode(await QRCode.toDataURL(value, { width: 280, margin: 2, errorCorrectionLevel: "M", color: { dark: "#17231e", light: "#ffffff" } }));
+      setQrLink(value);
+    } catch {
+      setError("二维码生成失败，请稍后重试");
+    }
+  }
+
+  return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">每次生成都会新增一条独立链接。旧链接默认继续可用，只有点击“失效”或“删除”后才会停止访问。</p><form className="sourceForm" onSubmit={generateLink}><label>机场订阅地址 <small>一行一个，可添加多个机场</small><textarea rows={5} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://机场A.example/订阅\nhttps://机场B.example/订阅" autoComplete="off" /></label><button className="primary" type="submit" disabled={generating}>{generating ? "正在验证并合并节点…" : "验证并生成新链接"}</button><small>支持 Clash YAML、Shadowrocket 配置和 SS 订阅；地址会加密保存，不会显示在页面上。</small></form>{error && <div className="clashError">{error}</div>}{generatedNodes !== null && <div className="clashSuccess">新链接已生成，共识别 {generatedNodes} 个节点。</div>}<div className="clashLinkList">{links.length ? links.map((item) => <article className={`clashLinkCard ${item.status === "revoked" ? "revoked" : ""}`} key={item.id}><div className="clashLinkMeta"><strong>{item.legacy ? "旧版订阅链接" : "订阅链接"}</strong><span>{item.status === "active" ? "已启用" : "已失效"} · {item.createdAt ? new Date(item.createdAt).toLocaleString("zh-CN") : "历史链接"}</span></div><input readOnly value={item.url} onFocus={(event) => event.currentTarget.select()} /><div className="clashActions"><button type="button" className="primary" onClick={() => copyLink(item.url)}>{copied ? "已复制" : "复制链接"}</button>{item.status === "active" && <button type="button" className="ghost" onClick={() => void showQr(item.url)}>二维码</button>}{item.status === "active" && <button type="button" className="ghost" onClick={() => void changeLink(item.id, "revoke")}>失效</button>}<button type="button" className="danger" onClick={() => void changeLink(item.id, "delete")}>删除</button></div></article>) : <p className="clashLoading">还没有订阅链接，请先验证并生成。</p>}</div><ul><li>同一条链接会随 GitHub 规则和机场节点更新。</li><li>失效会立即阻止访问；删除会从列表移除并同时阻止访问。</li><li>Clash 不支持的 User-Agent 和 URL-REGEX 规则会自动跳过。</li></ul>{qrCode && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭二维码" onMouseDown={(event) => { if (event.target === event.currentTarget) { setQrCode(""); setQrLink(""); } }} onKeyDown={(event) => { if (event.key === "Escape") { setQrCode(""); setQrLink(""); } }}><section className="qrModal" role="dialog" aria-modal="true" aria-labelledby="qr-title"><header><div><h2 id="qr-title">订阅二维码</h2><p>使用手机相机或 ClashX Meta 扫描</p></div><button type="button" onClick={() => { setQrCode(""); setQrLink(""); }}>×</button></header><img src={qrCode} alt="ClashX Meta 私有订阅二维码" /><button type="button" className="ghost qrCopy" onClick={() => void copyLink(qrLink)}>{copied ? "已复制订阅链接" : "复制订阅链接"}</button></section></div>}</section>;
 }
 
 function GroupCard({ group, ruleCount, tone, onEdit, onRules }: { group: Group; ruleCount: number; tone: string; onEdit: () => void; onRules: () => void }) {
