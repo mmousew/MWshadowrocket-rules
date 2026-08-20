@@ -25,6 +25,22 @@ function decodeBase64(value: string) {
   return Buffer.from(value.replace(/\n/g, ""), "base64").toString("utf8");
 }
 
+function splitRuleLine(line: string) {
+  const parts: string[] = [];
+  let current = "";
+  let depth = 0;
+  for (const character of line) {
+    if (character === "(") depth += 1;
+    if (character === ")") depth = Math.max(0, depth - 1);
+    if (character === "," && depth === 0) {
+      parts.push(current.trim());
+      current = "";
+    } else current += character;
+  }
+  parts.push(current.trim());
+  return parts;
+}
+
 function validateConfig(content: string) {
   const errors: string[] = [];
   if (content.length > 1_500_000) errors.push("配置文件超过允许大小");
@@ -48,7 +64,7 @@ function validateConfig(content: string) {
       const line = raw.trim();
       if (!line || line.startsWith("#")) return;
       lastRule = line;
-      const parts = line.split(",").map((part) => part.trim());
+      const parts = splitRuleLine(line);
       if (parts.length < 3) {
         errors.push(`第 ${ruleStart + offset + 2} 行规则字段不足`);
         return;

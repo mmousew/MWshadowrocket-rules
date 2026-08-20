@@ -26,6 +26,22 @@ function catalogFileHint(file: string) {
   if (file.includes("_Domain")) return "纯域名补充版（大型规则可能需要一并添加）";
   return "标准版（推荐）";
 }
+
+function splitRuleLine(line: string) {
+  const parts: string[] = [];
+  let current = "";
+  let depth = 0;
+  for (const character of line) {
+    if (character === "(") depth += 1;
+    if (character === ")") depth = Math.max(0, depth - 1);
+    if (character === "," && depth === 0) {
+      parts.push(current.trim());
+      current = "";
+    } else current += character;
+  }
+  parts.push(current.trim());
+  return parts;
+}
 const nav: { id: View; icon: string; label: string }[] = [
   { id: "overview", icon: "⌘", label: "规则总览" },
   { id: "groups", icon: "◎", label: "代理分组" },
@@ -49,7 +65,7 @@ function parseConfig(content: string) {
       }
     }
     if (index > ruleStart && raw.trim() && !raw.trim().startsWith("#")) {
-      const parts = raw.split(",").map((item) => item.trim());
+      const parts = splitRuleLine(raw);
       if (parts.length >= 3) rules.push({ index, type: parts[0], value: parts[1], policy: parts[2], options: parts.slice(3) });
     }
   });
