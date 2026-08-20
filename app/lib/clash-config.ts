@@ -253,6 +253,32 @@ function shadowrocketProxyLine(proxy: ClashProxy) {
   return `${name}=ss,${server},${port},${options.join(",")}`;
 }
 
+function normalizeShadowrocketConfig(config: string) {
+  const lines = config.split(/\r?\n/);
+  const sectionStarts: Array<{ name: string; index: number }> = [];
+  const metadata: string[] = [];
+  const metadataSet = new Set<string>();
+  for (const [index, line] of lines.entries()) {
+    const section = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (section) sectionStarts.push({ name: section[1], index });
+    if (line.trim().startsWith("#!") && !metadataSet.has(line.trim())) {
+      metadataSet.add(line.trim());
+      metadata.push(line.trim());
+    }
+  }
+  if (!sectionStarts.length) return config.trim() + "\n";
+  const blocks = new Map<string, string[]>();
+  sectionStarts.forEach((section, position) => {
+    const end = sectionStarts[position + 1]?.index ?? lines.length;
+    const block = lines.slice(section.index, end).filter((line) => !line.trim().startsWith("#!"));
+    blocks.set(section.name, block);
+  });
+  const preferredOrder = ["General", "Proxy Group", "Proxy", "Rule", "URL Rewrite", "Host", "MITM"];
+  const ordered = preferredOrder.filter((name) => blocks.has(name)).map((name) => blocks.get(name) || []);
+  const remaining = [...blocks.entries()].filter(([name]) => !preferredOrder.includes(name)).map(([, block]) => block);
+  return [...metadata, ...ordered.flatMap((block) => ["", ...block]), ...remaining.flatMap((block) => ["", ...block])].join("\n").trim() + "\n";
+}
+
 export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[]) {
   const sources = Array.isArray(airportContent) ? airportContent : [airportContent];
   const airportProxies = sources.flatMap((source) => parseAirportProxies(source));
@@ -273,5 +299,5 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   const end = nextSection > proxyStart ? nextSection : lines.length;
   const config = [...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n");
   // Shadowrocket does not understand geosite rule references; omit them only from its output.
-  return config.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n");
+  return normalizeShadowrocketConfig(config.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n"));
 }
