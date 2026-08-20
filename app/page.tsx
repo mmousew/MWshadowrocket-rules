@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent } from "react";
 
 type View = "overview" | "groups" | "rules" | "sets" | "conflicts";
 type Group = { index: number; name: string; kind: string; items: string[] };
@@ -119,6 +119,10 @@ export default function Home() {
   const [preview, setPreview] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [toast, setToast] = useState("");
+  const [draggingGroup, setDraggingGroup] = useState("");
+  const [dragTargetGroup, setDragTargetGroup] = useState("");
+  const dragSourceRef = useRef("");
+  const dragTargetRef = useRef("");
   const loginStatus = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("login_error");
   const loginError = loginStatus ? (loginStatus === "forbidden" ? "这个 GitHub 账号没有管理权限，请改用 mmousew 登录。" : "GitHub 登录没有完成，请重新尝试。") : "";
 
@@ -174,6 +178,66 @@ export default function Home() {
 
   function editRule(rule: Rule) {
     setEditor({ mode: "rule", index: rule.index, type: rule.type, value: rule.value, policy: rule.policy, options: rule.options.join(",") });
+  }
+
+  function reorderGroup(sourceName: string, targetName: string) {
+    if (!sourceName || !targetName || sourceName === targetName || query) return;
+    const sourcePosition = parsed.groups.findIndex((group) => group.name === sourceName);
+    const targetPosition = parsed.groups.findIndex((group) => group.name === targetName);
+    if (sourcePosition < 0 || targetPosition < 0) return;
+
+    const groupLines = parsed.groups.map((group) => parsed.lines[group.index]);
+    const [movedLine] = groupLines.splice(sourcePosition, 1);
+    groupLines.splice(targetPosition, 0, movedLine);
+    const nextLines = [...parsed.lines];
+    parsed.groups.forEach((group, position) => { nextLines[group.index] = groupLines[position]; });
+    markContent(nextLines.join("\n"));
+    setToast(`「${sourceName}」已移动，保存后同步新顺序`);
+  }
+
+  function finishGroupDrag(sourceName = dragSourceRef.current, targetName = dragTargetRef.current) {
+    reorderGroup(sourceName, targetName);
+    dragSourceRef.current = "";
+    dragTargetRef.current = "";
+    setDraggingGroup("");
+    setDragTargetGroup("");
+  }
+
+  function startNativeGroupDrag(event: DragEvent<HTMLButtonElement>, group: Group) {
+    if (query) return event.preventDefault();
+    dragSourceRef.current = group.name;
+    setDraggingGroup(group.name);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", group.name);
+  }
+
+  function startTouchGroupDrag(event: PointerEvent<HTMLButtonElement>, group: Group) {
+    if (query || event.pointerType === "mouse") return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragSourceRef.current = group.name;
+    dragTargetRef.current = group.name;
+    setDraggingGroup(group.name);
+    setDragTargetGroup(group.name);
+  }
+
+  function moveTouchGroupDrag(event: PointerEvent<HTMLButtonElement>) {
+    if (!dragSourceRef.current || event.pointerType === "mouse") return;
+    event.preventDefault();
+    const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-group-name]");
+    const targetName = row?.dataset.groupName || "";
+    if (targetName) {
+      dragTargetRef.current = targetName;
+      setDragTargetGroup(targetName);
+    }
+  }
+
+  function moveGroupWithKeyboard(event: KeyboardEvent<HTMLButtonElement>, group: Group) {
+    if (query || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const position = parsed.groups.findIndex((item) => item.name === group.name);
+    const target = parsed.groups[position + (event.key === "ArrowUp" ? -1 : 1)];
+    if (target) reorderGroup(group.name, target.name);
   }
 
   function submitEditor(event: FormEvent) {
@@ -280,7 +344,27 @@ export default function Home() {
 
         {(view === "groups" || view === "rules" || view === "sets") && <>
           <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label><span>{view === "groups" ? filteredGroups.length : filteredRules.length} 项</span></div>
-          {view === "groups" ? <div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); return <div className="listRow groupListRow" key={`${group.index}-${group.name}`}><div className="rowMain"><strong>{group.name}</strong><p>{linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><span className="pill">{linked.length} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div>
+          {view === "groups" ? <><p className={`dragHelp ${query ? "disabled" : ""}`}>{query ? "清空搜索后可以拖拽调整完整分组顺序" : "按住左侧拖动排序；键盘可用 ↑ ↓ 调整"}</p><div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); return <div
+            className={`listRow groupListRow ${draggingGroup === group.name ? "dragging" : ""} ${dragTargetGroup === group.name && draggingGroup !== group.name ? "dropTarget" : ""}`}
+            data-group-name={group.name}
+            key={`${group.index}-${group.name}`}
+            onDragOver={(event) => { if (!dragSourceRef.current) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; dragTargetRef.current = group.name; setDragTargetGroup(group.name); }}
+            onDrop={(event) => { event.preventDefault(); finishGroupDrag(event.dataTransfer.getData("text/plain") || dragSourceRef.current, group.name); }}
+          ><button
+            type="button"
+            className="dragHandle"
+            draggable={!query}
+            disabled={Boolean(query)}
+            aria-label={`拖动调整「${group.name}」的顺序`}
+            title={query ? "清空搜索后可排序" : "拖动排序，或使用上下方向键"}
+            onDragStart={(event) => startNativeGroupDrag(event, group)}
+            onDragEnd={() => finishGroupDrag("", "")}
+            onPointerDown={(event) => startTouchGroupDrag(event, group)}
+            onPointerMove={moveTouchGroupDrag}
+            onPointerUp={() => finishGroupDrag()}
+            onPointerCancel={() => finishGroupDrag("", "")}
+            onKeyDown={(event) => moveGroupWithKeyboard(event, group)}
+          ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><span className="pill">{linked.length} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div></>
           : <div className="listPanel">{filteredRules.slice(0, 250).map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}{filteredRules.length > 250 && <div className="listNote">结果较多，仅显示前 250 项，请使用搜索缩小范围。</div>}</div>}
         </>}
 
