@@ -213,7 +213,7 @@ export default function Home() {
   }
 
   function startTouchGroupDrag(event: PointerEvent<HTMLButtonElement>, group: Group) {
-    if (query || event.pointerType === "mouse") return;
+    if (query) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     dragSourceRef.current = group.name;
@@ -223,7 +223,7 @@ export default function Home() {
   }
 
   function moveTouchGroupDrag(event: PointerEvent<HTMLButtonElement>) {
-    if (!dragSourceRef.current || event.pointerType === "mouse") return;
+    if (!dragSourceRef.current) return;
     event.preventDefault();
     const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-group-name]");
     const targetName = row?.dataset.groupName || "";
@@ -354,7 +354,7 @@ export default function Home() {
           ><button
             type="button"
             className="dragHandle"
-            draggable={!query}
+            draggable={false}
             disabled={Boolean(query)}
             aria-label={`拖动调整「${group.name}」的顺序`}
             title={query ? "清空搜索后可排序" : "拖动排序，或使用上下方向键"}
