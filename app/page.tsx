@@ -9,6 +9,7 @@ type CatalogResult = { name: string; file: string; url: string; source: string }
 type Editor =
   | { mode: "group"; index: number | null; name: string; items: string }
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
+type DeleteTarget = { kind: "group"; group: Group } | { kind: "rule"; rule: Rule };
 
 const RULE_TYPES = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "RULE-SET", "IP-CIDR", "IP-CIDR6", "GEOIP"];
 const RULE_TYPE_META: Record<string, { label: string; hint: string }> = {
@@ -116,6 +117,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [editor, setEditor] = useState<Editor | null>(null);
   const [preview, setPreview] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [toast, setToast] = useState("");
   const loginStatus = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("login_error");
   const loginError = loginStatus ? (loginStatus === "forbidden" ? "这个 GitHub 账号没有管理权限，请改用 mmousew 登录。" : "GitHub 登录没有完成，请重新尝试。") : "";
@@ -221,13 +223,20 @@ export default function Home() {
   function removeGroup(group: Group) {
     const used = parsed.rules.some((rule) => rule.policy === group.name) || parsed.groups.some((item) => item.index !== group.index && item.items.includes(group.name));
     if (used) return setError(`「${group.name}」仍被其他规则或分组引用，不能直接删除`);
-    if (!confirm(`确定删除分组「${group.name}」吗？`)) return;
-    const lines = content.split(/\r?\n/); lines.splice(group.index, 1); markContent(lines.join("\n"));
+    setDeleteTarget({ kind: "group", group });
   }
 
   function removeRule(rule: Rule) {
-    if (!confirm(`确定删除规则「${rule.value}」吗？`)) return;
-    const lines = content.split(/\r?\n/); lines.splice(rule.index, 1); markContent(lines.join("\n"));
+    setDeleteTarget({ kind: "rule", rule });
+  }
+
+  function confirmDelete() {
+    if (!deleteTarget) return;
+    const index = deleteTarget.kind === "group" ? deleteTarget.group.index : deleteTarget.rule.index;
+    const lines = content.split(/\r?\n/);
+    lines.splice(index, 1);
+    markContent(lines.join("\n"));
+    setDeleteTarget(null);
   }
 
   async function save() {
@@ -279,6 +288,7 @@ export default function Home() {
       </section>
 
       {editor && <EditorModal editor={editor} setEditor={setEditor} policies={policies} onSubmit={submitEditor} />}
+      {deleteTarget && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭删除确认" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null); }} onKeyDown={(event) => { if (event.key === "Escape") setDeleteTarget(null); }}><section className="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><span className="confirmMark">!</span><h2 id="delete-title">确认删除？</h2><p>{deleteTarget.kind === "group" ? `将删除代理分组「${deleteTarget.group.name}」。` : `将删除规则「${deleteTarget.rule.value}」。`}</p><small>删除会先暂存，点击“保存到 GitHub”后才会正式生效。</small><footer><button className="ghost" onClick={() => setDeleteTarget(null)}>取消</button><button className="deleteConfirm" onClick={confirmDelete}>确认删除</button></footer></section></div>}
       {preview && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭配置预览" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(false); }} onKeyDown={(event) => { if (event.key === "Escape") setPreview(false); }}><section className="previewModal" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header><div><h2 id="preview-title">配置预览</h2><p>{content.split(/\r?\n/).length.toLocaleString()} 行 · {repository}</p></div><button onClick={() => setPreview(false)}>×</button></header><pre>{content}</pre></section></div>}
     </main>
   );
