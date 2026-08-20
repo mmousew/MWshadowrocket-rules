@@ -139,3 +139,26 @@ button,input,select,textarea { max-width:100%; }
   .content{padding-left:clamp(60px,6vw,110px);padding-right:clamp(60px,6vw,110px)}
   .groupGrid{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
 }
+
+/* Top navigation */
+.shell { display:block; }
+.siteHeader { position:sticky; top:0; z-index:25; min-height:68px; display:flex; align-items:center; gap:28px; width:100%; padding:10px clamp(18px,4vw,54px); color:#eef5f1; background:#17231e; box-shadow:0 6px 20px #0e18131b; }
+.siteHeader .brand { flex:0 0 auto; padding:0; }.siteHeader .brand span:last-child { font-size:20px; }
+.siteHeader nav { display:flex; align-items:center; gap:6px; }
+.siteHeader .navItem,.siteHeader .navItem:not(.active) { width:auto; min-width:58px; justify-content:center; padding:10px 15px; color:#aebbb4; text-align:center; font-size:12px; }
+.siteHeader .navItem:hover,.siteHeader .navItem.active { color:#fff; background:#2b3a33; }
+.siteHeader .repoCard { flex:0 1 auto; margin:0 0 0 auto; padding:9px 11px; }
+.siteHeader .repoCard strong,.siteHeader .repoCard small { max-width:230px; }
+.content { margin:0 auto; }
+
+@media(max-width:900px){
+  .siteHeader .repoCard { display:none; }
+}
+
+@media(max-width:600px){
+  .siteHeader { min-height:auto; display:block; padding:10px 14px; }
+  .siteHeader .brand { padding-bottom:8px; }
+  .siteHeader nav { width:100%; overflow-x:auto; overscroll-behavior-inline:contain; padding-bottom:2px; scrollbar-width:none; }
+  .siteHeader nav::-webkit-scrollbar { display:none; }
+  .siteHeader .navItem { flex:1 0 58px; min-width:58px; padding:8px 12px; font-size:11px; white-space:nowrap; }
+}

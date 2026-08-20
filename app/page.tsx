@@ -42,12 +42,12 @@ function splitRuleLine(line: string) {
   parts.push(current.trim());
   return parts;
 }
-const nav: { id: View; icon: string; label: string }[] = [
-  { id: "overview", icon: "⌘", label: "规则总览" },
-  { id: "groups", icon: "◎", label: "代理分组" },
-  { id: "rules", icon: "↳", label: "域名规则" },
-  { id: "sets", icon: "⇣", label: "远程规则集" },
-  { id: "conflicts", icon: "✓", label: "冲突检查" },
+const nav: { id: View; label: string }[] = [
+  { id: "overview", label: "总览" },
+  { id: "groups", label: "分组" },
+  { id: "rules", label: "域名" },
+  { id: "sets", label: "规则" },
+  { id: "conflicts", label: "检查" },
 ];
 
 function parseConfig(content: string) {
@@ -247,11 +247,11 @@ export default function Home() {
 
   return (
     <main className="shell">
-      <aside className="sidebar">
+      <header className="siteHeader">
         <div className="brand"><span className="brandMark">MW</span><span>Rules</span></div>
-        <nav aria-label="主导航">{nav.map((item) => <button key={item.id} onClick={() => { setView(item.id); setQuery(""); }} className={`navItem ${view === item.id ? "active" : ""}`}><span>{item.icon}</span>{item.label}</button>)}</nav>
+        <nav aria-label="主导航">{nav.map((item) => <button key={item.id} onClick={() => { setView(item.id); setQuery(""); }} className={`navItem ${view === item.id ? "active" : ""}`}>{item.label}</button>)}</nav>
         <div className="repoCard"><span className="statusDot" /><div><strong>{repository}</strong><small>{branch}</small></div></div>
-      </aside>
+      </header>
 
       <section className="content">
         <header className="topbar">
