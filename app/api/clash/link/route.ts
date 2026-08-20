@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../../lib/github-auth";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { encryptSourceUrl } from "../../../lib/clash-link";
-import { createClashLink, hashToken, listClashLinks } from "../../../lib/clash-links";
+import { createClashLink, hashToken, listClashLinks, syncActiveClashSources } from "../../../lib/clash-links";
 import { getRawDb } from "../../../../db";
 
 function publicLink(request: NextRequest, item: { id: string; token?: string; status: string; createdAt: number; revokedAt?: number | null }) {
@@ -36,6 +36,7 @@ export async function POST(request: NextRequest) {
     const results = await Promise.all(sourceUrls.map((url) => fetchAirportSubscription(url)));
     const nodeCount = results.reduce((total, result) => total + result.nodeCount, 0);
     const encryptedSource = await encryptSourceUrl(sourceUrls);
+    await syncActiveClashSources(encryptedSource);
     const created = await createClashLink(encryptedSource);
     return NextResponse.json({
       link: publicLink(request, created),

@@ -21,6 +21,10 @@ export async function createClashLink(encryptedSource: string) {
   return { id, token, status: "active" as const, createdAt, revokedAt: null };
 }
 
+export async function syncActiveClashSources(encryptedSource: string) {
+  await getRawDb().prepare("UPDATE clash_links SET encrypted_source = ? WHERE status = 'active'").bind(encryptedSource).run();
+}
+
 export async function findClashLink(token: string) {
   return getRawDb().prepare("SELECT id, encrypted_source, status, created_at, revoked_at, deleted_at FROM clash_links WHERE token_hash = ? LIMIT 1")
     .bind(await hashToken(token)).first<{ id: string; encrypted_source: string; status: ClashLinkStatus; created_at: number; revoked_at: number | null; deleted_at: number | null }>();
