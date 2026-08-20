@@ -385,6 +385,9 @@ function ClashSubscription() {
   const [link, setLink] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [generatedNodes, setGeneratedNodes] = useState<number | null>(null);
 
   useEffect(() => {
     fetch("/api/clash/link", { cache: "no-store" }).then(async (response) => {
@@ -400,7 +403,20 @@ function ClashSubscription() {
     window.setTimeout(() => setCopied(false), 1800);
   }
 
-  return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">自动合并机场节点、国家分组和当前 GitHub 规则。客户端每 6 小时可检查一次更新。</p>{error ? <div className="clashError">{error}</div> : link ? <><label>私有订阅地址<input readOnly value={link} onFocus={(event) => event.currentTarget.select()} /></label><div className="clashActions"><button className="primary" onClick={copyLink}>{copied ? "已复制" : "复制订阅链接"}</button><a className="ghost" href={`clash://install-config?url=${encodeURIComponent(link)}&name=${encodeURIComponent("MW Rules")}`}>在 ClashX Meta 中打开</a></div></> : <p className="clashLoading">正在生成私有地址…</p>}<ul><li>此链接相当于密码，请勿发到公开群组或截图分享。</li><li>GitHub 规则保存后，Clash 更新订阅即可获取最新内容。</li><li>机场在线地址不可用时会自动使用加密保存的节点快照。</li><li>Clash 不支持的 User-Agent 和 URL-REGEX 规则会自动跳过。</li></ul></section>;
+  async function generateLink(event: FormEvent) {
+    event.preventDefault();
+    if (!sourceUrl.trim()) return setError("请先输入机场订阅地址");
+    setGenerating(true); setError(""); setGeneratedNodes(null);
+    try {
+      const response = await fetch("/api/clash/link", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceUrl: sourceUrl.trim() }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "生成订阅失败");
+      setLink(data.url); setGeneratedNodes(data.nodeCount); setCopied(false);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "生成订阅失败"); }
+    finally { setGenerating(false); }
+  }
+
+  return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">自动合并机场节点、国家分组和当前 GitHub 规则。客户端每 6 小时可检查一次更新。</p><form className="sourceForm" onSubmit={generateLink}><label>新的机场订阅地址<input type="url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="粘贴机场提供的 HTTPS 订阅地址" autoComplete="off" /></label><button className="primary" type="submit" disabled={generating}>{generating ? "正在验证节点…" : "验证并生成新链接"}</button><small>支持 Clash YAML、Shadowrocket 配置和 SS 订阅；地址会加密，不会写入 GitHub。</small></form>{error && <div className="clashError">{error}</div>}{generatedNodes !== null && <div className="clashSuccess">已识别 {generatedNodes} 个节点，新链接已经生成。</div>}{link ? <><label>私有订阅地址<input readOnly value={link} onFocus={(event) => event.currentTarget.select()} /></label><div className="clashActions"><button className="primary" onClick={copyLink}>{copied ? "已复制" : "复制订阅链接"}</button><a className="ghost" href={`clash://install-config?url=${encodeURIComponent(link)}&name=${encodeURIComponent("MW Rules")}`}>在 ClashX Meta 中打开</a></div></> : <p className="clashLoading">正在生成私有地址…</p>}<ul><li>此链接相当于密码，请勿发到公开群组或截图分享。</li><li>新机场地址成功验证后，生成的 Clash 链接会跟随机场自动更新。</li><li>旧链接仍然保留，需要时可以继续使用。</li><li>Clash 不支持的 User-Agent 和 URL-REGEX 规则会自动跳过。</li></ul></section>;
 }
 
 function GroupCard({ group, ruleCount, tone, onEdit, onRules }: { group: Group; ruleCount: number; tone: string; onEdit: () => void; onRules: () => void }) {

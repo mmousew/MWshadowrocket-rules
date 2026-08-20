@@ -1,6 +1,8 @@
+import { parse as parseYaml } from "yaml";
+
 type ShadowrocketGroup = { name: string; kind: string; items: string[] };
 type ShadowrocketRule = { type: string; value: string; policy: string; options: string[] };
-type ClashProxy = Record<string, string | number | boolean | Record<string, string>>;
+type ClashProxy = Record<string, unknown>;
 type RuleProvider = { name: string; url: string; format: "text" | "yaml" };
 
 function splitRuleLine(line: string) {
@@ -70,11 +72,11 @@ function parseGroupsAndRules(content: string) {
   return { groups, rules };
 }
 
-function parseAirportProxies(content: string): ClashProxy[] {
+function parseShadowrocketProxies(content: string): ClashProxy[] {
   const lines = content.split(/\r?\n/);
   const proxyStart = lines.findIndex((line) => line.trim() === "[Proxy]");
   const nextSection = lines.findIndex((line, index) => index > proxyStart && /^\s*\[.+\]\s*$/.test(line));
-  if (proxyStart < 0) throw new Error("机场配置中没有找到节点列表");
+  if (proxyStart < 0) return [];
 
   return lines.slice(proxyStart + 1, nextSection > proxyStart ? nextSection : undefined).flatMap((raw) => {
     const separator = raw.indexOf("=");
@@ -102,6 +104,80 @@ function parseAirportProxies(content: string): ClashProxy[] {
     }
     return [proxy];
   });
+}
+
+function parseClashProxies(content: string): ClashProxy[] {
+  try {
+    const parsed = parseYaml(content) as { proxies?: unknown } | null;
+    if (!Array.isArray(parsed?.proxies)) return [];
+    return parsed.proxies.filter((proxy): proxy is ClashProxy => Boolean(proxy && typeof proxy === "object" && typeof (proxy as ClashProxy).name === "string" && typeof (proxy as ClashProxy).type === "string"));
+  } catch { return []; }
+}
+
+function decodeLooseBase64(value: string) {
+  try { return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"); } catch { return ""; }
+}
+
+function parseSsLink(link: string, position: number): ClashProxy | null {
+  try {
+    const hashPosition = link.indexOf("#");
+    const name = hashPosition >= 0 ? decodeURIComponent(link.slice(hashPosition + 1)) : `SS 节点 ${position + 1}`;
+    const withoutHash = link.slice(5, hashPosition >= 0 ? hashPosition : undefined);
+    const queryPosition = withoutHash.indexOf("?");
+    const main = withoutHash.slice(0, queryPosition >= 0 ? queryPosition : undefined);
+    const query = new URLSearchParams(queryPosition >= 0 ? withoutHash.slice(queryPosition + 1) : "");
+    const expanded = main.includes("@") ? main : decodeLooseBase64(main);
+    const at = expanded.lastIndexOf("@");
+    if (at < 1) return null;
+    let credentials = expanded.slice(0, at);
+    if (!credentials.includes(":")) credentials = decodeLooseBase64(credentials);
+    const separator = credentials.indexOf(":");
+    if (separator < 1) return null;
+    const address = new URL(`http://${expanded.slice(at + 1)}`);
+    const proxy: ClashProxy = {
+      name,
+      type: "ss",
+      server: address.hostname,
+      port: Number(address.port),
+      cipher: decodeURIComponent(credentials.slice(0, separator)),
+      password: decodeURIComponent(credentials.slice(separator + 1)),
+      udp: true,
+    };
+    const plugin = query.get("plugin");
+    if (plugin) {
+      const pluginParts = decodeURIComponent(plugin).split(";");
+      if (/obfs/i.test(pluginParts[0])) {
+        const options = Object.fromEntries(pluginParts.slice(1).map((part) => part.split("=", 2)));
+        proxy.plugin = "obfs";
+        proxy["plugin-opts"] = { mode: options.obfs || "http", ...(options["obfs-host"] ? { host: options["obfs-host"] } : {}) };
+      }
+    }
+    return proxy;
+  } catch { return null; }
+}
+
+function parseLinkSubscription(content: string) {
+  const trimmed = content.trim();
+  const decoded = /^([A-Za-z0-9+/_=-]+\s*)+$/.test(trimmed) ? decodeLooseBase64(trimmed) : "";
+  const links = (decoded.includes("://") ? decoded : trimmed).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return links.flatMap((link, index) => link.startsWith("ss://") ? [parseSsLink(link, index)].filter((proxy): proxy is ClashProxy => Boolean(proxy)) : []);
+}
+
+function parseAirportProxies(content: string): ClashProxy[] {
+  const shadowrocket = parseShadowrocketProxies(content);
+  const clash = shadowrocket.length ? [] : parseClashProxies(content);
+  const candidates = shadowrocket.length ? shadowrocket : clash.length ? clash : parseLinkSubscription(content);
+  const names = new Set<string>();
+  return candidates.filter((proxy) => {
+    const name = String(proxy.name || "");
+    if (!name || names.has(name) || /^(Traffic|Expire|流量|到期|剩余)\b/i.test(name)) return false;
+    names.add(name);
+    return true;
+  });
+}
+
+export function getAirportProxyCount(content: string) {
+  return parseAirportProxies(content).length;
 }
 
 function convertGroups(groups: ShadowrocketGroup[]) {
@@ -144,7 +220,7 @@ function convertRules(rules: ShadowrocketRule[]) {
 
 export function buildClashConfig(ruleContent: string, airportContent: string) {
   const proxies = parseAirportProxies(airportContent);
-  if (!proxies.length) throw new Error("机场配置没有可转换的 SS 节点");
+  if (!proxies.length) throw new Error("机场配置没有可转换的节点");
   const { groups, rules } = parseGroupsAndRules(ruleContent);
   const proxyGroups = convertGroups(groups);
   const { converted, providers, skipped } = convertRules(rules);

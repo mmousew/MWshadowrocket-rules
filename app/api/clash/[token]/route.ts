@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildClashConfig } from "../../../lib/clash-config";
+import { fetchAirportSubscription } from "../../../lib/airport-subscription";
+import { decryptSourceUrl } from "../../../lib/clash-link";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -15,14 +17,15 @@ function getAirportSnapshot() {
   return encoded ? `[Proxy]\n${Buffer.from(encoded, "base64").toString("utf8")}\n` : "";
 }
 
-export async function GET(_request: NextRequest, context: { params: Promise<{ token: string }> }) {
+export async function GET(request: NextRequest, context: { params: Promise<{ token: string }> }) {
   const { token } = await context.params;
   const expectedToken = process.env.CLASH_ACCESS_TOKEN;
-  const airportUrl = process.env.AIRPORT_SHADOWROCKET_URL;
+  const encryptedSource = request.nextUrl.searchParams.get("source");
   if (!expectedToken || token !== expectedToken) return new NextResponse("订阅链接无效", { status: 404 });
-  if (!airportUrl) return new NextResponse("尚未配置机场来源", { status: 503 });
 
   try {
+    const airportUrl = encryptedSource ? await decryptSourceUrl(encryptedSource) : process.env.AIRPORT_SHADOWROCKET_URL;
+    if (!airportUrl) return new NextResponse("尚未配置机场来源", { status: 503 });
     const [ruleResponse, airportResult] = await Promise.all([
       fetch(`${API_URL}?ref=${encodeURIComponent(BRANCH)}`, {
         headers: {
@@ -33,16 +36,16 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ to
         },
         cache: "no-store",
       }),
-      fetch(airportUrl, { headers: { "User-Agent": "Shadowrocket/2610 CFNetwork/3826.500.131 Darwin/24.5.0" }, cache: "no-store" })
-        .then(async (response) => ({ ok: response.ok, content: response.ok ? await response.text() : "" }))
+      fetchAirportSubscription(airportUrl)
+        .then(({ content }) => ({ ok: true, content }))
         .catch(() => ({ ok: false, content: "" })),
     ]);
     if (!ruleResponse.ok) throw new Error(`读取 GitHub 规则失败（${ruleResponse.status}）`);
     const file = await ruleResponse.json() as GitHubFile;
     if (!file.content) throw new Error(file.message || "GitHub 规则内容为空");
     const ruleContent = Buffer.from(file.content.replace(/\n/g, ""), "base64").toString("utf8");
-    const liveAirportContent = airportResult.ok && airportResult.content.includes("[Proxy]") ? airportResult.content : "";
-    const airportContent = liveAirportContent || getAirportSnapshot();
+    const liveAirportContent = airportResult.ok ? airportResult.content : "";
+    const airportContent = liveAirportContent || (encryptedSource ? "" : getAirportSnapshot());
     if (!airportContent) throw new Error("机场在线地址暂时不可用，且没有安全节点快照");
     const clash = buildClashConfig(ruleContent, airportContent);
     return new NextResponse(clash, {
