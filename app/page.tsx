@@ -113,7 +113,11 @@ function insertLine(content: string, index: number, value: string) {
 }
 
 export default function Home() {
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>(() => {
+    if (typeof window === "undefined") return "overview";
+    const saved = new URL(window.location.href).searchParams.get("view") as View | null;
+    return saved && nav.some((item) => item.id === saved) ? saved : "overview";
+  });
   const [content, setContent] = useState("");
   const [sha, setSha] = useState("");
   const [repository, setRepository] = useState("mmousew/MWshadowrocket-rules");
@@ -139,6 +143,13 @@ export default function Home() {
   const dragTargetRef = useRef("");
   const loginStatus = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("login_error");
   const loginError = loginStatus ? (loginStatus === "forbidden" ? "这个 GitHub 账号没有管理权限，请改用 mmousew 登录。" : "GitHub 登录没有完成，请重新尝试。") : "";
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (view === "overview") url.searchParams.delete("view");
+    else url.searchParams.set("view", view);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [view]);
 
   useEffect(() => {
     fetch("/api/config", { cache: "no-store" })
