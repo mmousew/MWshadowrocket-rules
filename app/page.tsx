@@ -117,6 +117,8 @@ export default function Home() {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [bulkTargetPolicy, setBulkTargetPolicy] = useState("");
+  const [selectedRuleIndexes, setSelectedRuleIndexes] = useState<number[]>([]);
+  const [selectionKey, setSelectionKey] = useState("");
   const [editor, setEditor] = useState<Editor | null>(null);
   const [preview, setPreview] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
@@ -148,6 +150,8 @@ export default function Home() {
   const filteredGroups = parsed.groups.filter((group) => `${group.name} ${group.items.join(" ")}`.toLowerCase().includes(query.toLowerCase()));
   const activeRules = view === "sets" ? ruleSets : domainRules;
   const filteredRules = activeRules.filter((rule) => `${rule.type} ${rule.value} ${rule.policy}`.toLowerCase().includes(query.toLowerCase()));
+  const filteredRuleKey = filteredRules.map((rule) => rule.index).join(",");
+  const effectiveSelectedRuleIndexes = selectionKey === filteredRuleKey ? selectedRuleIndexes : filteredRules.map((rule) => rule.index);
 
   function markContent(next: string) { setContent(next); setDirty(true); setToast("修改已暂存，保存后同步到 GitHub"); }
 
@@ -313,7 +317,12 @@ export default function Home() {
 
   function transferFilteredRules(targetPolicy: string) {
     if (!query.trim() || !filteredRules.length || !targetPolicy) return;
-    const transferable = filteredRules.filter((rule) => rule.policy !== targetPolicy);
+    const selected = new Set(effectiveSelectedRuleIndexes);
+    const transferable = filteredRules.filter((rule) => selected.has(rule.index) && rule.policy !== targetPolicy);
+    if (!selected.size) {
+      setToast("请至少勾选一条规则");
+      return;
+    }
     if (!transferable.length) {
       setToast(`搜索结果已经全部属于「${targetPolicy}」`);
       return;
@@ -323,7 +332,16 @@ export default function Home() {
       lines[rule.index] = [rule.type, rule.value, targetPolicy, ...rule.options].join(",");
     });
     markContent(lines.join("\n"));
+    setSelectionKey("");
     setToast(`已将 ${transferable.length} 条搜索结果转移到「${targetPolicy}」，保存后生效`);
+  }
+
+  function toggleRuleSelection(index: number) {
+    setSelectionKey(filteredRuleKey);
+    setSelectedRuleIndexes((current) => {
+      const base = selectionKey === filteredRuleKey ? current : filteredRules.map((rule) => rule.index);
+      return base.includes(index) ? base.filter((item) => item !== index) : [...base, index];
+    });
   }
 
   function removeGroup(group: Group) {
@@ -385,7 +403,7 @@ export default function Home() {
         </>}
 
         {(view === "groups" || view === "rules" || view === "sets") && <>
-          <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label>{view !== "groups" && query.trim() && filteredRules.length > 0 && <div className="bulkTransfer"><span>转移到</span><select value={bulkTargetPolicy || policies[0] || ""} onChange={(event) => setBulkTargetPolicy(event.target.value)} aria-label="批量转移目标分组">{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><button type="button" onClick={() => transferFilteredRules(bulkTargetPolicy || policies[0] || "")}>转移当前 {filteredRules.length} 条</button></div>}<span>{view === "groups" ? filteredGroups.length : filteredRules.length} 项</span></div>
+          <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label>{view !== "groups" && query.trim() && filteredRules.length > 0 && <div className="bulkTransfer"><label className="selectAll"><input type="checkbox" checked={effectiveSelectedRuleIndexes.length === filteredRules.length} onChange={(event) => { setSelectionKey(filteredRuleKey); setSelectedRuleIndexes(event.target.checked ? filteredRules.map((rule) => rule.index) : []); }} />全选</label><span>转移到</span><select value={bulkTargetPolicy || policies[0] || ""} onChange={(event) => setBulkTargetPolicy(event.target.value)} aria-label="批量转移目标分组">{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><button type="button" onClick={() => transferFilteredRules(bulkTargetPolicy || policies[0] || "")}>转移选中 {effectiveSelectedRuleIndexes.length} 条</button></div>}<span>{view === "groups" ? filteredGroups.length : filteredRules.length} 项</span></div>
           {view === "groups" ? <><p className={`dragHelp ${query ? "disabled" : ""}`}>{query ? "清空搜索后可以拖拽调整完整分组顺序" : "按住左侧或整行拖动排序；也可以用上移/下移"}</p><div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); return <div
             className={`listRow groupListRow ${draggingGroup === group.name ? "dragging" : ""} ${dragTargetGroup === group.name && draggingGroup !== group.name ? "dropTarget" : ""}`}
             data-group-name={group.name}
@@ -411,7 +429,7 @@ export default function Home() {
             onPointerCancel={() => finishGroupDrag("", "")}
             onKeyDown={(event) => moveGroupWithKeyboard(event, group)}
           ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div><span className="pill">{linked.length} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div></>
-          : <div className="listPanel">{filteredRules.slice(0, 250).map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}{filteredRules.length > 250 && <div className="listNote">结果较多，仅显示前 250 项，请使用搜索缩小范围。</div>}</div>}
+          : <div className="listPanel">{filteredRules.slice(0, 250).map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><input className="ruleSelect" type="checkbox" checked={effectiveSelectedRuleIndexes.includes(rule.index)} onChange={() => toggleRuleSelection(rule.index)} aria-label={`选择规则 ${rule.value}`} /><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}{filteredRules.length > 250 && <div className="listNote">结果较多，仅显示前 250 项，请使用搜索缩小范围。</div>}</div>}
         </>}
 
         {view === "clash" && <ClashSubscription />}
