@@ -5,12 +5,27 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 type View = "overview" | "groups" | "rules" | "sets" | "conflicts";
 type Group = { index: number; name: string; kind: string; items: string[] };
 type Rule = { index: number; type: string; value: string; policy: string; options: string[] };
+type CatalogResult = { name: string; file: string; url: string; source: string };
 type Editor =
   | { mode: "group"; index: number | null; name: string; items: string }
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
 
 const RULE_TYPES = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "RULE-SET", "IP-CIDR", "IP-CIDR6", "GEOIP"];
+const RULE_TYPE_META: Record<string, { label: string; hint: string }> = {
+  DOMAIN: { label: "完整域名", hint: "只匹配这一个完整网址，例如 api.example.com。" },
+  "DOMAIN-SUFFIX": { label: "域名后缀", hint: "匹配主域名及所有子域名，最常用，例如 example.com。" },
+  "DOMAIN-KEYWORD": { label: "域名关键词", hint: "域名中出现该关键词就匹配，范围较大，请谨慎使用。" },
+  "RULE-SET": { label: "在线规则集", hint: "引用公开维护的整套规则，更新配置时会自动获取。" },
+  "IP-CIDR": { label: "IPv4 地址段", hint: "匹配一段 IPv4 地址，通常由规则维护者提供。" },
+  "IP-CIDR6": { label: "IPv6 地址段", hint: "匹配一段 IPv6 地址，通常由规则维护者提供。" },
+  GEOIP: { label: "国家或地区 IP", hint: "按照 IP 所属国家或地区匹配，例如 CN。" },
+};
 const BUILTINS = ["DIRECT", "PROXY", "REJECT"];
+function catalogFileHint(file: string) {
+  if (file.includes("_Resolve")) return "解析版（通常不需要优先选）";
+  if (file.includes("_Domain")) return "纯域名补充版（大型规则可能需要一并添加）";
+  return "标准版（推荐）";
+}
 const nav: { id: View; icon: string; label: string }[] = [
   { id: "overview", icon: "⌘", label: "规则总览" },
   { id: "groups", icon: "◎", label: "代理分组" },
@@ -226,7 +241,7 @@ export default function Home() {
         {(view === "groups" || view === "rules" || view === "sets") && <>
           <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label><span>{view === "groups" ? filteredGroups.length : filteredRules.length} 项</span></div>
           {view === "groups" ? <div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); return <div className="listRow" key={`${group.index}-${group.name}`}><div className="rowIcon">{group.name.slice(0, 1)}</div><div className="rowMain"><strong>{group.name}</strong><p>{linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><span className="pill">{linked.length} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div>
-          : <div className="listPanel">{filteredRules.slice(0, 250).map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}</span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}{filteredRules.length > 250 && <div className="listNote">结果较多，仅显示前 250 项，请使用搜索缩小范围。</div>}</div>}
+          : <div className="listPanel">{filteredRules.slice(0, 250).map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}{filteredRules.length > 250 && <div className="listNote">结果较多，仅显示前 250 项，请使用搜索缩小范围。</div>}</div>}
         </>}
 
         {view === "conflicts" && <section className="panel audit"><div className={`auditMark ${conflicts.length ? "warn" : ""}`}>{conflicts.length ? "!" : "✓"}</div><h2>{conflicts.length ? "需要处理后才能保存" : "没有发现相反策略冲突"}</h2><p>{conflicts.length ? "以下规则需要确认优先级或策略。" : "代理分组引用、重复规则与 FINAL 位置均通过检查。"}</p>{conflicts.length > 0 && <ul>{conflicts.map((item) => <li key={item}>{item}</li>)}</ul>}<button className="ghost" onClick={() => setPreview(true)}>查看原始配置</button></section>}
@@ -243,5 +258,23 @@ function GroupCard({ group, ruleCount, tone, onEdit, onRules }: { group: Group; 
 }
 
 function EditorModal({ editor, setEditor, policies, onSubmit }: { editor: Editor; setEditor: (value: Editor | null) => void; policies: string[]; onSubmit: (event: FormEvent) => void }) {
-  return <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭编辑窗口" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setEditor(null); }}><form className="editorModal" aria-label="规则编辑器" onSubmit={onSubmit}><header><div><h2>{editor.index === null ? "新增" : "编辑"}{editor.mode === "group" ? "代理分组" : "规则"}</h2><p>保存前会自动检查语法、引用与冲突。</p></div><button type="button" onClick={() => setEditor(null)}>×</button></header>{editor.mode === "group" ? <><label>分组名称<input value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：德国" /></label><label>配置项 <small>每行一个，第一行是类型</small><textarea rows={9} value={editor.items} onChange={(event) => setEditor({ ...editor, items: event.target.value })} placeholder={"select\ninclude-all-proxies=true\npolicy-regex-filter=德国|Germany|DE"} /></label></> : <><div className="fieldGrid"><label>规则类型<select value={editor.type} onChange={(event) => setEditor({ ...editor, type: event.target.value })}>{RULE_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label><label>执行策略<select value={editor.policy} onChange={(event) => setEditor({ ...editor, policy: event.target.value })}>{policies.map((policy) => <option key={policy}>{policy}</option>)}</select></label></div><label>域名、地址或规则集<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder="example.com" /></label><label>附加选项<input value={editor.options} onChange={(event) => setEditor({ ...editor, options: event.target.value })} placeholder="例如：no-resolve（可留空）" /></label></>}<footer><button type="button" className="ghost" onClick={() => setEditor(null)}>取消</button><button className="primary" type="submit">暂存修改</button></footer></form></div>;
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalog, setCatalog] = useState<CatalogResult[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState("");
+
+  async function searchCatalog() {
+    if (!catalogQuery.trim()) return;
+    setCatalogLoading(true); setCatalogError("");
+    try {
+      const response = await fetch(`/api/rule-catalog?q=${encodeURIComponent(catalogQuery.trim())}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "规则集搜索失败");
+      setCatalog(data.results || []);
+      if (!data.results?.length) setCatalogError("没有找到相关规则集，可以换一个英文或中文关键词。 ");
+    } catch (cause) { setCatalogError(cause instanceof Error ? cause.message : "规则集搜索失败"); }
+    finally { setCatalogLoading(false); }
+  }
+
+  return <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭编辑窗口" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setEditor(null); }}><form className="editorModal" aria-label="规则编辑器" onSubmit={onSubmit}><header><div><h2>{editor.index === null ? "新增" : "编辑"}{editor.mode === "group" ? "代理分组" : "规则"}</h2><p>保存前会自动检查语法、引用与冲突。</p></div><button type="button" onClick={() => setEditor(null)}>×</button></header>{editor.mode === "group" ? <><label>分组名称<input value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：德国" /></label><label>配置项 <small>每行一个，第一行是类型</small><textarea rows={9} value={editor.items} onChange={(event) => setEditor({ ...editor, items: event.target.value })} placeholder={"select\ninclude-all-proxies=true\npolicy-regex-filter=德国|Germany|DE"} /></label></> : <><div className="fieldGrid"><label>规则类型<select value={editor.type} onChange={(event) => setEditor({ ...editor, type: event.target.value })}>{RULE_TYPES.map((type) => <option key={type} value={type}>{type} — {RULE_TYPE_META[type].label}</option>)}</select><small className="fieldHint">{RULE_TYPE_META[editor.type]?.hint}</small></label><label>执行策略<select value={editor.policy} onChange={(event) => setEditor({ ...editor, policy: event.target.value })}>{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><small className="fieldHint">决定匹配后走哪个分组、直连或拒绝。</small></label></div>{editor.type === "RULE-SET" && <section className="catalogBox"><strong>从公开规则库搜索</strong><p>数据来自专门适配 Shadowrocket 的 blackmatrix7 公开规则库。</p><div className="catalogSearch"><input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="输入 Google、Netflix、OpenAI、哔哩哔哩…" /><button type="button" className="ghost" onClick={searchCatalog}>{catalogLoading ? "搜索中…" : "搜索"}</button></div>{catalogError && <small className="catalogError">{catalogError}</small>}{catalog.length > 0 && <div className="catalogResults">{catalog.map((item) => <button type="button" key={item.url} className={editor.value === item.url ? "selected" : ""} onClick={() => setEditor({ ...editor, value: item.url })}><span><strong>{item.name}</strong><small>{item.file} · {catalogFileHint(item.file)}</small></span><em>{editor.value === item.url ? "已选择" : "选择"}</em></button>)}</div>}</section>}<label>{editor.type === "RULE-SET" ? "规则集地址" : "域名或地址"}<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder={editor.type === "RULE-SET" ? "可搜索选择，也可以粘贴公开规则集地址" : "例如：example.com"} /></label><label>附加选项 <small>不确定时请留空</small><input value={editor.options} onChange={(event) => setEditor({ ...editor, options: event.target.value })} placeholder="例如：no-resolve（通常可以留空）" /></label></>}<footer><button type="button" className="ghost" onClick={() => setEditor(null)}>取消</button><button className="primary" type="submit">暂存修改</button></footer></form></div>;
 }
