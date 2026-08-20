@@ -75,7 +75,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       headers: {
         "Content-Type": shadowrocket ? "text/plain; charset=utf-8" : "text/yaml; charset=utf-8",
         "Content-Disposition": `inline; filename=${shadowrocket ? "MW-Shadowrocket.conf" : "MW-ClashX-Meta.yaml"}`,
-        "Cache-Control": "no-store, max-age=0",
+        // OpenClash has a short download timeout. Cache the generated profile at
+        // the edge so router clients do not wait for live airport parsing.
+        "Cache-Control": "public, max-age=300, s-maxage=300, stale-while-revalidate=600",
         "Profile-Update-Interval": "6",
         "X-MW-Node-Source": liveAirportContent ? "live" : "secure-snapshot",
       },
