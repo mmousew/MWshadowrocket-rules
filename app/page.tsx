@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent } from "react";
 
-type View = "overview" | "groups" | "rules" | "sets" | "conflicts";
+type View = "overview" | "groups" | "rules" | "sets" | "clash" | "conflicts";
 type Group = { index: number; name: string; kind: string; items: string[] };
 type Rule = { index: number; type: string; value: string; policy: string; options: string[] };
 type CatalogResult = { name: string; file: string; url: string; source: string };
@@ -48,6 +48,7 @@ const nav: { id: View; label: string }[] = [
   { id: "groups", label: "分组" },
   { id: "rules", label: "域名" },
   { id: "sets", label: "规则" },
+  { id: "clash", label: "订阅" },
   { id: "conflicts", label: "检查" },
 ];
 
@@ -329,7 +330,7 @@ export default function Home() {
       <section className="content">
         <header className="topbar">
           <div className="titleBlock">{view !== "overview" && <button className="backButton" onClick={goBack} aria-label="返回上一页">← <span>返回</span></button>}<div><p className="eyebrow">SHADOWROCKET CONFIGURATION</p><h1>{nav.find((item) => item.id === view)?.label}{view === "rules" && parsed.groups.some((group) => group.name === query) ? ` · ${query}` : ""}</h1></div></div>
-          <div className="topActions"><button className="ghost" onClick={() => setPreview(true)}>预览配置</button>{view !== "overview" && view !== "conflicts" && <button className="primary" onClick={openNew}>＋ 新增</button>}<button className={`saveButton ${dirty ? "ready" : ""}`} disabled={!dirty || saving} onClick={save}>{saving ? "保存中…" : "保存到 GitHub"}</button><a className="logoutButton" href="/api/auth/github/logout">退出</a></div>
+          <div className="topActions"><button className="ghost" onClick={() => setPreview(true)}>预览配置</button>{(["groups", "rules", "sets"] as View[]).includes(view) && <button className="primary" onClick={openNew}>＋ 新增</button>}<button className={`saveButton ${dirty ? "ready" : ""}`} disabled={!dirty || saving} onClick={save}>{saving ? "保存中…" : "保存到 GitHub"}</button><a className="logoutButton" href="/api/auth/github/logout">退出</a></div>
         </header>
 
         {error && <div className="errorBanner"><span>!</span><pre>{error}</pre><button onClick={() => setError("")}>×</button></div>}
@@ -368,6 +369,8 @@ export default function Home() {
           : <div className="listPanel">{filteredRules.slice(0, 250).map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}{filteredRules.length > 250 && <div className="listNote">结果较多，仅显示前 250 项，请使用搜索缩小范围。</div>}</div>}
         </>}
 
+        {view === "clash" && <ClashSubscription />}
+
         {view === "conflicts" && <section className="panel audit"><div className={`auditMark ${conflicts.length ? "warn" : ""}`}>{conflicts.length ? "!" : "✓"}</div><h2>{conflicts.length ? "需要处理后才能保存" : "没有发现相反策略冲突"}</h2><p>{conflicts.length ? "以下规则需要确认优先级或策略。" : "代理分组引用、重复规则与 FINAL 位置均通过检查。"}</p>{conflicts.length > 0 && <ul>{conflicts.map((item) => <li key={item}>{item}</li>)}</ul>}<button className="ghost" onClick={() => setPreview(true)}>查看原始配置</button></section>}
       </section>
 
@@ -376,6 +379,28 @@ export default function Home() {
       {preview && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭配置预览" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(false); }} onKeyDown={(event) => { if (event.key === "Escape") setPreview(false); }}><section className="previewModal" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header><div><h2 id="preview-title">配置预览</h2><p>{content.split(/\r?\n/).length.toLocaleString()} 行 · {repository}</p></div><button onClick={() => setPreview(false)}>×</button></header><pre>{content}</pre></section></div>}
     </main>
   );
+}
+
+function ClashSubscription() {
+  const [link, setLink] = useState("");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/clash/link", { cache: "no-store" }).then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "读取订阅链接失败");
+      setLink(data.url);
+    }).catch((cause) => setError(cause instanceof Error ? cause.message : "读取订阅链接失败"));
+  }, []);
+
+  async function copyLink() {
+    await navigator.clipboard.writeText(link);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }
+
+  return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">自动合并机场节点、国家分组和当前 GitHub 规则。客户端每 6 小时可检查一次更新。</p>{error ? <div className="clashError">{error}</div> : link ? <><label>私有订阅地址<input readOnly value={link} onFocus={(event) => event.currentTarget.select()} /></label><div className="clashActions"><button className="primary" onClick={copyLink}>{copied ? "已复制" : "复制订阅链接"}</button><a className="ghost" href={`clash://install-config?url=${encodeURIComponent(link)}&name=${encodeURIComponent("MW Rules")}`}>在 ClashX Meta 中打开</a></div></> : <p className="clashLoading">正在生成私有地址…</p>}<ul><li>此链接相当于密码，请勿发到公开群组或截图分享。</li><li>GitHub 规则保存后，Clash 更新订阅即可获取最新内容。</li><li>Clash 不支持的 User-Agent 和 URL-REGEX 规则会自动跳过。</li></ul></section>;
 }
 
 function GroupCard({ group, ruleCount, tone, onEdit, onRules }: { group: Group; ruleCount: number; tone: string; onEdit: () => void; onRules: () => void }) {

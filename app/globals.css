@@ -129,6 +129,26 @@ button,input,select,textarea { max-width:100%; }
   .loginCard{padding:28px 20px}
 }
 
+/* ClashX Meta subscription */
+.clashPanel { max-width:780px; margin:0 auto; padding:34px; border:1px solid var(--line); border-radius:18px; background:#fff; box-shadow:0 18px 50px #20392c0b; }
+.clashBadge { display:grid; place-items:center; width:58px; height:58px; margin-bottom:18px; border-radius:16px; color:#dff6e8; background:#17231e; font-size:11px; font-weight:850; letter-spacing:.08em; }
+.clashPanel h2 { margin:7px 0 9px; font-size:25px; letter-spacing:-.035em; }
+.clashIntro { max-width:610px; margin:0 0 24px; color:#6f7e76; font-size:12px; line-height:1.7; }
+.clashPanel label { display:block; color:#4e5e55; font-size:11px; font-weight:750; }
+.clashPanel input { width:100%; margin-top:8px; padding:12px 13px; border:1px solid #dce3de; border-radius:10px; color:#314139; background:#f8faf8; font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; outline:0; }
+.clashPanel input:focus { border-color:#64a287; box-shadow:0 0 0 3px #64a28716; }
+.clashActions { display:flex; gap:9px; margin:14px 0 22px; }
+.clashActions a { display:inline-flex; align-items:center; text-decoration:none; }
+.clashPanel ul { margin:0; padding:16px 16px 16px 31px; border-radius:11px; color:#66756d; background:#f4f7f5; font-size:10px; line-height:1.8; }
+.clashError { margin:15px 0; padding:12px; border:1px solid #efc5bc; border-radius:10px; color:#873825; background:#fff1ee; font-size:11px; }
+.clashLoading { color:#7e8c84; font-size:11px; }
+
+@media(max-width:600px){
+  .clashPanel { padding:22px 17px; }
+  .clashActions { align-items:stretch; flex-direction:column; }
+  .clashActions>* { justify-content:center; width:100%; text-align:center; }
+}
+
 @media(max-width:390px){
   .metrics{grid-template-columns:1fr}
   .topActions{grid-template-columns:1fr}
