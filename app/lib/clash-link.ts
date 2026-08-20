@@ -7,10 +7,11 @@ function getKey() {
   return Uint8Array.from(raw.match(/.{2}/g) || [], (byte) => Number.parseInt(byte, 16));
 }
 
-export async function encryptSourceUrl(sourceUrl: string) {
+export async function encryptSourceUrl(sourceUrl: string | string[]) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await crypto.subtle.importKey("raw", getKey(), "AES-GCM", false, ["encrypt"]);
-  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(sourceUrl));
+  const value = Array.isArray(sourceUrl) ? JSON.stringify(sourceUrl) : sourceUrl;
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(value));
   return Buffer.concat([Buffer.from(iv), Buffer.from(encrypted)]).toString("base64url");
 }
 

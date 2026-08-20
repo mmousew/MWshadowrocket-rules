@@ -219,8 +219,15 @@ function convertRules(rules: ShadowrocketRule[]) {
   return { converted, providers, skipped };
 }
 
-export function buildClashConfig(ruleContent: string, airportContent: string) {
-  const proxies = parseAirportProxies(airportContent);
+export function buildClashConfig(ruleContent: string, airportContent: string | string[]) {
+  const sources = Array.isArray(airportContent) ? airportContent : [airportContent];
+  const seenProxyNames = new Set<string>();
+  const proxies = sources.flatMap((source) => parseAirportProxies(source)).filter((proxy) => {
+    const name = String(proxy.name || "");
+    if (!name || seenProxyNames.has(name)) return false;
+    seenProxyNames.add(name);
+    return true;
+  });
   if (!proxies.length) throw new Error("机场配置没有可转换的节点");
   const { groups, rules } = parseGroupsAndRules(ruleContent);
   const proxyGroups = convertGroups(groups, proxies.map((proxy) => String(proxy.name)));

@@ -24,8 +24,16 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
   if (!expectedToken || token !== expectedToken) return new NextResponse("订阅链接无效", { status: 404 });
 
   try {
-    const airportUrl = encryptedSource ? await decryptSourceUrl(encryptedSource) : process.env.AIRPORT_SHADOWROCKET_URL;
-    if (!airportUrl) return new NextResponse("尚未配置机场来源", { status: 503 });
+    const encryptedValue = encryptedSource ? await decryptSourceUrl(encryptedSource) : process.env.AIRPORT_SHADOWROCKET_URL || "";
+    let airportUrls: string[];
+    try {
+      const parsed = JSON.parse(encryptedValue);
+      airportUrls = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [encryptedValue];
+    } catch {
+      airportUrls = [encryptedValue];
+    }
+    airportUrls = airportUrls.map((url) => url.trim()).filter(Boolean);
+    if (!airportUrls.length) return new NextResponse("尚未配置机场来源", { status: 503 });
     const [ruleResponse, airportResult] = await Promise.all([
       fetch(`${API_URL}?ref=${encodeURIComponent(BRANCH)}`, {
         headers: {
@@ -36,17 +44,17 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
         },
         cache: "no-store",
       }),
-      fetchAirportSubscription(airportUrl)
-        .then(({ content }) => ({ ok: true, content }))
-        .catch(() => ({ ok: false, content: "" })),
+      Promise.all(airportUrls.map((url) => fetchAirportSubscription(url)))
+        .then((results) => ({ ok: true, content: results.map((result) => result.content) }))
+        .catch(() => ({ ok: false, content: [] as string[] })),
     ]);
     if (!ruleResponse.ok) throw new Error(`读取 GitHub 规则失败（${ruleResponse.status}）`);
     const file = await ruleResponse.json() as GitHubFile;
     if (!file.content) throw new Error(file.message || "GitHub 规则内容为空");
     const ruleContent = Buffer.from(file.content.replace(/\n/g, ""), "base64").toString("utf8");
-    const liveAirportContent = airportResult.ok ? airportResult.content : "";
-    const airportContent = liveAirportContent || (encryptedSource ? "" : getAirportSnapshot());
-    if (!airportContent) throw new Error("机场在线地址暂时不可用，且没有安全节点快照");
+    const liveAirportContent = airportResult.ok ? airportResult.content : [];
+    const airportContent = liveAirportContent.length ? liveAirportContent : (encryptedSource ? [] : [getAirportSnapshot()]);
+    if (!airportContent.length || !airportContent[0]) throw new Error("机场在线地址暂时不可用，且没有安全节点快照");
     const clash = buildClashConfig(ruleContent, airportContent);
     return new NextResponse(clash, {
       headers: {

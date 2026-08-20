@@ -19,13 +19,16 @@ export async function POST(request: NextRequest) {
   const token = process.env.CLASH_ACCESS_TOKEN;
   if (!token) return NextResponse.json({ error: "尚未配置 Clash 私有订阅" }, { status: 503 });
   try {
-    const body = await request.json() as { sourceUrl?: string };
-    const sourceUrl = body.sourceUrl?.trim() || "";
-    const { nodeCount } = await fetchAirportSubscription(sourceUrl);
-    const encryptedSource = await encryptSourceUrl(sourceUrl);
+    const body = await request.json() as { sourceUrl?: string; sourceUrls?: string[] };
+    const sourceUrls = (body.sourceUrls || body.sourceUrl?.split(/\r?\n/) || []).map((url) => url.trim()).filter(Boolean);
+    if (!sourceUrls.length) throw new Error("请至少输入一个机场订阅地址");
+    const results = await Promise.all(sourceUrls.map((url) => fetchAirportSubscription(url)));
+    const nodeCount = results.reduce((total, result) => total + result.nodeCount, 0);
+    const encryptedSource = await encryptSourceUrl(sourceUrls);
     return NextResponse.json({
       url: `${new URL(request.url).origin}/api/clash/${encodeURIComponent(token)}?source=${encodeURIComponent(encryptedSource)}`,
       nodeCount,
+      sourceCount: sourceUrls.length,
       updateHours: 6,
     });
   } catch (error) {
