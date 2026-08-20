@@ -537,7 +537,8 @@ function ClashSubscription() {
   }
 
   function shadowrocketUrl(value: string) {
-    return value.replace("/api/clash/", "/api/shadowrocket/");
+    const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
+    return token ? `https://656577.xyz/mw-shadowrocket.php?token=${encodeURIComponent(token)}` : value.replace("/api/clash/", "/api/shadowrocket/");
   }
 
   function clashRelayUrl(value: string) {
