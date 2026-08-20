@@ -180,7 +180,8 @@ export function getAirportProxyCount(content: string) {
   return parseAirportProxies(content).length;
 }
 
-function convertGroups(groups: ShadowrocketGroup[]) {
+function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
+  const available = new Set(["DIRECT", "REJECT", "PROXY", ...proxyNames, ...groups.map((group) => group.name)]);
   const converted: Record<string, unknown>[] = [{ name: "PROXY", type: "select", "include-all": true }];
   for (const group of groups) {
     const regex = group.items.find((item) => item.startsWith("policy-regex-filter="))?.slice("policy-regex-filter=".length);
@@ -189,7 +190,7 @@ function convertGroups(groups: ShadowrocketGroup[]) {
       converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", "include-all": true, ...(regex ? { filter: `(?i)${regex}` } : {}) });
       continue;
     }
-    const proxies = group.items.filter((item) => !item.includes("=")).map((item) => item === "PROXY" ? "PROXY" : item);
+    const proxies = group.items.filter((item) => !item.includes("=") && !/^(Traffic|Expire|流量|到期|剩余)\b/i.test(item) && available.has(item)).map((item) => item === "PROXY" ? "PROXY" : item);
     converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", proxies: proxies.length ? proxies : ["DIRECT"] });
   }
   return converted;
@@ -222,7 +223,7 @@ export function buildClashConfig(ruleContent: string, airportContent: string) {
   const proxies = parseAirportProxies(airportContent);
   if (!proxies.length) throw new Error("机场配置没有可转换的节点");
   const { groups, rules } = parseGroupsAndRules(ruleContent);
-  const proxyGroups = convertGroups(groups);
+  const proxyGroups = convertGroups(groups, proxies.map((proxy) => String(proxy.name)));
   const { converted, providers, skipped } = convertRules(rules);
   const providerYaml = providers.length ? `\nrule-providers:\n${providers.map((provider) => `  ${provider.name}:\n    type: http\n    behavior: classical\n    format: ${provider.format}\n    url: ${quote(provider.url)}\n    path: ./ruleset/${provider.name}.${provider.format === "yaml" ? "yaml" : "list"}\n    interval: 86400`).join("\n")}` : "";
 
