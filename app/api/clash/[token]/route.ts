@@ -9,6 +9,12 @@ const API_URL = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_P
 
 type GitHubFile = { content?: string; message?: string };
 
+function getAirportSnapshot() {
+  let encoded = "";
+  for (let index = 1; index <= 10; index += 1) encoded += process.env[`AIRPORT_PROXY_SNAPSHOT_${index}`] || "";
+  return encoded ? `[Proxy]\n${Buffer.from(encoded, "base64").toString("utf8")}\n` : "";
+}
+
 export async function GET(_request: NextRequest, context: { params: Promise<{ token: string }> }) {
   const { token } = await context.params;
   const expectedToken = process.env.CLASH_ACCESS_TOKEN;
@@ -17,7 +23,7 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ to
   if (!airportUrl) return new NextResponse("尚未配置机场来源", { status: 503 });
 
   try {
-    const [ruleResponse, airportResponse] = await Promise.all([
+    const [ruleResponse, airportResult] = await Promise.all([
       fetch(`${API_URL}?ref=${encodeURIComponent(BRANCH)}`, {
         headers: {
           Accept: "application/vnd.github+json",
@@ -27,14 +33,17 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ to
         },
         cache: "no-store",
       }),
-      fetch(airportUrl, { headers: { "User-Agent": "Shadowrocket/2610 CFNetwork/3826.500.131 Darwin/24.5.0" }, cache: "no-store" }),
+      fetch(airportUrl, { headers: { "User-Agent": "Shadowrocket/2610 CFNetwork/3826.500.131 Darwin/24.5.0" }, cache: "no-store" })
+        .then(async (response) => ({ ok: response.ok, content: response.ok ? await response.text() : "" }))
+        .catch(() => ({ ok: false, content: "" })),
     ]);
     if (!ruleResponse.ok) throw new Error(`读取 GitHub 规则失败（${ruleResponse.status}）`);
-    if (!airportResponse.ok) throw new Error(`读取机场节点失败（${airportResponse.status}）`);
     const file = await ruleResponse.json() as GitHubFile;
     if (!file.content) throw new Error(file.message || "GitHub 规则内容为空");
     const ruleContent = Buffer.from(file.content.replace(/\n/g, ""), "base64").toString("utf8");
-    const airportContent = await airportResponse.text();
+    const liveAirportContent = airportResult.ok && airportResult.content.includes("[Proxy]") ? airportResult.content : "";
+    const airportContent = liveAirportContent || getAirportSnapshot();
+    if (!airportContent) throw new Error("机场在线地址暂时不可用，且没有安全节点快照");
     const clash = buildClashConfig(ruleContent, airportContent);
     return new NextResponse(clash, {
       headers: {
@@ -42,6 +51,7 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ to
         "Content-Disposition": "inline; filename=MW-ClashX-Meta.yaml",
         "Cache-Control": "no-store, max-age=0",
         "Profile-Update-Interval": "6",
+        "X-MW-Node-Source": liveAirportContent ? "live" : "secure-snapshot",
       },
     });
   } catch (error) {
