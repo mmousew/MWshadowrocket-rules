@@ -136,6 +136,16 @@ export default function Home() {
     setQuery(group.name);
   }
 
+  function goBack() {
+    if (view === "rules" && parsed.groups.some((group) => group.name === query)) {
+      setView("groups");
+    } else {
+      setView("overview");
+    }
+    setQuery("");
+    setError("");
+  }
+
   function editGroup(group: Group) {
     setEditor({ mode: "group", index: group.index, name: group.name, items: [group.kind, ...group.items].join("\n") });
   }
@@ -224,7 +234,7 @@ export default function Home() {
 
       <section className="content">
         <header className="topbar">
-          <div><p className="eyebrow">SHADOWROCKET CONFIGURATION</p><h1>{nav.find((item) => item.id === view)?.label}</h1></div>
+          <div className="titleBlock">{view !== "overview" && <button className="backButton" onClick={goBack} aria-label="返回上一页">← <span>返回</span></button>}<div><p className="eyebrow">SHADOWROCKET CONFIGURATION</p><h1>{nav.find((item) => item.id === view)?.label}{view === "rules" && parsed.groups.some((group) => group.name === query) ? ` · ${query}` : ""}</h1></div></div>
           <div className="topActions"><button className="ghost" onClick={() => setPreview(true)}>预览配置</button>{view !== "overview" && view !== "conflicts" && <button className="primary" onClick={openNew}>＋ 新增</button>}<button className={`saveButton ${dirty ? "ready" : ""}`} disabled={!dirty || saving} onClick={save}>{saving ? "保存中…" : "保存到 GitHub"}</button></div>
         </header>
 
