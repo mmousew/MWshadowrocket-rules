@@ -271,5 +271,7 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   const proxySection = ["[Proxy]", ...existing, ...generated];
   if (proxyStart < 0) return `${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`;
   const end = nextSection > proxyStart ? nextSection : lines.length;
-  return [...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n");
+  const config = [...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n");
+  // Shadowrocket does not understand geosite rule references; omit them only from its output.
+  return config.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n");
 }
