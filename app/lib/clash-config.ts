@@ -236,3 +236,40 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
 
   return `# MW Rules for ClashX Meta\n# 自动合并机场节点与 GitHub 分流规则；跳过 ${skipped} 条 Clash 不支持的规则\nmixed-port: 7890\nmode: rule\nallow-lan: false\nlog-level: info\nipv6: false\nunified-delay: true\ntcp-concurrent: true\nfind-process-mode: strict\n\ndns:\n  enable: true\n  ipv6: false\n  enhanced-mode: fake-ip\n  nameserver:\n    - https://223.5.5.5/dns-query\n    - https://1.12.12.12/dns-query\n  fake-ip-filter:\n    - "*.lan"\n    - "+.local"\n    - "localhost.ptlogin2.qq.com"\n\nproxies:\n${yamlList(proxies)}\n\nproxy-groups:\n${yamlList(proxyGroups)}${providerYaml}\n\nrules:\n${converted.map((rule) => `  - ${quote(rule)}`).join("\n")}\n`;
 }
+
+function shadowrocketProxyLine(proxy: ClashProxy) {
+  const name = String(proxy.name || "").replace(/[\r\n=]/g, " ").trim();
+  const server = String(proxy.server || "");
+  const port = String(proxy.port || "");
+  const cipher = String(proxy.cipher || "aes-128-gcm");
+  const password = String(proxy.password || "").replace(/[\r\n,]/g, " ");
+  if (!name || !server || !port || !password) return "";
+  const options = [`encrypt-method=${cipher}`, `password=${password}`, "udp-relay=true"];
+  const pluginOptions = proxy["plugin-opts"] as Record<string, unknown> | undefined;
+  if (proxy.plugin === "obfs" && pluginOptions?.mode) {
+    options.push(`obfs=${String(pluginOptions.mode)}`);
+    if (pluginOptions.host) options.push(`obfs-host=${String(pluginOptions.host)}`);
+  }
+  return `${name}=ss,${server},${port},${options.join(",")}`;
+}
+
+export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[]) {
+  const sources = Array.isArray(airportContent) ? airportContent : [airportContent];
+  const airportProxies = sources.flatMap((source) => parseAirportProxies(source));
+  if (!airportProxies.length) throw new Error("机场配置没有可转换的小火箭节点");
+  const lines = ruleContent.split(/\r?\n/);
+  const proxyStart = lines.findIndex((line) => line.trim() === "[Proxy]");
+  const nextSection = lines.findIndex((line, index) => index > proxyStart && /^\s*\[.+\]\s*$/.test(line));
+  const existing = proxyStart >= 0 ? lines.slice(proxyStart + 1, nextSection > proxyStart ? nextSection : undefined).filter((line) => line.trim() && !line.trim().startsWith("#")) : [];
+  const names = new Set(existing.map((line) => line.slice(0, line.indexOf("=")).trim()));
+  const generated = airportProxies.map(shadowrocketProxyLine).filter(Boolean).filter((line) => {
+    const name = line.slice(0, line.indexOf("=")).trim();
+    if (names.has(name)) return false;
+    names.add(name);
+    return true;
+  });
+  const proxySection = ["[Proxy]", ...existing, ...generated];
+  if (proxyStart < 0) return `${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`;
+  const end = nextSection > proxyStart ? nextSection : lines.length;
+  return [...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n");
+}

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildClashConfig } from "../../../lib/clash-config";
+import { buildClashConfig, buildShadowrocketConfig } from "../../../lib/clash-config";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink } from "../../../lib/clash-links";
@@ -68,11 +68,13 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     const liveAirportContent = airportResult.ok ? airportResult.content : [];
     const airportContent = liveAirportContent.length ? liveAirportContent : (encryptedSource ? [] : [getAirportSnapshot()]);
     if (!airportContent.length || !airportContent[0]) throw new Error("机场在线地址暂时不可用，且没有安全节点快照");
-    const clash = buildClashConfig(ruleContent, airportContent);
-    return new NextResponse(clash, {
+    const userAgent = request.headers.get("user-agent") || "";
+    const shadowrocket = request.nextUrl.searchParams.get("format") === "shadowrocket" || /shadowrocket/i.test(userAgent);
+    const config = shadowrocket ? buildShadowrocketConfig(ruleContent, airportContent) : buildClashConfig(ruleContent, airportContent);
+    return new NextResponse(config, {
       headers: {
-        "Content-Type": "text/yaml; charset=utf-8",
-        "Content-Disposition": "inline; filename=MW-ClashX-Meta.yaml",
+        "Content-Type": shadowrocket ? "text/plain; charset=utf-8" : "text/yaml; charset=utf-8",
+        "Content-Disposition": `inline; filename=${shadowrocket ? "MW-Shadowrocket.conf" : "MW-ClashX-Meta.yaml"}`,
         "Cache-Control": "no-store, max-age=0",
         "Profile-Update-Interval": "6",
         "X-MW-Node-Source": liveAirportContent ? "live" : "secure-snapshot",
