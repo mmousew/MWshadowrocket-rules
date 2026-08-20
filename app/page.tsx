@@ -116,6 +116,7 @@ export default function Home() {
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [bulkTargetPolicy, setBulkTargetPolicy] = useState("");
   const [editor, setEditor] = useState<Editor | null>(null);
   const [preview, setPreview] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
@@ -310,6 +311,21 @@ export default function Home() {
     setToast(`已将 ${additions.length} 个规则集导入「${policy}」，保存后生效`);
   }
 
+  function transferFilteredRules(targetPolicy: string) {
+    if (!query.trim() || !filteredRules.length || !targetPolicy) return;
+    const transferable = filteredRules.filter((rule) => rule.policy !== targetPolicy);
+    if (!transferable.length) {
+      setToast(`搜索结果已经全部属于「${targetPolicy}」`);
+      return;
+    }
+    const lines = [...parsed.lines];
+    transferable.forEach((rule) => {
+      lines[rule.index] = [rule.type, rule.value, targetPolicy, ...rule.options].join(",");
+    });
+    markContent(lines.join("\n"));
+    setToast(`已将 ${transferable.length} 条搜索结果转移到「${targetPolicy}」，保存后生效`);
+  }
+
   function removeGroup(group: Group) {
     const used = parsed.rules.some((rule) => rule.policy === group.name) || parsed.groups.some((item) => item.index !== group.index && item.items.includes(group.name));
     if (used) return setError(`「${group.name}」仍被其他规则或分组引用，不能直接删除`);
@@ -369,7 +385,7 @@ export default function Home() {
         </>}
 
         {(view === "groups" || view === "rules" || view === "sets") && <>
-          <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label><span>{view === "groups" ? filteredGroups.length : filteredRules.length} 项</span></div>
+          <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label>{view !== "groups" && query.trim() && filteredRules.length > 0 && <div className="bulkTransfer"><span>转移到</span><select value={bulkTargetPolicy || policies[0] || ""} onChange={(event) => setBulkTargetPolicy(event.target.value)} aria-label="批量转移目标分组">{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><button type="button" onClick={() => transferFilteredRules(bulkTargetPolicy || policies[0] || "")}>转移当前 {filteredRules.length} 条</button></div>}<span>{view === "groups" ? filteredGroups.length : filteredRules.length} 项</span></div>
           {view === "groups" ? <><p className={`dragHelp ${query ? "disabled" : ""}`}>{query ? "清空搜索后可以拖拽调整完整分组顺序" : "按住左侧或整行拖动排序；也可以用上移/下移"}</p><div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); return <div
             className={`listRow groupListRow ${draggingGroup === group.name ? "dragging" : ""} ${dragTargetGroup === group.name && draggingGroup !== group.name ? "dropTarget" : ""}`}
             data-group-name={group.name}
