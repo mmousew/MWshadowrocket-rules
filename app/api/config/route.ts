@@ -57,7 +57,6 @@ function validateConfig(content: string) {
     }
   }
 
-  const seen = new Map<string, { policy: string; line: number }>();
   let lastRule = "";
   if (ruleStart >= 0) {
     lines.slice(ruleStart + 1).forEach((raw, offset) => {
@@ -81,13 +80,6 @@ function validateConfig(content: string) {
         return;
       }
       const [type, value, policy] = parts;
-      const key = `${type},${value}`;
-      const previous = seen.get(key);
-      if (previous && previous.policy !== policy) {
-        errors.push(`规则冲突：${key} 同时指向 ${previous.policy} 和 ${policy}`);
-      } else if (!previous) {
-        seen.set(key, { policy, line: ruleStart + offset + 2 });
-      }
       if (!BUILTIN_POLICIES.has(policy) && !groups.has(policy)) {
         errors.push(`第 ${ruleStart + offset + 2} 行引用不存在的策略：${policy}`);
       }
