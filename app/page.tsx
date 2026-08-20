@@ -1,0 +1,239 @@
+"use client";
+
+import { FormEvent, useEffect, useMemo, useState } from "react";
+
+type View = "overview" | "groups" | "rules" | "sets" | "conflicts";
+type Group = { index: number; name: string; kind: string; items: string[] };
+type Rule = { index: number; type: string; value: string; policy: string; options: string[] };
+type Editor =
+  | { mode: "group"; index: number | null; name: string; items: string }
+  | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
+
+const RULE_TYPES = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "RULE-SET", "IP-CIDR", "IP-CIDR6", "GEOIP"];
+const BUILTINS = ["DIRECT", "PROXY", "REJECT"];
+const nav: { id: View; icon: string; label: string }[] = [
+  { id: "overview", icon: "⌘", label: "规则总览" },
+  { id: "groups", icon: "◎", label: "代理分组" },
+  { id: "rules", icon: "↳", label: "域名规则" },
+  { id: "sets", icon: "⇣", label: "远程规则集" },
+  { id: "conflicts", icon: "✓", label: "冲突检查" },
+];
+
+function parseConfig(content: string) {
+  const lines = content.split(/\r?\n/);
+  const groupStart = lines.findIndex((line) => line.trim() === "[Proxy Group]");
+  const ruleStart = lines.findIndex((line) => line.trim() === "[Rule]");
+  const groups: Group[] = [];
+  const rules: Rule[] = [];
+  lines.forEach((raw, index) => {
+    if (index > groupStart && index < ruleStart) {
+      const match = raw.match(/^\s*([^#=]+?)\s*=\s*(.+)$/);
+      if (match) {
+        const items = match[2].split(",").map((item) => item.trim()).filter(Boolean);
+        groups.push({ index, name: match[1].trim(), kind: items[0] || "select", items: items.slice(1) });
+      }
+    }
+    if (index > ruleStart && raw.trim() && !raw.trim().startsWith("#")) {
+      const parts = raw.split(",").map((item) => item.trim());
+      if (parts.length >= 3) rules.push({ index, type: parts[0], value: parts[1], policy: parts[2], options: parts.slice(3) });
+    }
+  });
+  return { lines, groups, rules, groupStart, ruleStart };
+}
+
+function getConflicts(groups: Group[], rules: Rule[]) {
+  const groupNames = new Set(groups.map((group) => group.name));
+  const seen = new Map<string, Rule>();
+  const conflicts: string[] = [];
+  rules.forEach((rule) => {
+    const key = `${rule.type},${rule.value}`;
+    const previous = seen.get(key);
+    if (previous && previous.policy !== rule.policy) conflicts.push(`${key} 同时指向「${previous.policy}」和「${rule.policy}」`);
+    else if (!previous) seen.set(key, rule);
+    if (![...BUILTINS, "REJECT-DROP", "REJECT-NO-DROP"].includes(rule.policy) && !groupNames.has(rule.policy)) {
+      conflicts.push(`${key} 引用了不存在的策略「${rule.policy}」`);
+    }
+  });
+  return Array.from(new Set(conflicts));
+}
+
+function replaceLine(content: string, index: number, value: string) {
+  const lines = content.split(/\r?\n/);
+  lines[index] = value;
+  return lines.join("\n");
+}
+
+function insertLine(content: string, index: number, value: string) {
+  const lines = content.split(/\r?\n/);
+  lines.splice(index, 0, value);
+  return lines.join("\n");
+}
+
+export default function Home() {
+  const [view, setView] = useState<View>("overview");
+  const [content, setContent] = useState("");
+  const [sha, setSha] = useState("");
+  const [repository, setRepository] = useState("mmousew/MWshadowrocket-rules");
+  const [branch, setBranch] = useState("rules/initial-region-module");
+  const [sourceUrl, setSourceUrl] = useState("https://github.com/mmousew/MWshadowrocket-rules");
+  const [saveEnabled, setSaveEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const [preview, setPreview] = useState(false);
+  const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    fetch("/api/config", { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "读取配置失败");
+        setContent(data.content); setSha(data.sha); setRepository(data.repository); setBranch(data.branch);
+        setSourceUrl(data.sourceUrl); setSaveEnabled(data.saveEnabled); setLoading(false);
+      })
+      .catch((cause) => { setError(cause.message); setLoading(false); });
+  }, []);
+
+  const parsed = useMemo(() => parseConfig(content), [content]);
+  const conflicts = useMemo(() => getConflicts(parsed.groups, parsed.rules), [parsed.groups, parsed.rules]);
+  const ruleSets = useMemo(() => parsed.rules.filter((rule) => rule.type === "RULE-SET"), [parsed.rules]);
+  const domainRules = useMemo(() => parsed.rules.filter((rule) => rule.type !== "RULE-SET" && rule.type !== "FINAL"), [parsed.rules]);
+  const policies = useMemo(() => [...parsed.groups.map((group) => group.name), ...BUILTINS], [parsed.groups]);
+  const filteredGroups = parsed.groups.filter((group) => `${group.name} ${group.items.join(" ")}`.toLowerCase().includes(query.toLowerCase()));
+  const activeRules = view === "sets" ? ruleSets : domainRules;
+  const filteredRules = activeRules.filter((rule) => `${rule.type} ${rule.value} ${rule.policy}`.toLowerCase().includes(query.toLowerCase()));
+
+  function markContent(next: string) { setContent(next); setDirty(true); setToast("修改已暂存，保存后同步到 GitHub"); }
+
+  function openNew() {
+    if (view === "groups") setEditor({ mode: "group", index: null, name: "", items: "select\nDIRECT" });
+    else setEditor({ mode: "rule", index: null, type: view === "sets" ? "RULE-SET" : "DOMAIN-SUFFIX", value: "", policy: "国内直连", options: "" });
+  }
+
+  function editGroup(group: Group) {
+    setEditor({ mode: "group", index: group.index, name: group.name, items: [group.kind, ...group.items].join("\n") });
+  }
+
+  function editRule(rule: Rule) {
+    setEditor({ mode: "rule", index: rule.index, type: rule.type, value: rule.value, policy: rule.policy, options: rule.options.join(",") });
+  }
+
+  function submitEditor(event: FormEvent) {
+    event.preventDefault();
+    if (!editor) return;
+    if (editor.mode === "group") {
+      const name = editor.name.trim();
+      const items = editor.items.split(/\n|,/).map((item) => item.trim()).filter(Boolean);
+      if (!name || !items.length) return setError("分组名称和配置项不能为空");
+      const line = `${name} = ${items.join(",")}`;
+      if (editor.index === null) {
+        markContent(insertLine(content, parsed.ruleStart, `${line}\n`));
+      } else {
+        const oldName = parsed.groups.find((group) => group.index === editor.index)?.name || name;
+        let next = replaceLine(content, editor.index, line);
+        if (oldName !== name) {
+          const nextLines = next.split(/\r?\n/).map((raw) => {
+            if (!raw.trim() || raw.trim().startsWith("#")) return raw;
+            if (raw.includes("=")) {
+              const [left, right] = raw.split(/=(.*)/s);
+              const tokens = right.split(",").map((token) => token.trim() === oldName ? name : token.trim());
+              return `${left.trim()} = ${tokens.join(",")}`;
+            }
+            const parts = raw.split(",");
+            if (parts[2]?.trim() === oldName) parts[2] = name;
+            return parts.join(",");
+          });
+          next = nextLines.join("\n");
+        }
+        markContent(next);
+      }
+    } else {
+      const value = editor.value.trim();
+      if (!value || !editor.policy) return setError("规则内容和策略不能为空");
+      const options = editor.options.split(",").map((item) => item.trim()).filter(Boolean);
+      const line = [editor.type, value, editor.policy, ...options].join(",");
+      if (editor.index === null) {
+        const importIndex = parsed.lines.findIndex((raw) => raw.includes("BEGIN Flower_SS"));
+        const finalIndex = parsed.lines.findIndex((raw) => raw.startsWith("FINAL,"));
+        const target = importIndex > parsed.ruleStart ? importIndex : finalIndex;
+        markContent(insertLine(content, target, line));
+      } else markContent(replaceLine(content, editor.index, line));
+    }
+    setEditor(null); setError("");
+  }
+
+  function removeGroup(group: Group) {
+    const used = parsed.rules.some((rule) => rule.policy === group.name) || parsed.groups.some((item) => item.index !== group.index && item.items.includes(group.name));
+    if (used) return setError(`「${group.name}」仍被其他规则或分组引用，不能直接删除`);
+    if (!confirm(`确定删除分组「${group.name}」吗？`)) return;
+    const lines = content.split(/\r?\n/); lines.splice(group.index, 1); markContent(lines.join("\n"));
+  }
+
+  function removeRule(rule: Rule) {
+    if (!confirm(`确定删除规则「${rule.value}」吗？`)) return;
+    const lines = content.split(/\r?\n/); lines.splice(rule.index, 1); markContent(lines.join("\n"));
+  }
+
+  async function save() {
+    if (conflicts.length) return setView("conflicts");
+    setSaving(true); setError("");
+    try {
+      const response = await fetch("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content, sha, message: "Update rules from MW Rules manager" }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error([data.error, ...(data.details || [])].join("\n"));
+      setSha(data.sha || sha); setDirty(false); setToast("已保存到 GitHub，小火箭可以更新配置了");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "保存失败"); }
+    finally { setSaving(false); }
+  }
+
+  if (loading) return <div className="loading"><span className="brandMark">MW</span><p>正在读取 GitHub 配置…</p></div>;
+
+  return (
+    <main className="shell">
+      <aside className="sidebar">
+        <div className="brand"><span className="brandMark">MW</span><span>Rules</span></div>
+        <nav aria-label="主导航">{nav.map((item) => <button key={item.id} onClick={() => { setView(item.id); setQuery(""); }} className={`navItem ${view === item.id ? "active" : ""}`}><span>{item.icon}</span>{item.label}</button>)}</nav>
+        <div className="repoCard"><span className="statusDot" /><div><strong>{repository}</strong><small>{branch}</small></div></div>
+      </aside>
+
+      <section className="content">
+        <header className="topbar">
+          <div><p className="eyebrow">SHADOWROCKET CONFIGURATION</p><h1>{nav.find((item) => item.id === view)?.label}</h1></div>
+          <div className="topActions"><button className="ghost" onClick={() => setPreview(true)}>预览配置</button>{view !== "overview" && view !== "conflicts" && <button className="primary" onClick={openNew}>＋ 新增</button>}<button className={`saveButton ${dirty ? "ready" : ""}`} disabled={!dirty || saving} onClick={save}>{saving ? "保存中…" : "保存到 GitHub"}</button></div>
+        </header>
+
+        {error && <div className="errorBanner"><span>!</span><pre>{error}</pre><button onClick={() => setError("")}>×</button></div>}
+        {toast && <div className="toast" onAnimationEnd={() => setToast("")}>{toast}</div>}
+
+        {view === "overview" && <>
+          <div className={`notice ${conflicts.length ? "warning" : ""}`}><span>{conflicts.length ? "!" : "✓"}</span><div><strong>{conflicts.length ? `发现 ${conflicts.length} 个问题` : "配置状态正常"}</strong><p>{saveEnabled ? "已连接 GitHub，可直接编辑并保存。" : "已连接只读数据，配置写入凭据后即可在线保存。"}</p></div><button onClick={() => setView("conflicts")}>查看检查结果</button></div>
+          <section className="metrics"><article><span>国家与节点组</span><strong>{parsed.groups.filter((group) => group.items.some((item) => item.startsWith("policy-regex-filter"))).length}</strong><small>动态匹配机场节点</small></article><article><span>全部分组</span><strong>{parsed.groups.length}</strong><small>国家、服务与策略</small></article><article><span>有效规则</span><strong>{parsed.rules.length.toLocaleString()}</strong><small>按优先级顺序执行</small></article><article><span>规则冲突</span><strong className={conflicts.length ? "bad" : "ok"}>{conflicts.length}</strong><small>保存前自动检查</small></article></section>
+          <section className="panel"><div className="panelHead"><div><h2>常用分组</h2><p>直接进入完整列表修改节点关键词和策略成员。</p></div><button className="textButton" onClick={() => setView("groups")}>查看全部 →</button></div><div className="groupGrid">{parsed.groups.filter((group) => ["德国", "Google", "PayPal"].includes(group.name)).map((group, i) => <GroupCard key={group.name} group={group} tone={["mint", "blue", "amber"][i]} onEdit={() => editGroup(group)} />)}</div></section>
+          <section className="panel compact"><div className="panelHead"><div><h2>工作方式</h2><p>每次保存先检查冲突，再生成一条可追溯的 GitHub 提交。</p></div></div><div className="activity"><span className="activityIcon">↻</span><div><strong>在线配置与小火箭保持同一来源</strong><p>保存后在设备上更新配置即可生效</p></div><a href={sourceUrl} target="_blank" rel="noreferrer">打开仓库</a></div></section>
+        </>}
+
+        {(view === "groups" || view === "rules" || view === "sets") && <>
+          <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label><span>{view === "groups" ? filteredGroups.length : filteredRules.length} 项</span></div>
+          {view === "groups" ? <div className="listPanel">{filteredGroups.map((group) => <div className="listRow" key={`${group.index}-${group.name}`}><div className="rowIcon">{group.name.slice(0, 1)}</div><div className="rowMain"><strong>{group.name}</strong><p>{group.kind} · {group.items.join(" · ")}</p></div><span className="pill">{group.items.length} 项</span><button onClick={() => editGroup(group)}>编辑</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>)}</div>
+          : <div className="listPanel">{filteredRules.slice(0, 250).map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}</span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}{filteredRules.length > 250 && <div className="listNote">结果较多，仅显示前 250 项，请使用搜索缩小范围。</div>}</div>}
+        </>}
+
+        {view === "conflicts" && <section className="panel audit"><div className={`auditMark ${conflicts.length ? "warn" : ""}`}>{conflicts.length ? "!" : "✓"}</div><h2>{conflicts.length ? "需要处理后才能保存" : "没有发现相反策略冲突"}</h2><p>{conflicts.length ? "以下规则需要确认优先级或策略。" : "代理分组引用、重复规则与 FINAL 位置均通过检查。"}</p>{conflicts.length > 0 && <ul>{conflicts.map((item) => <li key={item}>{item}</li>)}</ul>}<button className="ghost" onClick={() => setPreview(true)}>查看原始配置</button></section>}
+      </section>
+
+      {editor && <EditorModal editor={editor} setEditor={setEditor} policies={policies} onSubmit={submitEditor} />}
+      {preview && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭配置预览" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(false); }} onKeyDown={(event) => { if (event.key === "Escape") setPreview(false); }}><section className="previewModal" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header><div><h2 id="preview-title">配置预览</h2><p>{content.split(/\r?\n/).length.toLocaleString()} 行 · {repository}</p></div><button onClick={() => setPreview(false)}>×</button></header><pre>{content}</pre></section></div>}
+    </main>
+  );
+}
+
+function GroupCard({ group, tone, onEdit }: { group: Group; tone: string; onEdit: () => void }) {
+  return <article className="groupCard"><div className={`groupIcon ${tone}`}>{group.name.slice(0, 1)}</div><div className="groupBody"><div className="labelRow"><h3>{group.name}</h3><span>{group.items.some((item) => item.startsWith("policy-regex")) ? "节点筛选" : "服务分流"}</span></div><p>{group.items.join(" · ")}</p><small>{group.items.length} 项配置</small></div><button className="more" onClick={onEdit} aria-label={`编辑 ${group.name}`}>•••</button></article>;
+}
+
+function EditorModal({ editor, setEditor, policies, onSubmit }: { editor: Editor; setEditor: (value: Editor | null) => void; policies: string[]; onSubmit: (event: FormEvent) => void }) {
+  return <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭编辑窗口" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setEditor(null); }}><form className="editorModal" aria-label="规则编辑器" onSubmit={onSubmit}><header><div><h2>{editor.index === null ? "新增" : "编辑"}{editor.mode === "group" ? "代理分组" : "规则"}</h2><p>保存前会自动检查语法、引用与冲突。</p></div><button type="button" onClick={() => setEditor(null)}>×</button></header>{editor.mode === "group" ? <><label>分组名称<input value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：德国" /></label><label>配置项 <small>每行一个，第一行是类型</small><textarea rows={9} value={editor.items} onChange={(event) => setEditor({ ...editor, items: event.target.value })} placeholder={"select\ninclude-all-proxies=true\npolicy-regex-filter=德国|Germany|DE"} /></label></> : <><div className="fieldGrid"><label>规则类型<select value={editor.type} onChange={(event) => setEditor({ ...editor, type: event.target.value })}>{RULE_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label><label>执行策略<select value={editor.policy} onChange={(event) => setEditor({ ...editor, policy: event.target.value })}>{policies.map((policy) => <option key={policy}>{policy}</option>)}</select></label></div><label>域名、地址或规则集<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder="example.com" /></label><label>附加选项<input value={editor.options} onChange={(event) => setEditor({ ...editor, options: event.target.value })} placeholder="例如：no-resolve（可留空）" /></label></>}<footer><button type="button" className="ghost" onClick={() => setEditor(null)}>取消</button><button className="primary" type="submit">暂存修改</button></footer></form></div>;
+}
