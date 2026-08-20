@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getGitHubLogin } from "../../lib/github-auth";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -22,11 +23,6 @@ function githubHeaders(write = false): HeadersInit {
 
 function decodeBase64(value: string) {
   return Buffer.from(value.replace(/\n/g, ""), "base64").toString("utf8");
-}
-
-function requirePrivateAccess(request: NextRequest) {
-  if (process.env.NODE_ENV !== "production") return true;
-  return Boolean(request.headers.get("oai-authenticated-user-id"));
 }
 
 function validateConfig(content: string) {
@@ -75,7 +71,7 @@ function validateConfig(content: string) {
 }
 
 export async function GET(request: NextRequest) {
-  if (!requirePrivateAccess(request)) return NextResponse.json({ error: "请登录后访问" }, { status: 401 });
+  if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   const response = await fetch(`${API_URL}?ref=${encodeURIComponent(BRANCH)}`, {
     headers: githubHeaders(),
     cache: "no-store",
@@ -93,7 +89,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  if (!requirePrivateAccess(request)) return NextResponse.json({ error: "请登录后访问" }, { status: 401 });
+  if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   const token = process.env.GITHUB_RULES_TOKEN;
   if (!token) return NextResponse.json({ error: "尚未配置 GitHub 写入凭据" }, { status: 503 });
 

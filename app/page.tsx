@@ -93,6 +93,7 @@ export default function Home() {
   const [sourceUrl, setSourceUrl] = useState("https://github.com/mmousew/MWshadowrocket-rules");
   const [saveEnabled, setSaveEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [authRequired, setAuthRequired] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
@@ -100,11 +101,14 @@ export default function Home() {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [preview, setPreview] = useState(false);
   const [toast, setToast] = useState("");
+  const loginStatus = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("login_error");
+  const loginError = loginStatus ? (loginStatus === "forbidden" ? "这个 GitHub 账号没有管理权限，请改用 mmousew 登录。" : "GitHub 登录没有完成，请重新尝试。") : "";
 
   useEffect(() => {
     fetch("/api/config", { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
+        if (response.status === 401) { setAuthRequired(true); setLoading(false); return; }
         if (!response.ok) throw new Error(data.error || "读取配置失败");
         setContent(data.content); setSha(data.sha); setRepository(data.repository); setBranch(data.branch);
         setSourceUrl(data.sourceUrl); setSaveEnabled(data.saveEnabled); setLoading(false);
@@ -223,6 +227,7 @@ export default function Home() {
   }
 
   if (loading) return <div className="loading"><span className="brandMark">MW</span><p>正在读取 GitHub 配置…</p></div>;
+  if (authRequired) return <main className="loginShell"><section className="loginCard"><span className="brandMark">MW</span><p className="eyebrow">PRIVATE RULE MANAGER</p><h1>小火箭规则管理</h1><p>仅允许 GitHub 用户 <strong>mmousew</strong> 登录。登录后才能查看和修改配置。</p>{loginError && <div className="loginError">{loginError}</div>}<a className="githubLogin" href="/api/auth/github/start"><span>◆</span> 使用 GitHub 登录</a><small>不会读取密码，也不会授权其他账号进入。</small></section></main>;
 
   return (
     <main className="shell">
@@ -235,7 +240,7 @@ export default function Home() {
       <section className="content">
         <header className="topbar">
           <div className="titleBlock">{view !== "overview" && <button className="backButton" onClick={goBack} aria-label="返回上一页">← <span>返回</span></button>}<div><p className="eyebrow">SHADOWROCKET CONFIGURATION</p><h1>{nav.find((item) => item.id === view)?.label}{view === "rules" && parsed.groups.some((group) => group.name === query) ? ` · ${query}` : ""}</h1></div></div>
-          <div className="topActions"><button className="ghost" onClick={() => setPreview(true)}>预览配置</button>{view !== "overview" && view !== "conflicts" && <button className="primary" onClick={openNew}>＋ 新增</button>}<button className={`saveButton ${dirty ? "ready" : ""}`} disabled={!dirty || saving} onClick={save}>{saving ? "保存中…" : "保存到 GitHub"}</button></div>
+          <div className="topActions"><button className="ghost" onClick={() => setPreview(true)}>预览配置</button>{view !== "overview" && view !== "conflicts" && <button className="primary" onClick={openNew}>＋ 新增</button>}<button className={`saveButton ${dirty ? "ready" : ""}`} disabled={!dirty || saving} onClick={save}>{saving ? "保存中…" : "保存到 GitHub"}</button><a className="logoutButton" href="/api/auth/github/logout">退出</a></div>
         </header>
 
         {error && <div className="errorBanner"><span>!</span><pre>{error}</pre><button onClick={() => setError("")}>×</button></div>}

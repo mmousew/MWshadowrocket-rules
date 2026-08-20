@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getGitHubLogin } from "../../lib/github-auth";
 
 const API_ROOT = "https://api.github.com/repos/blackmatrix7/ios_rule_script/contents/rule/Shadowrocket";
 const RAW_ROOT = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Shadowrocket";
@@ -24,6 +25,7 @@ function headers(): HeadersInit {
 }
 
 export async function GET(request: NextRequest) {
+  if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   const query = (request.nextUrl.searchParams.get("q") || "").trim().toLowerCase();
   if (!query) return NextResponse.json({ results: [] });
 
