@@ -12,17 +12,21 @@ function randomToken() {
   return Buffer.from(crypto.getRandomValues(new Uint8Array(30))).toString("base64url");
 }
 
-export async function createClashLink(encryptedSource: string) {
+export async function createClashLink(encryptedSource: string, name = "订阅链接") {
   const db = getRawDb();
   const token = randomToken();
   const id = crypto.randomUUID();
   const createdAt = Date.now();
-  await db.prepare("INSERT INTO clash_links (id, token, token_hash, encrypted_source, status, created_at) VALUES (?, ?, ?, ?, 'active', ?)").bind(id, token, await hashToken(token), encryptedSource, createdAt).run();
-  return { id, token, status: "active" as const, createdAt, revokedAt: null };
+  await db.prepare("INSERT INTO clash_links (id, name, token, token_hash, encrypted_source, status, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?)").bind(id, name, token, await hashToken(token), encryptedSource, createdAt).run();
+  return { id, name, token, status: "active" as const, createdAt, revokedAt: null };
 }
 
 export async function syncActiveClashSources(encryptedSource: string) {
   await getRawDb().prepare("UPDATE clash_links SET encrypted_source = ? WHERE status = 'active'").bind(encryptedSource).run();
+}
+
+export async function renameClashLink(id: string, name: string) {
+  await getRawDb().prepare("UPDATE clash_links SET name = ? WHERE id = ? AND status <> 'deleted'").bind(name.trim().slice(0, 80) || "订阅链接", id).run();
 }
 
 export async function findClashLink(token: string) {
@@ -31,7 +35,7 @@ export async function findClashLink(token: string) {
 }
 
 export async function listClashLinks() {
-  const result = await getRawDb().prepare("SELECT id, token, encrypted_source, status, created_at, revoked_at, deleted_at FROM clash_links WHERE status <> 'deleted' ORDER BY created_at DESC").all<{ id: string; token: string; encrypted_source: string; status: ClashLinkStatus; created_at: number; revoked_at: number | null; deleted_at: number | null }>();
+  const result = await getRawDb().prepare("SELECT id, name, token, encrypted_source, status, created_at, revoked_at, deleted_at FROM clash_links WHERE status <> 'deleted' ORDER BY created_at DESC").all<{ id: string; name: string; token: string; encrypted_source: string; status: ClashLinkStatus; created_at: number; revoked_at: number | null; deleted_at: number | null }>();
   return result.results;
 }
 

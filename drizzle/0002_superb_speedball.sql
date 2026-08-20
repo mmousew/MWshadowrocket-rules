@@ -1,0 +1,1 @@
+ALTER TABLE `clash_links` ADD `name` text DEFAULT '订阅链接' NOT NULL;

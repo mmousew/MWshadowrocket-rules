@@ -5,9 +5,9 @@ import { encryptSourceUrl } from "../../../lib/clash-link";
 import { createClashLink, hashToken, listClashLinks, syncActiveClashSources } from "../../../lib/clash-links";
 import { getRawDb } from "../../../../db";
 
-function publicLink(request: NextRequest, item: { id: string; token?: string; status: string; createdAt: number; revokedAt?: number | null }) {
+function publicLink(request: NextRequest, item: { id: string; name?: string; token?: string; status: string; createdAt: number; revokedAt?: number | null }) {
   const token = item.token || process.env.CLASH_ACCESS_TOKEN || "";
-  return { id: item.id, url: `${new URL(request.url).origin}/api/clash/${encodeURIComponent(token)}`, status: item.status, createdAt: item.createdAt, revokedAt: item.revokedAt ?? null, legacy: item.id === "legacy" };
+  return { id: item.id, name: item.name || "订阅链接", url: `${new URL(request.url).origin}/api/clash/${encodeURIComponent(token)}`, status: item.status, createdAt: item.createdAt, revokedAt: item.revokedAt ?? null, legacy: item.id === "legacy" };
 }
 
 export async function GET(request: NextRequest) {
@@ -17,13 +17,13 @@ export async function GET(request: NextRequest) {
     if (token) {
       const db = getRawDb();
       const existing = await db.prepare("SELECT id FROM clash_links WHERE id = 'legacy' LIMIT 1").first();
-      if (!existing) await db.prepare("INSERT INTO clash_links (id, token, token_hash, encrypted_source, status, created_at) VALUES ('legacy', ?, ?, '', 'active', ?)").bind(token, await hashToken(token), Date.now()).run();
+      if (!existing) await db.prepare("INSERT INTO clash_links (id, name, token, token_hash, encrypted_source, status, created_at) VALUES ('legacy', '旧版订阅链接', ?, ?, '', 'active', ?)").bind(token, await hashToken(token), Date.now()).run();
     }
     const rows = await listClashLinks();
-    return NextResponse.json({ links: rows.map((row) => publicLink(request, { id: row.id, token: row.token, status: row.status, createdAt: row.created_at, revokedAt: row.revoked_at })), client: "ClashX Meta", updateHours: 6 });
+    return NextResponse.json({ links: rows.map((row) => publicLink(request, { id: row.id, name: row.name, token: row.token, status: row.status, createdAt: row.created_at, revokedAt: row.revoked_at })), client: "ClashX Meta", updateHours: 6 });
   } catch {
     if (!token) return NextResponse.json({ error: "尚未生成 Clash 私有订阅" }, { status: 503 });
-    return NextResponse.json({ links: [publicLink(request, { id: "legacy", status: "active", createdAt: 0 })], client: "ClashX Meta", updateHours: 6 });
+    return NextResponse.json({ links: [publicLink(request, { id: "legacy", name: "旧版订阅链接", status: "active", createdAt: 0 })], client: "ClashX Meta", updateHours: 6 });
   }
 }
 
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     const nodeCount = results.reduce((total, result) => total + result.nodeCount, 0);
     const encryptedSource = await encryptSourceUrl(sourceUrls);
     await syncActiveClashSources(encryptedSource);
-    const created = await createClashLink(encryptedSource);
+    const created = await createClashLink(encryptedSource, `订阅链接 ${new Date().toLocaleDateString("zh-CN")}`);
     return NextResponse.json({
       link: publicLink(request, created),
       nodeCount,

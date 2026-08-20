@@ -15,6 +15,13 @@
       "when": 1787220703952,
       "tag": "0001_big_squadron_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787221482436,
+      "tag": "0002_superb_speedball",
+      "breakpoints": true
     }
   ]
 }
