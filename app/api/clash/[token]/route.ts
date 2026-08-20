@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildClashConfig } from "../../../lib/clash-config";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
+import { findClashLink } from "../../../lib/clash-links";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -20,8 +21,20 @@ function getAirportSnapshot() {
 export async function GET(request: NextRequest, context: { params: Promise<{ token: string }> }) {
   const { token } = await context.params;
   const expectedToken = process.env.CLASH_ACCESS_TOKEN;
-  const encryptedSource = request.nextUrl.searchParams.get("source");
-  if (!expectedToken || token !== expectedToken) return new NextResponse("订阅链接无效", { status: 404 });
+  const querySource = request.nextUrl.searchParams.get("source");
+  let encryptedSource = querySource;
+  let managedLink = false;
+  try {
+    const record = await findClashLink(token);
+    if (record) {
+      managedLink = true;
+      if (record.status !== "active") return new NextResponse("订阅链接已失效", { status: 404 });
+      encryptedSource = record.encrypted_source || null;
+    }
+  } catch {
+    // D1 不可用时保留旧版环境变量链接的兼容路径。
+  }
+  if (!managedLink && (!expectedToken || token !== expectedToken)) return new NextResponse("订阅链接无效", { status: 404 });
 
   try {
     const encryptedValue = encryptedSource ? await decryptSourceUrl(encryptedSource) : process.env.AIRPORT_SHADOWROCKET_URL || "";

@@ -156,6 +156,15 @@ button,input,select,textarea { max-width:100%; }
 .sourceForm>button:disabled { opacity:.65; cursor:wait; }
 .sourceForm>small { display:block; margin-top:9px; color:#849189; font-size:9px; line-height:1.5; }
 .clashSuccess { margin:0 0 15px; padding:11px 12px; border:1px solid #c8e7d5; border-radius:10px; color:#276f53; background:#eaf7ef; font-size:11px; }
+.clashLinkList { display:grid; gap:12px; margin:0 0 22px; }
+.clashLinkCard { padding:14px; border:1px solid #dce7e0; border-radius:13px; background:#fff; }
+.clashLinkCard.revoked { opacity:.72; background:#f5f7f5; }
+.clashLinkMeta { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; color:#314139; font-size:12px; }
+.clashLinkMeta span { color:#87938c; font-size:10px; }
+.clashLinkCard input { margin-top:0; }
+.clashLinkCard .clashActions { flex-wrap:wrap; margin:10px 0 0; }
+.clashLinkCard .clashActions button,.clashLinkCard .clashActions a { min-height:34px; padding:8px 11px; font-size:11px; }
+.clashLinkCard .danger { border:1px solid #edc7c0; color:#9a4434; background:#fff7f5; }
 
 @media(max-width:600px){
   .clashPanel { padding:22px 17px; }

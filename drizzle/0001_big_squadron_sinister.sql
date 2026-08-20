@@ -1,0 +1,1 @@
+ALTER TABLE `clash_links` ADD `token` text NOT NULL;

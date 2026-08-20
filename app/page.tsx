@@ -470,7 +470,8 @@ export default function Home() {
 }
 
 function ClashSubscription() {
-  const [link, setLink] = useState("");
+  type LinkRecord = { id: string; url: string; status: "active" | "revoked"; createdAt: number; revokedAt: number | null; legacy?: boolean };
+  const [links, setLinks] = useState<LinkRecord[]>([]);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [sourceUrl, setSourceUrl] = useState("");
@@ -481,12 +482,12 @@ function ClashSubscription() {
     fetch("/api/clash/link", { cache: "no-store" }).then(async (response) => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "读取订阅链接失败");
-      setLink(data.url);
+      setLinks(data.links || []);
     }).catch((cause) => setError(cause instanceof Error ? cause.message : "读取订阅链接失败"));
   }, []);
 
-  async function copyLink() {
-    await navigator.clipboard.writeText(link);
+  async function copyLink(value: string) {
+    await navigator.clipboard.writeText(value);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   }
@@ -500,12 +501,20 @@ function ClashSubscription() {
       const response = await fetch("/api/clash/link", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceUrls }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "生成订阅失败");
-      setLink(data.url); setGeneratedNodes(data.nodeCount); setCopied(false);
+      setLinks((current) => [data.link, ...current]); setGeneratedNodes(data.nodeCount); setCopied(false); setSourceUrl("");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "生成订阅失败"); }
     finally { setGenerating(false); }
   }
 
-  return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">自动合并机场节点、国家分组和当前 GitHub 分流规则。客户端每 6 小时可检查一次更新。</p><form className="sourceForm" onSubmit={generateLink}><label>机场订阅地址 <small>一行一个，可添加多个机场</small><textarea rows={5} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://机场A.example/订阅\nhttps://机场B.example/订阅" autoComplete="off" /></label><button className="primary" type="submit" disabled={generating}>{generating ? "正在验证并合并节点…" : "验证并生成新链接"}</button><small>支持 Clash YAML、Shadowrocket 配置和 SS 订阅；所有地址会加密保存到链接中。</small></form>{error && <div className="clashError">{error}</div>}{generatedNodes !== null && <div className="clashSuccess">已合并 {sourceUrl.split(/\r?\n/).filter((url) => url.trim()).length} 个机场，共识别 {generatedNodes} 个节点。</div>}{link ? <><label>私有订阅地址<input readOnly value={link} onFocus={(event) => event.currentTarget.select()} /></label><div className="clashActions"><button className="primary" onClick={copyLink}>{copied ? "已复制" : "复制订阅链接"}</button><a className="ghost" href={`clash://install-config?url=${encodeURIComponent(link)}&name=${encodeURIComponent("MW Rules")}`}>在 ClashX Meta 中打开</a></div></> : <p className="clashLoading">正在生成私有地址…</p>}<ul><li>此链接相当于密码，请勿发到公开群组或截图分享。</li><li>每次更新会同时刷新所有机场的节点。</li><li>旧链接仍然保留，需要时可以继续使用。</li><li>Clash 不支持的 User-Agent 和 URL-REGEX 规则会自动跳过。</li></ul></section>;
+  async function changeLink(id: string, action: "revoke" | "delete") {
+    const response = await fetch(`/api/clash/link/${encodeURIComponent(id)}`, { method: action === "delete" ? "DELETE" : "PATCH", headers: { "Content-Type": "application/json" }, body: action === "revoke" ? JSON.stringify({ action }) : undefined });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "操作失败");
+    if (action === "delete") setLinks((current) => current.filter((item) => item.id !== id));
+    else setLinks((current) => current.map((item) => item.id === id ? { ...item, status: "revoked" } : item));
+  }
+
+  return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">每次生成都会新增一条独立链接。旧链接默认继续可用，只有点击“失效”或“删除”后才会停止访问。</p><form className="sourceForm" onSubmit={generateLink}><label>机场订阅地址 <small>一行一个，可添加多个机场</small><textarea rows={5} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://机场A.example/订阅\nhttps://机场B.example/订阅" autoComplete="off" /></label><button className="primary" type="submit" disabled={generating}>{generating ? "正在验证并合并节点…" : "验证并生成新链接"}</button><small>支持 Clash YAML、Shadowrocket 配置和 SS 订阅；地址会加密保存，不会显示在页面上。</small></form>{error && <div className="clashError">{error}</div>}{generatedNodes !== null && <div className="clashSuccess">新链接已生成，共识别 {generatedNodes} 个节点。</div>}<div className="clashLinkList">{links.length ? links.map((item) => <article className={`clashLinkCard ${item.status === "revoked" ? "revoked" : ""}`} key={item.id}><div className="clashLinkMeta"><strong>{item.legacy ? "旧版订阅链接" : "订阅链接"}</strong><span>{item.status === "active" ? "已启用" : "已失效"} · {item.createdAt ? new Date(item.createdAt).toLocaleString("zh-CN") : "历史链接"}</span></div><input readOnly value={item.url} onFocus={(event) => event.currentTarget.select()} /><div className="clashActions"><button className="primary" onClick={() => copyLink(item.url)}>{copied ? "已复制" : "复制链接"}</button>{item.status === "active" && <button className="ghost" onClick={() => changeLink(item.id, "revoke")}>失效</button>}<button className="danger" onClick={() => changeLink(item.id, "delete")}>删除</button>{item.status === "active" && <a className="ghost" href={`clash://install-config?url=${encodeURIComponent(item.url)}&name=${encodeURIComponent("MW Rules")}`}>打开 ClashX Meta</a>}</div></article>) : <p className="clashLoading">还没有订阅链接，请先验证并生成。</p>}</div><ul><li>同一条链接会随 GitHub 规则和机场节点更新。</li><li>失效会立即阻止访问；删除会从列表移除并同时阻止访问。</li><li>Clash 不支持的 User-Agent 和 URL-REGEX 规则会自动跳过。</li></ul></section>;
 }
 
 function GroupCard({ group, ruleCount, tone, onEdit, onRules }: { group: Group; ruleCount: number; tone: string; onEdit: () => void; onRules: () => void }) {
