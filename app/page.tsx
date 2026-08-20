@@ -110,7 +110,15 @@ export default function Home() {
 
   function openNew() {
     if (view === "groups") setEditor({ mode: "group", index: null, name: "", items: "select\nDIRECT" });
-    else setEditor({ mode: "rule", index: null, type: view === "sets" ? "RULE-SET" : "DOMAIN-SUFFIX", value: "", policy: "国内直连", options: "" });
+    else {
+      const selectedPolicy = parsed.groups.some((group) => group.name === query) ? query : "国内直连";
+      setEditor({ mode: "rule", index: null, type: view === "sets" ? "RULE-SET" : "DOMAIN-SUFFIX", value: "", policy: selectedPolicy, options: "" });
+    }
+  }
+
+  function showGroupRules(group: Group) {
+    setView("rules");
+    setQuery(group.name);
   }
 
   function editGroup(group: Group) {
@@ -211,13 +219,13 @@ export default function Home() {
         {view === "overview" && <>
           <div className={`notice ${conflicts.length ? "warning" : ""}`}><span>{conflicts.length ? "!" : "✓"}</span><div><strong>{conflicts.length ? `发现 ${conflicts.length} 个问题` : "配置状态正常"}</strong><p>{saveEnabled ? "已连接 GitHub，可直接编辑并保存。" : "已连接只读数据，配置写入凭据后即可在线保存。"}</p></div><button onClick={() => setView("conflicts")}>查看检查结果</button></div>
           <section className="metrics"><article><span>国家与节点组</span><strong>{parsed.groups.filter((group) => group.items.some((item) => item.startsWith("policy-regex-filter"))).length}</strong><small>动态匹配机场节点</small></article><article><span>全部分组</span><strong>{parsed.groups.length}</strong><small>国家、服务与策略</small></article><article><span>有效规则</span><strong>{parsed.rules.length.toLocaleString()}</strong><small>按优先级顺序执行</small></article><article><span>规则冲突</span><strong className={conflicts.length ? "bad" : "ok"}>{conflicts.length}</strong><small>保存前自动检查</small></article></section>
-          <section className="panel"><div className="panelHead"><div><h2>常用分组</h2><p>直接进入完整列表修改节点关键词和策略成员。</p></div><button className="textButton" onClick={() => setView("groups")}>查看全部 →</button></div><div className="groupGrid">{parsed.groups.filter((group) => ["德国", "Google", "PayPal"].includes(group.name)).map((group, i) => <GroupCard key={group.name} group={group} tone={["mint", "blue", "amber"][i]} onEdit={() => editGroup(group)} />)}</div></section>
+          <section className="panel"><div className="panelHead"><div><h2>常用分组</h2><p>节点筛选和分流规则分别管理，但会在这里汇总显示。</p></div><button className="textButton" onClick={() => setView("groups")}>查看全部 →</button></div><div className="groupGrid">{parsed.groups.filter((group) => ["德国", "Google", "PayPal"].includes(group.name)).map((group, i) => <GroupCard key={group.name} group={group} ruleCount={parsed.rules.filter((rule) => rule.policy === group.name).length} tone={["mint", "blue", "amber"][i]} onEdit={() => editGroup(group)} onRules={() => showGroupRules(group)} />)}</div></section>
           <section className="panel compact"><div className="panelHead"><div><h2>工作方式</h2><p>每次保存先检查冲突，再生成一条可追溯的 GitHub 提交。</p></div></div><div className="activity"><span className="activityIcon">↻</span><div><strong>在线配置与小火箭保持同一来源</strong><p>保存后在设备上更新配置即可生效</p></div><a href={sourceUrl} target="_blank" rel="noreferrer">打开仓库</a></div></section>
         </>}
 
         {(view === "groups" || view === "rules" || view === "sets") && <>
           <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label><span>{view === "groups" ? filteredGroups.length : filteredRules.length} 项</span></div>
-          {view === "groups" ? <div className="listPanel">{filteredGroups.map((group) => <div className="listRow" key={`${group.index}-${group.name}`}><div className="rowIcon">{group.name.slice(0, 1)}</div><div className="rowMain"><strong>{group.name}</strong><p>{group.kind} · {group.items.join(" · ")}</p></div><span className="pill">{group.items.length} 项</span><button onClick={() => editGroup(group)}>编辑</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>)}</div>
+          {view === "groups" ? <div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); return <div className="listRow" key={`${group.index}-${group.name}`}><div className="rowIcon">{group.name.slice(0, 1)}</div><div className="rowMain"><strong>{group.name}</strong><p>{linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><span className="pill">{linked.length} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div>
           : <div className="listPanel">{filteredRules.slice(0, 250).map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}</span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}{filteredRules.length > 250 && <div className="listNote">结果较多，仅显示前 250 项，请使用搜索缩小范围。</div>}</div>}
         </>}
 
@@ -230,8 +238,8 @@ export default function Home() {
   );
 }
 
-function GroupCard({ group, tone, onEdit }: { group: Group; tone: string; onEdit: () => void }) {
-  return <article className="groupCard"><div className={`groupIcon ${tone}`}>{group.name.slice(0, 1)}</div><div className="groupBody"><div className="labelRow"><h3>{group.name}</h3><span>{group.items.some((item) => item.startsWith("policy-regex")) ? "节点筛选" : "服务分流"}</span></div><p>{group.items.join(" · ")}</p><small>{group.items.length} 项配置</small></div><button className="more" onClick={onEdit} aria-label={`编辑 ${group.name}`}>•••</button></article>;
+function GroupCard({ group, ruleCount, tone, onEdit, onRules }: { group: Group; ruleCount: number; tone: string; onEdit: () => void; onRules: () => void }) {
+  return <article className="groupCard"><div className={`groupIcon ${tone}`}>{group.name.slice(0, 1)}</div><div className="groupBody"><div className="labelRow"><h3>{group.name}</h3><span>{group.items.some((item) => item.startsWith("policy-regex")) ? "节点筛选" : "服务分流"}</span></div><p>{group.items.join(" · ")}</p><button className="ruleLink" onClick={onRules}>{ruleCount} 条关联规则 →</button></div><button className="more" onClick={onEdit} aria-label={`编辑 ${group.name} 节点筛选`}>•••</button></article>;
 }
 
 function EditorModal({ editor, setEditor, policies, onSubmit }: { editor: Editor; setEditor: (value: Editor | null) => void; policies: string[]; onSubmit: (event: FormEvent) => void }) {
