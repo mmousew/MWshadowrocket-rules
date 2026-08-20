@@ -65,6 +65,17 @@ function validateConfig(content: string) {
       if (!line || line.startsWith("#")) return;
       lastRule = line;
       const parts = splitRuleLine(line);
+      if (parts[0] === "FINAL") {
+        if (parts.length < 2 || !parts[1]) {
+          errors.push(`第 ${ruleStart + offset + 2} 行 FINAL 缺少执行策略`);
+          return;
+        }
+        const finalPolicy = parts[1];
+        if (!BUILTIN_POLICIES.has(finalPolicy) && !groups.has(finalPolicy)) {
+          errors.push(`第 ${ruleStart + offset + 2} 行引用不存在的策略：${finalPolicy}`);
+        }
+        return;
+      }
       if (parts.length < 3) {
         errors.push(`第 ${ruleStart + offset + 2} 行规则字段不足`);
         return;
