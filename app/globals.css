@@ -197,6 +197,8 @@ button,input,select,textarea { max-width:100%; }
 .profileCard { position:relative; display:grid; gap:14px; padding:20px; border:2px solid #b9d9c4; border-radius:18px; background:linear-gradient(180deg,#f8fcf9 0%,#fff 34%); box-shadow:0 14px 34px #20392c12; }
 .profileCardHead { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .profileCardHead { padding-bottom:13px; border-bottom:1px solid #dcebe1; }
+.profileCardHeadActions { display:flex; flex:0 0 auto; gap:8px; }
+.profileCardHeadActions button { min-height:36px; justify-content:center; white-space:nowrap; }
 .profileCardTitle { min-width:0; flex:1; }
 .profileCardTitle input { width:min(100%,300px) !important; margin:0 !important; padding:3px 7px !important; border:1px solid transparent !important; border-radius:7px !important; color:#17231e !important; background:transparent !important; font:750 16px/1.3 inherit !important; }
 .profileCardTitle input:hover,.profileCardTitle input:focus { border-color:#cbdcd1 !important; background:#f6faf7 !important; box-shadow:none !important; }
@@ -232,6 +234,8 @@ button,input,select,textarea { max-width:100%; }
 .clashLinkCard .clientLinkRow input { flex:1; min-width:0; }
 .inlineCopy { flex:0 0 auto; min-height:35px; padding:8px 10px; border:1px solid #cfe0d5; border-radius:9px; color:#276f53; background:#f3faf5; font-size:10px; cursor:pointer; }
 .inlineCopy:hover { background:#e8f5eb; }
+.inlineQr { flex:0 0 auto; min-height:35px; padding:8px 10px; border:1px solid #cfe0d5; border-radius:9px; color:#276f53; background:#f3faf5; font-size:10px; cursor:pointer; }
+.inlineQr:hover { background:#e8f5eb; }
 .clashLinkCard .clashActions { flex-wrap:wrap; margin:10px 0 0; }
 .clashLinkCard .clashActions button,.clashLinkCard .clashActions a { min-height:34px; padding:8px 11px; font-size:11px; }
 .clashLinkCard .danger { border:1px solid #edc7c0; color:#9a4434; background:#fff7f5; }
@@ -252,6 +256,8 @@ button,input,select,textarea { max-width:100%; }
   .profileCardHead { align-items:stretch; flex-direction:column; }
   .profileCardHead>button { width:100%; justify-content:center; }
   .profileCard { padding:14px; border-radius:15px; }
+  .profileCardHeadActions { width:100%; }
+  .profileCardHeadActions button { flex:1; }
   .profileCardTitle input { width:100% !important; }
   .profileEditorActions { flex-direction:column; }
   .profileEditor { padding:11px; }
@@ -264,6 +270,9 @@ button,input,select,textarea { max-width:100%; }
   .profileEditor .sourceEditRow input,
   .profileEditor .sourceEditRow button { width:100%; min-width:0; }
   .profileEditor .sourceAddFields { padding:10px; }
+  .clashLinkCard .clientLinkRow { flex-wrap:wrap; }
+  .clashLinkCard .clientLinkRow input { flex:1 1 100%; }
+  .clashLinkCard .clientLinkRow button { flex:1; }
   .sourceActionRow { grid-template-columns:1fr 1fr; gap:8px; }
   .sourceActionRow button { padding-left:8px; padding-right:8px; font-size:11px; }
 }
