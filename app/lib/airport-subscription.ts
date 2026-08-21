@@ -1,4 +1,5 @@
-import { getAirportProxyCount } from "./clash-config";
+import { getAirportProxyCount, parseAirportProxies } from "./clash-config";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 function isPrivateIpv4(hostname: string) {
   const parts = hostname.split(".").map(Number);
@@ -19,31 +20,20 @@ export function validateAirportUrl(value: string) {
   return url.toString();
 }
 
-export async function fetchAirportSubscription(sourceUrl: string) {
-  const safeUrl = validateAirportUrl(sourceUrl);
+async function downloadSubscription(url: string) {
   const relayUrl = process.env.AIRPORT_RELAY_URL;
   const relaySecret = process.env.AIRPORT_RELAY_SECRET;
-  // HTTPS sources are fetched directly from the hosted worker. Some providers
-  // reject the VPS relay IP even though the same HTTPS URL works normally.
-  // The relay remains necessary only for explicitly approved HTTP sources.
   async function fetchViaRelay() {
-    const relayResponse = await fetch(relayUrl, {
+    const relayResponse = await fetch(relayUrl!, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-MW-Relay-Secret": relaySecret,
-      },
-      body: JSON.stringify({ url: safeUrl }),
+      headers: { "Content-Type": "application/json", "X-MW-Relay-Secret": relaySecret! },
+      body: JSON.stringify({ url }),
       cache: "no-store",
     });
     if (!relayResponse.ok) throw new Error(`机场订阅读取失败（${relayResponse.status}）`);
-    const content = await relayResponse.text();
-    if (content.length > 2_000_000) throw new Error("机场订阅内容过大");
-    const nodeCount = getAirportProxyCount(content);
-    if (!nodeCount) throw new Error("没有识别到节点，请确认该地址支持 Clash 或 Shadowrocket 格式");
-    return { content, nodeCount };
+    return relayResponse.text();
   }
-  if (relayUrl && relaySecret && new URL(safeUrl).protocol === "http:") return fetchViaRelay();
+  if (relayUrl && relaySecret && new URL(url).protocol === "http:") return fetchViaRelay();
   const requestHeaders = [
     { "User-Agent": "clash.meta", Accept: "text/yaml,text/plain,application/yaml,*/*" },
     { "User-Agent": "Shadowrocket", Accept: "text/plain,text/yaml,application/yaml,*/*" },
@@ -51,21 +41,40 @@ export async function fetchAirportSubscription(sourceUrl: string) {
   ];
   let response: Response | undefined;
   for (const headers of requestHeaders) {
-    response = await fetch(safeUrl, { headers, cache: "no-store", redirect: "follow" });
+    response = await fetch(url, { headers, cache: "no-store", redirect: "follow" });
     if (response.ok || response.status !== 403) break;
   }
-  // Some providers allow the user's VPS but reject the hosted worker egress.
-  // Retry through the configured relay before reporting a transient 403.
   if (response && !response.ok && relayUrl && relaySecret && [401, 403, 408, 429, 500, 502, 503, 504].includes(response.status)) {
-    try { return await fetchViaRelay(); } catch { /* keep the original direct-fetch status below */ }
+    try { return await fetchViaRelay(); } catch { /* report original status below */ }
   }
   if (!response) throw new Error("机场订阅读取失败");
   if (!response.ok) throw new Error(`机场订阅读取失败（${response.status}）`);
   const declaredSize = Number(response.headers.get("content-length") || 0);
   if (declaredSize > 2_000_000) throw new Error("机场订阅内容过大");
-  const content = await response.text();
+  return response.text();
+}
+
+async function expandProxyProviders(content: string) {
+  let parsed: Record<string, unknown> | null = null;
+  try { parsed = parseYaml(content) as Record<string, unknown> | null; } catch { return content; }
+  const providers = parsed?.["proxy-providers"];
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return content;
+  const providerUrls = Object.values(providers as Record<string, unknown>)
+    .map((provider) => provider && typeof provider === "object" ? (provider as Record<string, unknown>).url : null)
+    .filter((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url));
+  if (!providerUrls.length) return content;
+  const providerContents = await Promise.all(providerUrls.map(async (url) => downloadSubscription(validateAirportUrl(url))));
+  const proxies = providerContents.flatMap((providerContent) => parseAirportProxies(providerContent));
+  if (!proxies.length) return content;
+  return stringifyYaml({ ...parsed, proxies });
+}
+
+export async function fetchAirportSubscription(sourceUrl: string) {
+  const safeUrl = validateAirportUrl(sourceUrl);
+  const content = await downloadSubscription(safeUrl);
   if (content.length > 2_000_000) throw new Error("机场订阅内容过大");
-  const nodeCount = getAirportProxyCount(content);
+  const expandedContent = await expandProxyProviders(content);
+  const nodeCount = getAirportProxyCount(expandedContent);
   if (!nodeCount) throw new Error("没有识别到节点，请确认该地址支持 Clash 或 Shadowrocket 格式");
-  return { content, nodeCount };
+  return { content: expandedContent, nodeCount };
 }

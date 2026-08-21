@@ -218,7 +218,7 @@ function parseLinkSubscription(content: string) {
   return links.flatMap((link, index) => link.startsWith("ss://") ? [parseSsLink(link, index)].filter((proxy): proxy is ClashProxy => Boolean(proxy)) : []);
 }
 
-function parseAirportProxies(content: string): ClashProxy[] {
+export function parseAirportProxies(content: string): ClashProxy[] {
   const shadowrocket = parseShadowrocketProxies(content);
   const clash = shadowrocket.length ? [] : parseClashProxies(content);
   const candidates = shadowrocket.length ? shadowrocket : clash.length ? clash : parseLinkSubscription(content);
