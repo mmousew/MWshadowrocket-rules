@@ -182,12 +182,21 @@ export function getAirportProxyCount(content: string) {
 
 function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
   const available = new Set(["DIRECT", "REJECT", "PROXY", ...proxyNames, ...groups.map((group) => group.name)]);
-  const converted: Record<string, unknown>[] = [{ name: "PROXY", type: "select", "include-all": true }];
+  const converted: Record<string, unknown>[] = [{ name: "PROXY", type: "select", proxies: proxyNames.length ? proxyNames : ["DIRECT"] }];
   for (const group of groups) {
     const regex = group.items.find((item) => item.startsWith("policy-regex-filter="))?.slice("policy-regex-filter=".length);
     const includeAll = group.items.includes("include-all-proxies=true");
     if (includeAll || regex) {
-      converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", "include-all": true, ...(regex ? { filter: `(?i)${regex}` } : {}) });
+      let matched = proxyNames;
+      if (regex) {
+        try {
+          const matcher = new RegExp(regex, "i");
+          matched = proxyNames.filter((name) => matcher.test(name));
+        } catch {
+          matched = proxyNames;
+        }
+      }
+      converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", proxies: matched.length ? matched : ["DIRECT"] });
       continue;
     }
     const proxies = group.items.filter((item) => !item.includes("=") && !/^(Traffic|Expire|流量|到期|剩余)\b/i.test(item) && available.has(item)).map((item) => item === "PROXY" ? "PROXY" : item);
