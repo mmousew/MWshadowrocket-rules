@@ -173,6 +173,9 @@ button,input,select,textarea { max-width:100%; }
 .sourceRow button { min-width:48px; padding:7px 9px; font-size:10px; }
 .sourceNameInput { width:min(70%,320px) !important; margin:0 !important; padding:5px 8px !important; border:1px solid transparent !important; border-radius:7px !important; color:#314139 !important; background:transparent !important; font:700 12px/1.3 inherit !important; }
 .sourceNameInput:hover,.sourceNameInput:focus { border-color:#cbdcd1 !important; background:#f6faf7 !important; box-shadow:none !important; }
+.sourceEditRow { display:flex; align-items:center; gap:6px; flex:1; min-width:0; }
+.sourceEditRow input { flex:1; min-width:160px; }
+.sourceEditRow button { min-width:42px; }
 .sourceAddForm { display:grid; gap:10px; padding-top:12px; border-top:1px solid #e7eee9; }
 .sourceAddForm label { margin:0; }
 .sourceAddForm .filePicker { margin:0; }

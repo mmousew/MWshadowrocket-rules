@@ -3,7 +3,7 @@ import { getGitHubLogin } from "../../../lib/github-auth";
 import { encryptSourceUrl, parseSourceEntries, decryptSourceUrl, type ClashSourceEntry } from "../../../lib/clash-link";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { getAirportProxyCount } from "../../../lib/clash-config";
-import { createClashLink, listClashLinks, syncActiveClashSources } from "../../../lib/clash-links";
+import { createClashLink, listClashLinks, saveSourceSnapshot, syncActiveClashSources } from "../../../lib/clash-links";
 
 function sourceName(entry: ClashSourceEntry, index: number) {
   if (entry.name?.trim()) return entry.name.trim();
@@ -12,7 +12,7 @@ function sourceName(entry: ClashSourceEntry, index: number) {
 }
 
 function publicSources(entries: ClashSourceEntry[]) {
-  return entries.map((entry, index) => ({ index, name: sourceName(entry, index), kind: entry.kind, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : null }));
+  return entries.map((entry, index) => ({ index, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : null }));
 }
 
 async function currentState() {
@@ -41,6 +41,22 @@ export async function POST(request: NextRequest) {
       file = value instanceof File ? value : null;
     } else {
       const body = await request.json() as { sourceUrl?: string; action?: string };
+      if (body.action === "refresh") {
+        const { active, entries } = await currentState();
+        if (!active || !entries.length) throw new Error("还没有订阅来源");
+        const onlineEntries = entries.filter((entry): entry is Extract<ClashSourceEntry, { kind: "url" }> => entry.kind === "url" && entry.hidden !== true);
+        const results = await Promise.allSettled(onlineEntries.map(async (entry) => {
+          const fetched = await fetchAirportSubscription(entry.value);
+          await saveSourceSnapshot(entry.value, fetched.content, fetched.nodeCount);
+          return fetched.nodeCount;
+        }));
+        const successful = results.filter((result) => result.status === "fulfilled");
+        if (!successful.length && !entries.some((entry) => entry.kind === "content" && entry.hidden !== true)) {
+          throw new Error("机场暂时无法读取，未更新当前配置。请稍后重试或上传 YAML 文件。");
+        }
+        await syncActiveClashSources(await encryptSourceUrl(entries));
+        return NextResponse.json({ sources: publicSources(entries), refreshed: successful.length });
+      }
       if (body.action === "new-link") {
         const { entries } = await currentState();
         if (!entries.length) throw new Error("请先添加至少一个机场来源");
@@ -96,14 +112,20 @@ export async function DELETE(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { index?: number; hidden?: boolean; name?: string };
+    const body = await request.json() as { index?: number; hidden?: boolean; name?: string; value?: string };
     const index = Number(body.index);
     const { active, entries } = await currentState();
     if (!active) throw new Error("还没有订阅来源");
     if (!Number.isInteger(index) || index < 0 || index >= entries.length) throw new Error("订阅来源不存在");
     const hidden = typeof body.hidden === "boolean" ? body.hidden : entries[index].hidden === true;
     if (hidden && !entries[index].hidden && entries.filter((entry) => !entry.hidden).length <= 1) throw new Error("至少保留一个可用来源");
-    const nextEntries = entries.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...(typeof body.name === "string" ? { name: body.name.trim().slice(0, 80) || undefined } : {}), hidden } : entry);
+    let replacement: ClashSourceEntry | null = null;
+    if (typeof body.value === "string" && entries[index].kind === "url") {
+      const nextValue = await fetchAirportSubscription(body.value.trim());
+      replacement = { ...entries[index], value: body.value.trim() };
+      await saveSourceSnapshot(body.value.trim(), nextValue.content, nextValue.nodeCount);
+    }
+    const nextEntries = entries.map((entry, entryIndex) => entryIndex === index ? { ...(replacement || entry), ...(typeof body.name === "string" ? { name: body.name.trim().slice(0, 80) || undefined } : {}), hidden } : entry);
     if (hidden) {
       const visibleEntries = nextEntries.filter((entry) => !entry.hidden);
       const inlineCount = visibleEntries.filter((entry) => entry.kind === "content").length;
