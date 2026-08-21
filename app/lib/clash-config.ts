@@ -122,6 +122,7 @@ function readAirportDns(sources: string[]) {
   const fakeIpFilter = new Set<string>();
   let fakeIpRange = "";
   let useHosts = false;
+  let listen = "";
   for (const source of sources) {
     try {
       const general = source.match(/^\[General\]([\s\S]*?)(?=^\[|$)/m)?.[1] || "";
@@ -140,6 +141,7 @@ function readAirportDns(sources: string[]) {
         list("fake-ip-filter").forEach((item) => fakeIpFilter.add(item));
         if (!fakeIpRange && typeof dns["fake-ip-range"] === "string") fakeIpRange = dns["fake-ip-range"];
         if (dns["use-hosts"] === true) useHosts = true;
+        if (!listen && typeof dns.listen === "string") listen = dns.listen;
       }
     } catch { /* use the safe defaults below */ }
   }
@@ -151,6 +153,7 @@ function readAirportDns(sources: string[]) {
     fakeIpFilter: [...fakeIpFilter],
     fakeIpRange,
     useHosts,
+    listen,
   };
 }
 
@@ -317,6 +320,7 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     "dns:",
     "  enable: true",
     "  ipv6: false",
+    ...(airportDns.listen ? [`  listen: ${quote(airportDns.listen)}`] : []),
     "  default-nameserver:",
     ...defaultNameserver.map((item) => `    - ${quote(item)}`),
     "  proxy-server-nameserver:",
