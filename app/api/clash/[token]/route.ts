@@ -38,10 +38,17 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
 
   try {
     const encryptedValue = encryptedSource ? await decryptSourceUrl(encryptedSource) : process.env.AIRPORT_SHADOWROCKET_URL || "";
-    let airportUrls: string[];
+    let airportUrls: string[] = [];
+    let inlineContent: string[] = [];
     try {
       const parsed = JSON.parse(encryptedValue);
-      airportUrls = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [encryptedValue];
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (typeof item === "string") airportUrls.push(item);
+          else if (item?.kind === "url" && typeof item.value === "string") airportUrls.push(item.value);
+          else if (item?.kind === "content" && typeof item.value === "string") inlineContent.push(item.value);
+        }
+      } else airportUrls = [encryptedValue];
     } catch {
       airportUrls = [encryptedValue];
     }
@@ -57,15 +64,14 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
         },
         cache: "no-store",
       }),
-      Promise.all(airportUrls.map((url) => fetchAirportSubscription(url)))
-        .then((results) => ({ ok: true, content: results.map((result) => result.content) }))
-        .catch(() => ({ ok: false, content: [] as string[] })),
+      Promise.allSettled(airportUrls.map((url) => fetchAirportSubscription(url)))
+        .then((results) => ({ ok: results.some((result) => result.status === "fulfilled"), content: [...inlineContent, ...results.flatMap((result) => result.status === "fulfilled" ? [result.value.content] : [])] })),
     ]);
     if (!ruleResponse.ok) throw new Error(`读取 GitHub 规则失败（${ruleResponse.status}）`);
     const file = await ruleResponse.json() as GitHubFile;
     if (!file.content) throw new Error(file.message || "GitHub 规则内容为空");
     const ruleContent = Buffer.from(file.content.replace(/\n/g, ""), "base64").toString("utf8");
-    const liveAirportContent = airportResult.ok ? airportResult.content : [];
+    const liveAirportContent = airportResult.content;
     const airportContent = liveAirportContent.length ? liveAirportContent : (encryptedSource ? [] : [getAirportSnapshot()]);
     if (!airportContent.length || !airportContent[0]) throw new Error("机场在线地址暂时不可用，且没有安全节点快照");
     const userAgent = request.headers.get("user-agent") || "";
