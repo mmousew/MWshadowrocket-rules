@@ -3,7 +3,7 @@ import { getGitHubLogin } from "../../../lib/github-auth";
 import { encryptSourceUrl, parseSourceEntries, decryptSourceUrl, type ClashSourceEntry } from "../../../lib/clash-link";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { getAirportProxyCount } from "../../../lib/clash-config";
-import { createClashLink, getClashProfile, saveSourceSnapshot, updateClashProfileSource } from "../../../lib/clash-links";
+import { createClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot, updateClashProfileSource } from "../../../lib/clash-links";
 
 function sourceName(entry: ClashSourceEntry, index: number) {
   if (entry.name?.trim()) return entry.name.trim();
@@ -11,8 +11,8 @@ function sourceName(entry: ClashSourceEntry, index: number) {
   try { return new URL(entry.value).hostname; } catch { return `订阅来源 ${index + 1}`; }
 }
 
-function publicSources(entries: ClashSourceEntry[]) {
-  return entries.map((entry, index) => ({ index, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : null }));
+async function publicSources(entries: ClashSourceEntry[]) {
+  return Promise.all(entries.map(async (entry, index) => ({ index, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null })));
 }
 
 async function currentState(profileId: string) {
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
   try {
     const profileId = request.nextUrl.searchParams.get("profileId") || "default";
     const { entries } = await currentState(profileId);
-    return NextResponse.json({ profileId, sources: publicSources(entries) });
+    return NextResponse.json({ profileId, sources: await publicSources(entries) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "读取机场来源失败" }, { status: 422 });
   }
@@ -71,12 +71,12 @@ export async function POST(request: NextRequest) {
         throw new Error("机场暂时无法读取，未更新当前配置。请稍后重试或上传 YAML 文件。");
       }
       await updateClashProfileSource(profileId, await encryptSourceUrl(entries));
-      return NextResponse.json({ profileId, sources: publicSources(entries), refreshed: successful.length });
+      return NextResponse.json({ profileId, sources: await publicSources(entries), refreshed: successful.length });
     }
     if (action === "new-link") {
       if (!entries.some((entry) => entry.hidden !== true)) throw new Error("请先保留至少一个可用订阅来源");
       const created = await createClashLink(await encryptSourceUrl(entries), `${profile.name} · ${new Date().toLocaleDateString("zh-CN")}`, profileId);
-      return NextResponse.json({ profileId, sources: publicSources(entries), link: publicLink(request, { id: created.id, profile_id: profileId, name: created.name, token: created.token, status: created.status, created_at: created.createdAt }) });
+      return NextResponse.json({ profileId, sources: await publicSources(entries), link: publicLink(request, { id: created.id, profile_id: profileId, name: created.name, token: created.token, status: created.status, created_at: created.createdAt }) });
     }
     if (!sourceUrl && !file) throw new Error("请输入订阅地址或选择 YAML 文件");
     let added: ClashSourceEntry;
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
     if (entries.some((entry) => entry.kind === added.kind && (entry.kind === "url" ? entry.value === added.value : entry.name === added.name))) throw new Error("这个订阅来源已经添加过了");
     const nextEntries = [...entries, added];
     await updateClashProfileSource(profileId, await encryptSourceUrl(nextEntries));
-    return NextResponse.json({ profileId, sources: publicSources(nextEntries), added: sourceName(added, nextEntries.length - 1) });
+    return NextResponse.json({ profileId, sources: await publicSources(nextEntries), added: sourceName(added, nextEntries.length - 1) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "更新订阅来源失败" }, { status: 422 });
   }
@@ -110,7 +110,7 @@ export async function DELETE(request: NextRequest) {
     if (entries.length <= 1) throw new Error("至少保留一个订阅来源");
     const nextEntries = entries.filter((_, entryIndex) => entryIndex !== index);
     await updateClashProfileSource(profileId, await encryptSourceUrl(nextEntries));
-    return NextResponse.json({ profileId, sources: publicSources(nextEntries) });
+    return NextResponse.json({ profileId, sources: await publicSources(nextEntries) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "删除订阅来源失败" }, { status: 422 });
   }
@@ -144,7 +144,7 @@ export async function PATCH(request: NextRequest) {
       if (!inlineCount && !checks.some((check) => check.status === "fulfilled")) throw new Error("隐藏后剩余来源无法读取，请先确认其他订阅可用或上传 YAML 文件");
     }
     await updateClashProfileSource(profileId, await encryptSourceUrl(nextEntries));
-    return NextResponse.json({ profileId, sources: publicSources(nextEntries) });
+    return NextResponse.json({ profileId, sources: await publicSources(nextEntries) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "更新订阅来源失败" }, { status: 422 });
   }

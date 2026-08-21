@@ -3,7 +3,7 @@ import { getGitHubLogin } from "../../../lib/github-auth";
 import { encryptSourceUrl, parseSourceEntries, type ClashSourceEntry } from "../../../lib/clash-link";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { getAirportProxyCount } from "../../../lib/clash-config";
-import { createClashProfile, getClashProfile, listClashProfiles, renameClashProfile } from "../../../lib/clash-links";
+import { createClashProfile, getClashProfile, getSourceSnapshot, listClashProfiles, renameClashProfile } from "../../../lib/clash-links";
 
 function sourceName(entry: ClashSourceEntry, index: number) {
   if (entry.name?.trim()) return entry.name.trim();
@@ -11,21 +11,22 @@ function sourceName(entry: ClashSourceEntry, index: number) {
   try { return new URL(entry.value).hostname; } catch { return `订阅来源 ${index + 1}`; }
 }
 
-function publicSources(value: string) {
+async function publicSources(value: string) {
   const entries = value ? parseSourceEntries(value) : [];
-  return entries.map((entry, index) => ({ index, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : null }));
+  return Promise.all(entries.map(async (entry, index) => ({ index, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null })));
 }
 
-function publicProfile(profile: { id: string; name: string; encrypted_source: string; status: string; created_at: number; updated_at: number }) {
-  const sources = publicSources(profile.encrypted_source);
-  return { id: profile.id, name: profile.name || "订阅配置", sourceCount: sources.length, nodeCount: sources.reduce((total, item) => total + (item.nodes || 0), 0), updatedAt: profile.updated_at, sources };
+async function publicProfile(profile: { id: string; name: string; encrypted_source: string; status: string; created_at: number; updated_at: number }) {
+  const sources = await publicSources(profile.encrypted_source);
+  const nodeCount = sources.every((item) => item.nodes !== null) ? sources.reduce((total, item) => total + (item.nodes || 0), 0) : null;
+  return { id: profile.id, name: profile.name || "订阅配置", sourceCount: sources.length, nodeCount, updatedAt: profile.updated_at, sources };
 }
 
 export async function GET(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
     const profiles = await listClashProfiles();
-    return NextResponse.json({ profiles: profiles.map(publicProfile) });
+    return NextResponse.json({ profiles: await Promise.all(profiles.map(publicProfile)) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "读取订阅配置失败" }, { status: 422 });
   }
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
     if (!successful.length && !uploaded.length) throw new Error(failed.map((item) => `${item.host}：${item.reason}`).join("；") || "所有机场订阅都读取失败");
     const entries: ClashSourceEntry[] = [...successful, ...uploaded.map((item) => ({ kind: "content" as const, value: item.content, name: item.name }))];
     const profile = await createClashProfile(name, await encryptSourceUrl(entries));
-    return NextResponse.json({ profile: publicProfile(profile), warning: failed.length ? `以下订阅读取失败：${failed.map((item) => `${item.host}（${item.reason}）`).join("、")}；其余来源已保存。` : null });
+    return NextResponse.json({ profile: await publicProfile(profile), warning: failed.length ? `以下订阅读取失败：${failed.map((item) => `${item.host}（${item.reason}）`).join("、")}；其余来源已保存。` : null });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "新增订阅配置失败" }, { status: 422 });
   }
@@ -77,7 +78,7 @@ export async function PATCH(request: NextRequest) {
     if (!profile) throw new Error("订阅配置不存在");
     await renameClashProfile(id, typeof body.name === "string" ? body.name : profile.name);
     const updated = await getClashProfile(id);
-    return NextResponse.json({ profile: updated ? publicProfile(updated) : null });
+    return NextResponse.json({ profile: updated ? await publicProfile(updated) : null });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "保存订阅配置名称失败" }, { status: 422 });
   }
