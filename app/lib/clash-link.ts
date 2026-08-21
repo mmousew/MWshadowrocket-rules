@@ -9,6 +9,21 @@ function getKey() {
 
 export type ClashSourceEntry = { kind: "url"; value: string } | { kind: "content"; value: string; name?: string };
 
+export function parseSourceEntries(value: string): ClashSourceEntry[] {
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.flatMap((item): ClashSourceEntry[] => {
+        if (typeof item === "string") return [{ kind: "url", value: item }];
+        if (item?.kind === "url" && typeof item.value === "string") return [{ kind: "url", value: item.value }];
+        if (item?.kind === "content" && typeof item.value === "string") return [{ kind: "content", value: item.value, name: typeof item.name === "string" ? item.name : undefined }];
+        return [];
+      });
+    }
+  } catch { /* legacy single URL payload */ }
+  return value.trim() ? [{ kind: "url", value: value.trim() }] : [];
+}
+
 export async function encryptSourceUrl(sourceUrl: string | string[] | ClashSourceEntry[]) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await crypto.subtle.importKey("raw", getKey(), "AES-GCM", false, ["encrypt"]);

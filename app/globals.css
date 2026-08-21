@@ -159,6 +159,19 @@ button,input,select,textarea { max-width:100%; }
 .filePicker small { display:block; margin-top:4px; color:#849189; font-size:9px; font-weight:500; line-height:1.5; }
 .filePicker input[type=file] { margin-top:9px; padding:9px; border:1px solid #dce7e0; background:#fff; font-family:inherit; font-size:11px; }
 .selectedFiles { margin:8px 0 0; color:#276f53; font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+.sourceManager { margin:0 0 22px; padding:16px; border:1px solid #dce7e0; border-radius:13px; background:#fbfdfb; }
+.sourceManagerHead { margin-bottom:12px; }
+.sourceManager h3 { margin:0 0 4px; color:#314139; font-size:15px; }
+.sourceManager p { margin:0; color:#849189; font-size:10px; line-height:1.5; }
+.sourceList { display:grid; gap:8px; margin-bottom:14px; }
+.sourceRow { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 11px; border:1px solid #e3ebe5; border-radius:10px; background:#fff; }
+.sourceRow strong { display:block; color:#314139; font-size:11px; overflow-wrap:anywhere; }
+.sourceRow small { display:block; margin-top:3px; color:#87938c; font-size:9px; }
+.sourceRow button { min-width:48px; padding:7px 9px; font-size:10px; }
+.sourceAddForm { display:grid; gap:10px; padding-top:12px; border-top:1px solid #e7eee9; }
+.sourceAddForm label { margin:0; }
+.sourceAddForm .filePicker { margin:0; }
+.sourceAddForm>button { width:100%; justify-content:center; }
 .clashSuccess { margin:0 0 15px; padding:11px 12px; border:1px solid #c8e7d5; border-radius:10px; color:#276f53; background:#eaf7ef; font-size:11px; }
 .clashLinkList { display:grid; gap:12px; margin:0 0 22px; }
 .clashLinkCard { padding:14px; border:1px solid #dce7e0; border-radius:13px; background:#fff; }

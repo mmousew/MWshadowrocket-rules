@@ -483,12 +483,17 @@ export default function Home() {
 
 function ClashSubscription() {
   type LinkRecord = { id: string; name: string; url: string; status: "active" | "revoked"; createdAt: number; revokedAt: number | null; legacy?: boolean };
+  type SourceRecord = { index: number; name: string; kind: "url" | "content"; nodes: number | null };
   const [links, setLinks] = useState<LinkRecord[]>([]);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [copied, setCopied] = useState(false);
   const [sourceUrl, setSourceUrl] = useState("");
   const [sourceFiles, setSourceFiles] = useState<File[]>([]);
+  const [airportSources, setAirportSources] = useState<SourceRecord[]>([]);
+  const [extraSourceUrl, setExtraSourceUrl] = useState("");
+  const [extraSourceFile, setExtraSourceFile] = useState<File | null>(null);
+  const [sourceBusy, setSourceBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generatedNodes, setGeneratedNodes] = useState<number | null>(null);
   const [qrCode, setQrCode] = useState("");
@@ -501,6 +506,14 @@ function ClashSubscription() {
       if (!response.ok) throw new Error(data.error || "读取订阅链接失败");
       setLinks(data.links || []);
     }).catch((cause) => setError(cause instanceof Error ? cause.message : "读取订阅链接失败"));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/clash/source", { cache: "no-store" }).then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "读取机场来源失败");
+      setAirportSources(data.sources || []);
+    }).catch((cause) => setError(cause instanceof Error ? cause.message : "读取机场来源失败"));
   }, []);
 
   async function copyLink(value: string) {
@@ -541,6 +554,34 @@ function ClashSubscription() {
     setLinks((current) => current.map((item) => item.id === id ? { ...item, name: name.trim() || "订阅链接" } : item));
   }
 
+  async function addAirportSource(event: FormEvent) {
+    event.preventDefault();
+    if (!extraSourceUrl.trim() && !extraSourceFile) return setError("请输入订阅地址或选择 YAML 文件");
+    setSourceBusy(true); setError("");
+    try {
+      const form = new FormData();
+      form.set("sourceUrl", extraSourceUrl.trim());
+      if (extraSourceFile) form.append("sourceFile", extraSourceFile, extraSourceFile.name);
+      const response = await fetch("/api/clash/source", { method: "POST", body: form });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "添加订阅来源失败");
+      setAirportSources(data.sources || []); setExtraSourceUrl(""); setExtraSourceFile(null);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "添加订阅来源失败"); }
+    finally { setSourceBusy(false); }
+  }
+
+  async function removeAirportSource(index: number) {
+    if (!window.confirm("删除这个机场来源后，现有订阅链接都会同步更新，确定删除吗？")) return;
+    setSourceBusy(true); setError("");
+    try {
+      const response = await fetch("/api/clash/source", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ index }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "删除订阅来源失败");
+      setAirportSources(data.sources || []);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "删除订阅来源失败"); }
+    finally { setSourceBusy(false); }
+  }
+
   function shadowrocketUrl(value: string) {
     const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
     return token ? `https://656577.xyz/mw-shadowrocket.php?token=${encodeURIComponent(token)}` : value.replace("/api/clash/", "/api/shadowrocket/");
@@ -562,7 +603,7 @@ function ClashSubscription() {
     }
   }
 
-  return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">每次生成都会新增一条独立链接。你可以为每条链接设置备注名称，旧链接默认继续可用。</p><form className="sourceForm" onSubmit={generateLink}><label>机场订阅地址 <small>一行一个，可添加多个机场</small><textarea rows={5} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://机场A.example/订阅\nhttps://机场B.example/订阅" autoComplete="off" /></label><label className="filePicker">服务器读取失败？上传本地订阅文件 <small>先在 ClashX Meta 里下载 YAML，再选中；支持多个文件</small><input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" multiple onChange={(event) => setSourceFiles(Array.from(event.target.files || []))} /></label>{sourceFiles.length > 0 && <div className="selectedFiles">已选择：{sourceFiles.map((file) => file.name).join("、")}</div>}<button className="primary" type="submit" disabled={generating}>{generating ? "正在验证并合并节点…" : "验证并生成新链接"}</button><small>地址会加密保存；上传文件只用于本次合并，不会公开展示。遇到 403 时优先使用上传方式。</small></form>{error && <div className="clashError">{error}</div>}{warning && <div className="clashWarning">{warning}</div>}{generatedNodes !== null && <div className="clashSuccess">新链接已生成，共识别 {generatedNodes} 个节点。</div>}<div className="clashLinkList">{links.length ? links.map((item) => <article className={`clashLinkCard ${item.status === "revoked" ? "revoked" : ""}`} key={item.id}><div className="clashLinkMeta"><input className="clashNameInput" value={item.name} onChange={(event) => setLinks((current) => current.map((link) => link.id === item.id ? { ...link, name: event.target.value } : link))} onBlur={() => void renameLink(item.id, item.name).catch((cause) => setError(cause instanceof Error ? cause.message : "保存名称失败"))} aria-label="订阅备注名称" /><span>{item.status === "active" ? "已启用" : "已失效"} · {item.createdAt ? new Date(item.createdAt).toLocaleString("zh-CN") : "历史链接"}</span></div><label className="clientLinkLabel">CLASH 地址<input readOnly value={clashRelayUrl(item.url)} onFocus={(event) => event.currentTarget.select()} /></label><label className="clientLinkLabel">小火箭地址<input readOnly value={shadowrocketUrl(item.url)} onFocus={(event) => event.currentTarget.select()} /></label><div className="clashActions"><button type="button" className="primary" onClick={() => copyLink(clashRelayUrl(item.url))}>复制 CLASH</button>{item.status === "active" && <button type="button" className="ghost" onClick={() => void showQr(clashRelayUrl(item.url), "CLASH")}>CLASH 二维码</button>}{item.status === "active" && <button type="button" className="ghost" onClick={() => void showQr(shadowrocketUrl(item.url), "小火箭")}>小火箭二维码</button>}{item.status === "active" && <button type="button" className="ghost" onClick={() => void changeLink(item.id, "revoke")}>失效</button>}<button type="button" className="danger" onClick={() => void changeLink(item.id, "delete")}>删除</button></div></article>) : <p className="clashLoading">还没有订阅链接，请先验证并生成。</p>}</div><ul><li>两个地址共用同一个订阅令牌，失效或删除会同时停止访问。</li><li>CLASH 地址返回 YAML，小火箭地址返回 Shadowrocket 配置。</li><li>同一条链接会随 GitHub 规则和机场节点更新。</li></ul>{qrCode && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭二维码" onMouseDown={(event) => { if (event.target === event.currentTarget) { setQrCode(""); setQrLink(""); setQrLabel(""); } }} onKeyDown={(event) => { if (event.key === "Escape") { setQrCode(""); setQrLink(""); setQrLabel(""); } }}><section className="qrModal" role="dialog" aria-modal="true" aria-labelledby="qr-title"><header><div><h2 id="qr-title">{qrLabel} 订阅二维码</h2><p>使用对应客户端扫描</p></div><button type="button" onClick={() => { setQrCode(""); setQrLink(""); setQrLabel(""); }}>×</button></header><img src={qrCode} alt={`${qrLabel} 私有订阅二维码`} /><button type="button" className="ghost qrCopy" onClick={() => void copyLink(qrLink)}>{copied ? "已复制订阅链接" : "复制订阅链接"}</button></section></div>}</section>;
+  return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">每次生成都会新增一条独立链接。你可以为每条链接设置备注名称，旧链接默认继续可用。</p><form className="sourceForm" onSubmit={generateLink}><label>机场订阅地址 <small>一行一个，可添加多个机场</small><textarea rows={5} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://机场A.example/订阅\nhttps://机场B.example/订阅" autoComplete="off" /></label><label className="filePicker">服务器读取失败？上传本地订阅文件 <small>先在 ClashX Meta 里下载 YAML，再选中；支持多个文件</small><input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" multiple onChange={(event) => setSourceFiles(Array.from(event.target.files || []))} /></label>{sourceFiles.length > 0 && <div className="selectedFiles">已选择：{sourceFiles.map((file) => file.name).join("、")}</div>}<button className="primary" type="submit" disabled={generating}>{generating ? "正在验证并合并节点…" : "验证并生成新链接"}</button><small>地址会加密保存；上传文件只用于本次合并，不会公开展示。遇到 403 时优先使用上传方式。</small></form>{error && <div className="clashError">{error}</div>}{warning && <div className="clashWarning">{warning}</div>}{generatedNodes !== null && <div className="clashSuccess">新链接已生成，共识别 {generatedNodes} 个节点。</div>}<section className="sourceManager"><div className="sourceManagerHead"><div><h3>当前机场来源</h3><p>这里显示已经添加成功的机场；添加或删除会同步到现有订阅链接。</p></div></div><div className="sourceList">{airportSources.length ? airportSources.map((source) => <div className="sourceRow" key={`${source.index}-${source.name}`}><div><strong>{source.name}</strong><small>{source.kind === "content" ? `本地文件 · ${source.nodes ?? 0} 个节点` : "在线订阅地址"}</small></div><button type="button" className="danger" disabled={sourceBusy || airportSources.length <= 1} onClick={() => void removeAirportSource(source.index)}>删除</button></div>) : <p className="clashLoading">还没有读取到机场来源。</p>}</div><form className="sourceAddForm" onSubmit={addAirportSource}><label>新增订阅地址<input value={extraSourceUrl} onChange={(event) => setExtraSourceUrl(event.target.value)} placeholder="https://新的机场订阅地址" /></label><label className="filePicker">或者上传 YAML 文件<input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" onChange={(event) => setExtraSourceFile(event.target.files?.[0] || null)} /></label>{extraSourceFile && <div className="selectedFiles">已选择：{extraSourceFile.name}</div>}<button className="ghost" type="submit" disabled={sourceBusy}>{sourceBusy ? "处理中…" : "添加到当前配置"}</button></form></section><div className="clashLinkList">{links.length ? links.map((item) => <article className={`clashLinkCard ${item.status === "revoked" ? "revoked" : ""}`} key={item.id}><div className="clashLinkMeta"><input className="clashNameInput" value={item.name} onChange={(event) => setLinks((current) => current.map((link) => link.id === item.id ? { ...link, name: event.target.value } : link))} onBlur={() => void renameLink(item.id, item.name).catch((cause) => setError(cause instanceof Error ? cause.message : "保存名称失败"))} aria-label="订阅备注名称" /><span>{item.status === "active" ? "已启用" : "已失效"} · {item.createdAt ? new Date(item.createdAt).toLocaleString("zh-CN") : "历史链接"}</span></div><label className="clientLinkLabel">CLASH 地址<input readOnly value={clashRelayUrl(item.url)} onFocus={(event) => event.currentTarget.select()} /></label><label className="clientLinkLabel">小火箭地址<input readOnly value={shadowrocketUrl(item.url)} onFocus={(event) => event.currentTarget.select()} /></label><div className="clashActions"><button type="button" className="primary" onClick={() => copyLink(clashRelayUrl(item.url))}>复制 CLASH</button>{item.status === "active" && <button type="button" className="ghost" onClick={() => void showQr(clashRelayUrl(item.url), "CLASH")}>CLASH 二维码</button>}{item.status === "active" && <button type="button" className="ghost" onClick={() => void showQr(shadowrocketUrl(item.url), "小火箭")}>小火箭二维码</button>}{item.status === "active" && <button type="button" className="ghost" onClick={() => void changeLink(item.id, "revoke")}>失效</button>}<button type="button" className="danger" onClick={() => void changeLink(item.id, "delete")}>删除</button></div></article>) : <p className="clashLoading">还没有订阅链接，请先验证并生成。</p>}</div><ul><li>两个地址共用同一个订阅令牌，失效或删除会同时停止访问。</li><li>CLASH 地址返回 YAML，小火箭地址返回 Shadowrocket 配置。</li><li>同一条链接会随 GitHub 规则和机场节点更新。</li></ul>{qrCode && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭二维码" onMouseDown={(event) => { if (event.target === event.currentTarget) { setQrCode(""); setQrLink(""); setQrLabel(""); } }} onKeyDown={(event) => { if (event.key === "Escape") { setQrCode(""); setQrLink(""); setQrLabel(""); } }}><section className="qrModal" role="dialog" aria-modal="true" aria-labelledby="qr-title"><header><div><h2 id="qr-title">{qrLabel} 订阅二维码</h2><p>使用对应客户端扫描</p></div><button type="button" onClick={() => { setQrCode(""); setQrLink(""); setQrLabel(""); }}>×</button></header><img src={qrCode} alt={`${qrLabel} 私有订阅二维码`} /><button type="button" className="ghost qrCopy" onClick={() => void copyLink(qrLink)}>{copied ? "已复制订阅链接" : "复制订阅链接"}</button></section></div>}</section>;
 }
 
 function GroupCard({ group, ruleCount, tone, onEdit, onRules }: { group: Group; ruleCount: number; tone: string; onEdit: () => void; onRules: () => void }) {
