@@ -23,7 +23,10 @@ export async function fetchAirportSubscription(sourceUrl: string) {
   const safeUrl = validateAirportUrl(sourceUrl);
   const relayUrl = process.env.AIRPORT_RELAY_URL;
   const relaySecret = process.env.AIRPORT_RELAY_SECRET;
-  if (relayUrl && relaySecret) {
+  // HTTPS sources are fetched directly from the hosted worker. Some providers
+  // reject the VPS relay IP even though the same HTTPS URL works normally.
+  // The relay remains necessary only for explicitly approved HTTP sources.
+  if (relayUrl && relaySecret && new URL(safeUrl).protocol === "http:") {
     const relayResponse = await fetch(relayUrl, {
       method: "POST",
       headers: {
