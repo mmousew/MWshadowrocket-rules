@@ -157,24 +157,24 @@ button,input,select,textarea { max-width:100%; }
 .sourceForm>small { display:block; margin-top:9px; color:#849189; font-size:9px; line-height:1.5; }
 .filePicker { margin-top:14px; padding:13px; border:1px dashed #b8d3c1; border-radius:11px; background:#f8fcf9; }
 .filePicker small { display:block; margin-top:4px; color:#849189; font-size:9px; font-weight:500; line-height:1.5; }
-.filePicker input[type=file] { margin-top:9px; padding:9px; border:1px solid #dce7e0; background:#fff; font-family:inherit; font-size:11px; }
+.filePicker input[type=file] { width:100%; max-width:100%; min-width:0; margin-top:9px; padding:9px; border:1px solid #dce7e0; background:#fff; font-family:inherit; font-size:11px; }
 .selectedFiles { margin:8px 0 0; color:#276f53; font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
 .sourceManager { margin:0 0 22px; padding:16px; border:1px solid #dce7e0; border-radius:13px; background:#fbfdfb; }
 .sourceManagerHead { margin-bottom:12px; }
 .sourceManager h3 { margin:0 0 4px; color:#314139; font-size:15px; }
 .sourceManager p { margin:0; color:#849189; font-size:10px; line-height:1.5; }
 .sourceList { display:grid; gap:8px; margin-bottom:14px; }
-.sourceRow { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 11px; border:1px solid #e3ebe5; border-radius:10px; background:#fff; }
+.sourceRow { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; min-width:0; padding:10px 11px; border:1px solid #e3ebe5; border-radius:10px; background:#fff; }
 .sourceRow.sourceHidden { opacity:.62; background:#f4f7f5; }
-.sourceRow > div:first-child { min-width:0; flex:1; }
-.sourceRow > button { flex:0 0 auto; }
+.sourceRow > div:first-child { min-width:0; flex:1 1 220px; }
+.sourceRow > button { flex:0 1 auto; }
 .sourceRow strong { display:block; color:#314139; font-size:11px; overflow-wrap:anywhere; }
-.sourceRow small { display:block; margin-top:3px; color:#87938c; font-size:9px; }
+.sourceRow small { display:block; margin-top:3px; color:#87938c; font-size:9px; overflow-wrap:anywhere; word-break:break-word; }
 .sourceRow button { min-width:48px; padding:7px 9px; font-size:10px; }
 .sourceNameInput { width:min(70%,320px) !important; margin:0 !important; padding:5px 8px !important; border:1px solid transparent !important; border-radius:7px !important; color:#314139 !important; background:transparent !important; font:700 12px/1.3 inherit !important; }
 .sourceNameInput:hover,.sourceNameInput:focus { border-color:#cbdcd1 !important; background:#f6faf7 !important; box-shadow:none !important; }
-.sourceEditRow { display:flex; align-items:center; gap:6px; flex:1; min-width:0; }
-.sourceEditRow input { flex:1; min-width:160px; }
+.sourceEditRow { display:flex; flex-wrap:wrap; align-items:center; gap:6px; width:100%; flex:1 1 100%; min-width:0; }
+.sourceEditRow input { flex:1 1 240px; width:100%; min-width:0; }
 .sourceEditRow button { min-width:42px; }
 .sourceAddForm { display:grid; gap:14px; padding-top:12px; border-top:1px solid #e7eee9; }
 .sourceAddFields { display:grid; gap:10px; padding:13px; border:1px solid #dce7e0; border-radius:11px; background:#f7fbf8; }
@@ -204,7 +204,7 @@ button,input,select,textarea { max-width:100%; }
 .profileSourceSummary { display:flex; flex-wrap:wrap; gap:6px; min-width:0; }
 .profileSourceSummary span { max-width:100%; padding:5px 8px; border-radius:999px; color:#4f7561; background:#edf7f0; font-size:9px; overflow-wrap:anywhere; }
 .profileSourceSummary span.isHidden { color:#8a918d; background:#f0f2f0; text-decoration:line-through; }
-.profileEditor { display:grid; gap:11px; padding:13px; border:1px solid #c9e1d1; border-radius:12px; background:#f7fbf8; }
+.profileEditor { display:grid; gap:11px; min-width:0; overflow:hidden; padding:13px; border:1px solid #c9e1d1; border-radius:12px; background:#f7fbf8; }
 .profileEditorHead { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
 .profileEditorHead h4,.profileLinksHead h4 { margin:0; color:#314139; font-size:12px; }
 .profileEditorHead p { margin:4px 0 0; color:#849189; font-size:9px; line-height:1.5; }
@@ -252,6 +252,16 @@ button,input,select,textarea { max-width:100%; }
   .profileCardHead>button { width:100%; justify-content:center; }
   .profileCardTitle input { width:100% !important; }
   .profileEditorActions { flex-direction:column; }
+  .profileEditor { padding:11px; }
+  .profileEditorHead { align-items:stretch; flex-direction:column; }
+  .profileEditorHead button { width:100%; }
+  .profileEditor .sourceRow { align-items:stretch; gap:8px; }
+  .profileEditor .sourceRow > div:first-child { flex:1 1 100%; width:100%; }
+  .profileEditor .sourceRow > button { flex:1 1 calc(33.333% - 6px); min-width:0; padding-left:5px; padding-right:5px; font-size:10px; white-space:normal; }
+  .profileEditor .sourceEditRow { flex-direction:column; align-items:stretch; }
+  .profileEditor .sourceEditRow input,
+  .profileEditor .sourceEditRow button { width:100%; min-width:0; }
+  .profileEditor .sourceAddFields { padding:10px; }
   .sourceActionRow { grid-template-columns:1fr 1fr; gap:8px; }
   .sourceActionRow button { padding-left:8px; padding-right:8px; font-size:11px; }
 }
