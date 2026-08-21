@@ -298,6 +298,8 @@ button,input,select,textarea { max-width:100%; }
 .siteHeader .navItem:hover,.siteHeader .navItem.active { color:#fff; background:#2b3a33; }
 .siteHeader .repoCard { flex:0 1 auto; margin:0 0 0 auto; padding:9px 11px; }
 .siteHeader .repoCard strong,.siteHeader .repoCard small { max-width:230px; }
+.siteHeader .siteLogout { flex:0 0 auto; padding:8px 0; color:#aebbb4; font-size:12px; font-weight:700; text-decoration:none; }
+.siteHeader .siteLogout:hover { color:#fff; }
 .content { margin:0 auto; }
 
 @media(max-width:900px){
@@ -310,6 +312,7 @@ button,input,select,textarea { max-width:100%; }
   .siteHeader nav { width:100%; overflow-x:auto; overscroll-behavior-inline:contain; padding-bottom:2px; scrollbar-width:none; }
   .siteHeader nav::-webkit-scrollbar { display:none; }
   .siteHeader .navItem { flex:1 0 58px; min-width:58px; padding:8px 12px; font-size:11px; white-space:nowrap; }
+  .siteHeader .siteLogout { display:block; margin-top:6px; padding:4px 2px 0; text-align:right; }
 }
 
 /* Proxy group ordering */
