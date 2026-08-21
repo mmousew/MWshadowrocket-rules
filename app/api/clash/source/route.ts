@@ -102,7 +102,19 @@ export async function PATCH(request: NextRequest) {
     if (!active) throw new Error("还没有订阅来源");
     if (!Number.isInteger(index) || index < 0 || index >= entries.length) throw new Error("订阅来源不存在");
     if (hidden && !entries[index].hidden && entries.filter((entry) => !entry.hidden).length <= 1) throw new Error("至少保留一个可用来源");
-    entries[index].hidden = hidden;
+    const nextEntries = entries.map((entry, entryIndex) => entryIndex === index ? { ...entry, hidden } : entry);
+    if (hidden) {
+      const visibleEntries = nextEntries.filter((entry) => !entry.hidden);
+      const inlineCount = visibleEntries.filter((entry) => entry.kind === "content").length;
+      const urlEntries = visibleEntries.filter((entry): entry is Extract<ClashSourceEntry, { kind: "url" }> => entry.kind === "url");
+      const checks = await Promise.allSettled(urlEntries.map((entry) => fetchAirportSubscription(entry.value)));
+      const successfulCount = checks.filter((check) => check.status === "fulfilled").length;
+      if (!inlineCount && !successfulCount) {
+        const failedNames = urlEntries.map((entry) => { try { return new URL(entry.value).hostname; } catch { return "订阅地址"; } });
+        throw new Error(`隐藏后剩余来源无法读取：${failedNames.join("、")}。请先确认花云订阅可用，或上传 YAML 文件。`);
+      }
+    }
+    entries.splice(0, entries.length, ...nextEntries);
     const encryptedSource = await encryptSourceUrl(entries);
     await syncActiveClashSources(encryptedSource);
     return NextResponse.json({ sources: publicSources(entries) });
