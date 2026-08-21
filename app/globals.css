@@ -177,15 +177,21 @@ button,input,select,textarea { max-width:100%; }
 .sourceAddForm>button { width:100%; justify-content:center; }
 .clashSuccess { margin:0 0 15px; padding:11px 12px; border:1px solid #c8e7d5; border-radius:10px; color:#276f53; background:#eaf7ef; font-size:11px; }
 .clashLinkList { display:grid; gap:12px; margin:0 0 22px; }
-.clashLinkCard { padding:14px; border:1px solid #dce7e0; border-radius:13px; background:#fff; }
+.clashLinkCard { position:relative; padding:14px; border:1px solid #dce7e0; border-radius:13px; background:#fff; }
 .clashLinkCard.revoked { opacity:.72; background:#f5f7f5; }
+.clashCardActions { position:absolute; top:12px; right:12px; display:flex; gap:6px; }
+.clashCardActions button { min-height:28px; padding:5px 8px; font-size:10px; }
 .clashLinkMeta { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; color:#314139; font-size:12px; }
+.clashLinkMeta { padding-right:92px; }
 .clashLinkMeta span { color:#87938c; font-size:10px; }
 .clashNameInput { width:min(55%,260px) !important; margin:0 !important; padding:5px 8px !important; border:1px solid transparent !important; border-radius:7px !important; color:#314139 !important; background:transparent !important; font:700 12px/1.3 inherit !important; }
 .clashNameInput:hover,.clashNameInput:focus { border-color:#cbdcd1 !important; background:#f6faf7 !important; box-shadow:none !important; }
 .clashLinkCard input { margin-top:0; }
 .clashLinkCard .clientLinkLabel { margin-top:9px; color:#7b8981; font-size:9px; font-weight:750; letter-spacing:.04em; }
-.clashLinkCard .clientLinkLabel input { margin-top:5px; }
+.clientLinkRow { display:flex; gap:7px; align-items:center; margin-top:5px; }
+.clashLinkCard .clientLinkRow input { flex:1; min-width:0; }
+.inlineCopy { flex:0 0 auto; min-height:35px; padding:8px 10px; border:1px solid #cfe0d5; border-radius:9px; color:#276f53; background:#f3faf5; font-size:10px; cursor:pointer; }
+.inlineCopy:hover { background:#e8f5eb; }
 .clashLinkCard .clashActions { flex-wrap:wrap; margin:10px 0 0; }
 .clashLinkCard .clashActions button,.clashLinkCard .clashActions a { min-height:34px; padding:8px 11px; font-size:11px; }
 .clashLinkCard .danger { border:1px solid #edc7c0; color:#9a4434; background:#fff7f5; }
