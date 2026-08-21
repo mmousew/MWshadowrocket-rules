@@ -289,21 +289,18 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
   const { converted, providers, skipped } = convertRules(rules);
   const airportDns = readAirportDns(sources);
   const defaultNameserver = airportDns.defaultNameserver.length ? airportDns.defaultNameserver : ["223.5.5.5", "119.29.29.29"];
-  // `proxy-server-nameserver` is used to resolve proxy endpoint hostnames.
-  // Keep airport-specific resolvers, including a local Clash DNS endpoint
-  // such as `udp://127.0.0.1:7874` when an airport explicitly requires it.
-  // Only keep ordinary default DNS servers out of this dedicated list: mixing
-  // them here can make proxy endpoint resolution race with the wrong resolver.
-  const proxyServerNameserver = [...new Set(airportDns.proxyServerNameserver)]
-    .filter((item) => !defaultNameserver.includes(item));
-  proxyServerNameserver.sort((left) => /^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(left) ? -1 : 1);
-  if (!proxyServerNameserver.length) proxyServerNameserver.push(...defaultNameserver);
+  // Use only portable resolvers in the merged file. A source-local resolver
+  // such as 127.0.0.1:7874 can self-reference the generated config and break
+  // every airport when multiple sources are combined.
+  const proxyServerNameserver = [...new Set([...airportDns.proxyServerNameserver, ...defaultNameserver])]
+    .filter((item) => !/^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(item));
   const nameserver = airportDns.nameserver.length ? airportDns.nameserver : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"];
   const fallback = airportDns.fallback.length ? airportDns.fallback : ["https://223.5.5.5/dns-query", "https://223.6.6.6/dns-query"];
   const nameserverPolicies = new Map<string, string[]>();
   for (const source of sources) {
     const sourceDns = readAirportDns([source]);
-    const resolvers = sourceDns.proxyServerNameserver.length ? sourceDns.proxyServerNameserver : sourceDns.defaultNameserver;
+    const resolvers = (sourceDns.proxyServerNameserver.length ? sourceDns.proxyServerNameserver : sourceDns.defaultNameserver)
+      .filter((item) => !/^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(item));
     if (!resolvers.length) continue;
     for (const proxy of parseAirportProxies(source)) {
       const host = String(proxy.server || "").toLowerCase();
@@ -320,7 +317,6 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     "dns:",
     "  enable: true",
     "  ipv6: false",
-    ...(airportDns.listen ? [`  listen: ${quote(airportDns.listen)}`] : []),
     "  default-nameserver:",
     ...defaultNameserver.map((item) => `    - ${quote(item)}`),
     "  proxy-server-nameserver:",
