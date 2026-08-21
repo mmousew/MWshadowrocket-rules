@@ -11,7 +11,7 @@ function sourceName(entry: ClashSourceEntry, index: number) {
 }
 
 function publicSources(entries: ClashSourceEntry[]) {
-  return entries.map((entry, index) => ({ index, name: sourceName(entry, index), kind: entry.kind, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : null }));
+  return entries.map((entry, index) => ({ index, name: sourceName(entry, index), kind: entry.kind, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : null }));
 }
 
 async function currentState() {
@@ -82,4 +82,21 @@ export async function DELETE(request: NextRequest) {
     await syncActiveClashSources(encryptedSource);
     return NextResponse.json({ sources: publicSources(entries) });
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "删除订阅来源失败" }, { status: 422 }); }
+}
+
+export async function PATCH(request: NextRequest) {
+  if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
+  try {
+    const body = await request.json() as { index?: number; hidden?: boolean };
+    const index = Number(body.index);
+    const hidden = body.hidden === true;
+    const { active, entries } = await currentState();
+    if (!active) throw new Error("还没有订阅来源");
+    if (!Number.isInteger(index) || index < 0 || index >= entries.length) throw new Error("订阅来源不存在");
+    if (hidden && !entries[index].hidden && entries.filter((entry) => !entry.hidden).length <= 1) throw new Error("至少保留一个可用来源");
+    entries[index].hidden = hidden;
+    const encryptedSource = await encryptSourceUrl(entries);
+    await syncActiveClashSources(encryptedSource);
+    return NextResponse.json({ sources: publicSources(entries) });
+  } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "更新订阅来源失败" }, { status: 422 }); }
 }

@@ -7,7 +7,7 @@ function getKey() {
   return Uint8Array.from(raw.match(/.{2}/g) || [], (byte) => Number.parseInt(byte, 16));
 }
 
-export type ClashSourceEntry = { kind: "url"; value: string } | { kind: "content"; value: string; name?: string };
+export type ClashSourceEntry = { kind: "url"; value: string; hidden?: boolean } | { kind: "content"; value: string; name?: string; hidden?: boolean };
 
 export function parseSourceEntries(value: string): ClashSourceEntry[] {
   try {
@@ -15,8 +15,8 @@ export function parseSourceEntries(value: string): ClashSourceEntry[] {
     if (Array.isArray(parsed)) {
       return parsed.flatMap((item): ClashSourceEntry[] => {
         if (typeof item === "string") return [{ kind: "url", value: item }];
-        if (item?.kind === "url" && typeof item.value === "string") return [{ kind: "url", value: item.value }];
-        if (item?.kind === "content" && typeof item.value === "string") return [{ kind: "content", value: item.value, name: typeof item.name === "string" ? item.name : undefined }];
+        if (item?.kind === "url" && typeof item.value === "string") return [{ kind: "url", value: item.value, hidden: item.hidden === true }];
+        if (item?.kind === "content" && typeof item.value === "string") return [{ kind: "content", value: item.value, name: typeof item.name === "string" ? item.name : undefined, hidden: item.hidden === true }];
         return [];
       });
     }

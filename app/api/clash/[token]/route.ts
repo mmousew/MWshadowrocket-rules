@@ -45,8 +45,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       if (Array.isArray(parsed)) {
         for (const item of parsed) {
           if (typeof item === "string") airportUrls.push(item);
-          else if (item?.kind === "url" && typeof item.value === "string") airportUrls.push(item.value);
-          else if (item?.kind === "content" && typeof item.value === "string") inlineContent.push(item.value);
+          else if (item?.kind === "url" && typeof item.value === "string" && item.hidden !== true) airportUrls.push(item.value);
+          else if (item?.kind === "content" && typeof item.value === "string" && item.hidden !== true) inlineContent.push(item.value);
         }
       } else airportUrls = [encryptedValue];
     } catch {
