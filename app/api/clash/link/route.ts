@@ -35,9 +35,9 @@ export async function POST(request: NextRequest) {
     if (!sourceUrls.length) throw new Error("请至少输入一个机场订阅地址");
     const settled = await Promise.allSettled(sourceUrls.map((url) => fetchAirportSubscription(url)));
     const successful = settled.flatMap((item, index) => item.status === "fulfilled" ? [{ url: sourceUrls[index], result: item.value }] : []);
-    const failed = settled.flatMap((item, index) => item.status === "rejected" ? [{ index: index + 1, reason: item.reason instanceof Error ? item.reason.message : "读取失败" }] : []);
+    const failed = settled.flatMap((item, index) => item.status === "rejected" ? [{ index: index + 1, host: (() => { try { return new URL(sourceUrls[index]).hostname; } catch { return "地址格式错误"; } })(), reason: item.reason instanceof Error ? item.reason.message : "读取失败" }] : []);
     if (!successful.length) {
-      const detail = failed.map((item) => `第${item.index}个地址：${item.reason}`).join("；");
+      const detail = failed.map((item) => `第${item.index}个（${item.host}）：${item.reason}`).join("；");
       throw new Error(detail || "所有机场订阅都读取失败");
     }
     const results = successful.map((item) => item.result);
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       nodeCount,
       sourceCount: sourceUrls.length,
       successCount: successful.length,
-      warning: failed.length ? `已跳过 ${failed.length} 个读取失败的订阅，其余订阅已正常合并。` : null,
+      warning: failed.length ? `以下订阅读取失败：${failed.map((item) => `第${item.index}个（${item.host}，${item.reason}）`).join("、")}；其余订阅已正常合并。` : null,
       updateHours: 6,
     });
   } catch (error) {
