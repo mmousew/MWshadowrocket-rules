@@ -121,6 +121,10 @@ function readAirportDns(sources: string[]) {
   const fallback = new Set<string>();
   for (const source of sources) {
     try {
+      const general = source.match(/^\[General\]([\s\S]*?)(?=^\[|$)/m)?.[1] || "";
+      const readGeneralList = (key: string) => general.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, "mi"))?.[1]?.split(",").map((item) => item.trim()).filter(Boolean) || [];
+      readGeneralList("dns-server").forEach((item) => defaultNameserver.add(item));
+      readGeneralList("fallback-dns-server").forEach((item) => fallback.add(item));
       let parsed: { dns?: unknown } | null = null;
       try { parsed = parseYaml(source) as { dns?: unknown } | null; } catch { /* Shadowrocket format is parsed below */ }
       if (parsed?.dns && typeof parsed.dns === "object") {
@@ -130,12 +134,6 @@ function readAirportDns(sources: string[]) {
         list("default-nameserver").forEach((item) => defaultNameserver.add(item));
         list("nameserver").forEach((item) => nameserver.add(item));
         list("fallback").forEach((item) => fallback.add(item));
-      }
-      if (!parsed?.dns) {
-        const general = source.match(/^\[General\]([\s\S]*?)(?=^\[|$)/m)?.[1] || "";
-        const readGeneralList = (key: string) => general.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, "mi"))?.[1]?.split(",").map((item) => item.trim()).filter(Boolean) || [];
-        readGeneralList("dns-server").forEach((item) => defaultNameserver.add(item));
-        readGeneralList("fallback-dns-server").forEach((item) => fallback.add(item));
       }
     } catch { /* use the safe defaults below */ }
   }
