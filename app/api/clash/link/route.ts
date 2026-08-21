@@ -33,15 +33,24 @@ export async function POST(request: NextRequest) {
     const body = await request.json() as { sourceUrl?: string; sourceUrls?: string[] };
     const sourceUrls = (body.sourceUrls || body.sourceUrl?.split(/\r?\n/) || []).map((url) => url.trim()).filter(Boolean);
     if (!sourceUrls.length) throw new Error("请至少输入一个机场订阅地址");
-    const results = await Promise.all(sourceUrls.map((url) => fetchAirportSubscription(url)));
+    const settled = await Promise.allSettled(sourceUrls.map((url) => fetchAirportSubscription(url)));
+    const successful = settled.flatMap((item, index) => item.status === "fulfilled" ? [{ url: sourceUrls[index], result: item.value }] : []);
+    const failed = settled.flatMap((item, index) => item.status === "rejected" ? [{ index: index + 1, reason: item.reason instanceof Error ? item.reason.message : "读取失败" }] : []);
+    if (!successful.length) {
+      const detail = failed.map((item) => `第${item.index}个地址：${item.reason}`).join("；");
+      throw new Error(detail || "所有机场订阅都读取失败");
+    }
+    const results = successful.map((item) => item.result);
     const nodeCount = results.reduce((total, result) => total + result.nodeCount, 0);
-    const encryptedSource = await encryptSourceUrl(sourceUrls);
+    const encryptedSource = await encryptSourceUrl(successful.map((item) => item.url));
     await syncActiveClashSources(encryptedSource);
     const created = await createClashLink(encryptedSource, `订阅链接 ${new Date().toLocaleDateString("zh-CN")}`);
     return NextResponse.json({
       link: publicLink(request, created),
       nodeCount,
       sourceCount: sourceUrls.length,
+      successCount: successful.length,
+      warning: failed.length ? `已跳过 ${failed.length} 个读取失败的订阅，其余订阅已正常合并。` : null,
       updateHours: 6,
     });
   } catch (error) {

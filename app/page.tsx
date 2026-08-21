@@ -516,7 +516,7 @@ function ClashSubscription() {
       const response = await fetch("/api/clash/link", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceUrls }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "生成订阅失败");
-      setLinks((current) => [data.link, ...current]); setGeneratedNodes(data.nodeCount); setCopied(false); setSourceUrl("");
+      setLinks((current) => [data.link, ...current]); setGeneratedNodes(data.nodeCount); setCopied(false); setSourceUrl(""); if (data.warning) setToast(data.warning);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "生成订阅失败"); }
     finally { setGenerating(false); }
   }
