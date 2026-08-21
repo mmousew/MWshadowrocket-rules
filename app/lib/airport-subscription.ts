@@ -20,6 +20,25 @@ export function validateAirportUrl(value: string) {
 
 export async function fetchAirportSubscription(sourceUrl: string) {
   const safeUrl = validateAirportUrl(sourceUrl);
+  const relayUrl = process.env.AIRPORT_RELAY_URL;
+  const relaySecret = process.env.AIRPORT_RELAY_SECRET;
+  if (relayUrl && relaySecret) {
+    const relayResponse = await fetch(relayUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-MW-Relay-Secret": relaySecret,
+      },
+      body: JSON.stringify({ url: safeUrl }),
+      cache: "no-store",
+    });
+    if (!relayResponse.ok) throw new Error(`机场订阅读取失败（${relayResponse.status}）`);
+    const content = await relayResponse.text();
+    if (content.length > 2_000_000) throw new Error("机场订阅内容过大");
+    const nodeCount = getAirportProxyCount(content);
+    if (!nodeCount) throw new Error("没有识别到节点，请确认该地址支持 Clash 或 Shadowrocket 格式");
+    return { content, nodeCount };
+  }
   const requestHeaders = [
     { "User-Agent": "clash.meta", Accept: "text/yaml,text/plain,application/yaml,*/*" },
     { "User-Agent": "Shadowrocket", Accept: "text/plain,text/yaml,application/yaml,*/*" },
