@@ -11,7 +11,8 @@ export function validateAirportUrl(value: string) {
   let url: URL;
   try { url = new URL(value); } catch { throw new Error("机场订阅地址格式不正确"); }
   const hostname = url.hostname.toLowerCase();
-  if (url.protocol !== "https:") throw new Error("为了安全，只支持 HTTPS 订阅地址");
+  const relayConfigured = Boolean(process.env.AIRPORT_RELAY_URL && process.env.AIRPORT_RELAY_SECRET);
+  if (url.protocol !== "https:" && !(relayConfigured && url.protocol === "http:")) throw new Error("为了安全，只支持 HTTPS 订阅地址");
   if (!hostname || hostname === "localhost" || hostname.endsWith(".local") || hostname.endsWith(".internal") || isPrivateIpv4(hostname) || hostname === "::1") {
     throw new Error("不能使用本机或局域网地址");
   }
