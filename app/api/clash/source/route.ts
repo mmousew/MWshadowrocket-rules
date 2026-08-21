@@ -6,6 +6,7 @@ import { getAirportProxyCount } from "../../../lib/clash-config";
 import { createClashLink, listClashLinks, syncActiveClashSources } from "../../../lib/clash-links";
 
 function sourceName(entry: ClashSourceEntry, index: number) {
+  if (entry.name?.trim()) return entry.name.trim();
   if (entry.kind === "content") return entry.name || `本地订阅文件 ${index + 1}`;
   try { return new URL(entry.value).hostname; } catch { return `订阅来源 ${index + 1}`; }
 }
@@ -95,14 +96,14 @@ export async function DELETE(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { index?: number; hidden?: boolean };
+    const body = await request.json() as { index?: number; hidden?: boolean; name?: string };
     const index = Number(body.index);
-    const hidden = body.hidden === true;
     const { active, entries } = await currentState();
     if (!active) throw new Error("还没有订阅来源");
     if (!Number.isInteger(index) || index < 0 || index >= entries.length) throw new Error("订阅来源不存在");
+    const hidden = typeof body.hidden === "boolean" ? body.hidden : entries[index].hidden === true;
     if (hidden && !entries[index].hidden && entries.filter((entry) => !entry.hidden).length <= 1) throw new Error("至少保留一个可用来源");
-    const nextEntries = entries.map((entry, entryIndex) => entryIndex === index ? { ...entry, hidden } : entry);
+    const nextEntries = entries.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...(typeof body.name === "string" ? { name: body.name.trim().slice(0, 80) || undefined } : {}), hidden } : entry);
     if (hidden) {
       const visibleEntries = nextEntries.filter((entry) => !entry.hidden);
       const inlineCount = visibleEntries.filter((entry) => entry.kind === "content").length;
