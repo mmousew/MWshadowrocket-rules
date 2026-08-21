@@ -198,7 +198,7 @@ button,input,select,textarea { max-width:100%; }
 .profileCardHead { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .profileCardHead { padding-bottom:13px; border-bottom:1px solid #dcebe1; }
 .profileCardHeadActions { display:flex; flex:0 0 auto; gap:8px; }
-.profileCardHeadActions button { min-height:36px; justify-content:center; white-space:nowrap; }
+.profileCardHeadActions button { min-height:32px; padding:7px 9px; justify-content:center; font-size:10px; white-space:nowrap; }
 .profileCardTitle { min-width:0; flex:1; }
 .profileCardTitle input { width:min(100%,300px) !important; margin:0 !important; padding:3px 7px !important; border:1px solid transparent !important; border-radius:7px !important; color:#17231e !important; background:transparent !important; font:750 16px/1.3 inherit !important; }
 .profileCardTitle input:hover,.profileCardTitle input:focus { border-color:#cbdcd1 !important; background:#f6faf7 !important; box-shadow:none !important; }
