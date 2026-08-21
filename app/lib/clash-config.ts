@@ -185,6 +185,7 @@ function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
   const available = new Set(["DIRECT", "REJECT", "PROXY", ...proxyNames, ...groups.map((group) => group.name)]);
   const converted: Record<string, unknown>[] = [{ name: "PROXY", type: "select", proxies: proxyNames.length ? proxyNames : ["DIRECT"] }];
   for (const group of groups) {
+    if (group.name.trim().toLowerCase() === "proxies") continue;
     const regex = group.items.find((item) => item.startsWith("policy-regex-filter="))?.slice("policy-regex-filter=".length);
     const includeAll = group.items.includes("include-all-proxies=true");
     if (includeAll || regex) {
@@ -200,7 +201,7 @@ function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
       converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", proxies: matched.length ? matched : ["DIRECT"] });
       continue;
     }
-    const proxies = group.items.filter((item) => !item.includes("=") && !/^(Traffic|Expire|流量|到期|剩余)\b/i.test(item) && available.has(item)).map((item) => item === "PROXY" ? "PROXY" : item);
+    const proxies = group.items.filter((item) => !item.includes("=") && !/^(Traffic|Expire|流量|到期|剩余)\b/i.test(item) && available.has(item)).map((item) => item === "Proxies" ? "PROXY" : item);
     converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", proxies: proxies.length ? proxies : ["DIRECT"] });
   }
   return converted;
@@ -212,19 +213,20 @@ function convertRules(rules: ShadowrocketRule[]) {
   let skipped = 0;
 
   for (const rule of rules) {
+    const policy = rule.policy.trim().toLowerCase() === "proxies" ? "PROXY" : rule.policy;
     if (["USER-AGENT", "URL-REGEX"].includes(rule.type)) { skipped += 1; continue; }
-    if (rule.type === "FINAL") { converted.push(`MATCH,${rule.policy}`); continue; }
+    if (rule.type === "FINAL") { converted.push(`MATCH,${policy}`); continue; }
     if (rule.type === "RULE-SET") {
-      if (rule.value.startsWith("geosite:")) converted.push(`GEOSITE,${rule.value.slice(8)},${rule.policy}${rule.options.length ? `,${rule.options.join(",")}` : ""}`);
+      if (rule.value.startsWith("geosite:")) converted.push(`GEOSITE,${rule.value.slice(8)},${policy}${rule.options.length ? `,${rule.options.join(",")}` : ""}`);
       else if (/^https?:\/\//i.test(rule.value)) {
         const existing = providers.find((item) => item.url === rule.value);
         const provider = existing || { name: `mw_set_${providers.length + 1}`, url: rule.value, format: /\.ya?ml(?:\?|$)/i.test(rule.value) ? "yaml" as const : "text" as const };
         if (!existing) providers.push(provider);
-        converted.push(`RULE-SET,${provider.name},${rule.policy}${rule.options.length ? `,${rule.options.join(",")}` : ""}`);
+        converted.push(`RULE-SET,${provider.name},${policy}${rule.options.length ? `,${rule.options.join(",")}` : ""}`);
       } else skipped += 1;
       continue;
     }
-    converted.push([rule.type, rule.value, rule.policy, ...rule.options].filter(Boolean).join(","));
+    converted.push([rule.type, rule.value, policy, ...rule.options].filter(Boolean).join(","));
   }
   return { converted, providers, skipped };
 }
