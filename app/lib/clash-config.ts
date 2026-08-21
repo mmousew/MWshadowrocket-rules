@@ -170,7 +170,8 @@ function parseAirportProxies(content: string): ClashProxy[] {
   const names = new Set<string>();
   return candidates.filter((proxy) => {
     const name = String(proxy.name || "");
-    if (!name || names.has(name) || /^(Traffic|Expire|流量|到期|剩余)\b/i.test(name)) return false;
+    const server = String(proxy.server || "");
+    if (!name || !server || /^(127\.0\.0\.1|localhost)$/i.test(server) || names.has(name) || /^(Traffic|Expire|流量|到期|剩余)\b/i.test(name)) return false;
     names.add(name);
     return true;
   });
