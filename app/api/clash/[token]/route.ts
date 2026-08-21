@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildClashConfig, buildShadowrocketConfig } from "../../../lib/clash-config";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
-import { findClashLink } from "../../../lib/clash-links";
+import { findClashLink, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -64,8 +64,22 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
         },
         cache: "no-store",
       }),
-      Promise.allSettled(airportUrls.map((url) => fetchAirportSubscription(url)))
-        .then((results) => ({ ok: results.some((result) => result.status === "fulfilled"), content: [...inlineContent, ...results.flatMap((result) => result.status === "fulfilled" ? [result.value.content] : [])] })),
+      Promise.allSettled(airportUrls.map(async (url) => {
+        try {
+          const fetched = await fetchAirportSubscription(url);
+          try { await saveSourceSnapshot(url, fetched.content, fetched.nodeCount); } catch { /* 快照写入失败不影响本次在线更新 */ }
+          return { kind: "live" as const, content: fetched.content };
+        } catch (error) {
+          let snapshot = null;
+          try { snapshot = await getSourceSnapshot(url); } catch { /* 没有可用快照时继续记录失败 */ }
+          if (snapshot?.content) return { kind: "snapshot" as const, content: snapshot.content };
+          throw error;
+        }
+      })).then((results) => ({
+        content: [...inlineContent, ...results.flatMap((result) => result.status === "fulfilled" ? [result.value.content] : [])],
+        liveCount: results.filter((result) => result.status === "fulfilled" && result.value.kind === "live").length,
+        snapshotCount: results.filter((result) => result.status === "fulfilled" && result.value.kind === "snapshot").length,
+      })),
     ]);
     if (!ruleResponse.ok) throw new Error(`读取 GitHub 规则失败（${ruleResponse.status}）`);
     const file = await ruleResponse.json() as GitHubFile;
@@ -86,7 +100,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
         // another source has just been fixed.
         "Cache-Control": "no-store, no-cache, must-revalidate",
         "Profile-Update-Interval": "6",
-        "X-MW-Node-Source": liveAirportContent ? "live" : "secure-snapshot",
+        "X-MW-Node-Source": airportResult.snapshotCount ? (airportResult.liveCount ? "live+snapshot" : "snapshot") : (airportResult.liveCount ? "live" : "secure-snapshot"),
       },
     });
   } catch (error) {

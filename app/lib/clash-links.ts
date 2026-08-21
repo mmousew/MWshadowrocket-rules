@@ -43,3 +43,24 @@ export async function updateClashLink(id: string, status: "revoked" | "deleted")
   const now = Date.now();
   await getRawDb().prepare("UPDATE clash_links SET status = ?, revoked_at = CASE WHEN ? = 'revoked' THEN ? ELSE revoked_at END, deleted_at = CASE WHEN ? = 'deleted' THEN ? ELSE deleted_at END WHERE id = ?").bind(status, status, now, status, now, id).run();
 }
+
+const snapshotEncoder = new TextEncoder();
+
+export async function getSourceKey(sourceUrl: string) {
+  const digest = await crypto.subtle.digest("SHA-256", snapshotEncoder.encode(sourceUrl));
+  return Buffer.from(digest).toString("hex");
+}
+
+export async function saveSourceSnapshot(sourceUrl: string, content: string, nodeCount: number) {
+  const sourceKey = await getSourceKey(sourceUrl);
+  await getRawDb().prepare(
+    "INSERT INTO clash_source_snapshots (source_key, source_url, content, node_count, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(source_key) DO UPDATE SET source_url = excluded.source_url, content = excluded.content, node_count = excluded.node_count, updated_at = excluded.updated_at"
+  ).bind(sourceKey, sourceUrl, content, nodeCount, Date.now()).run();
+}
+
+export async function getSourceSnapshot(sourceUrl: string) {
+  const sourceKey = await getSourceKey(sourceUrl);
+  return getRawDb().prepare("SELECT source_url, content, node_count, updated_at FROM clash_source_snapshots WHERE source_key = ? LIMIT 1")
+    .bind(sourceKey)
+    .first<{ source_url: string; content: string; node_count: number; updated_at: number }>();
+}

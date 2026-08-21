@@ -11,3 +11,11 @@ export const clashLinks = sqliteTable("clash_links", {
   revokedAt: integer("revoked_at"),
   deletedAt: integer("deleted_at"),
 }, (table) => ({ statusIdx: index("clash_links_status_idx").on(table.status) }));
+
+export const clashSourceSnapshots = sqliteTable("clash_source_snapshots", {
+  sourceKey: text("source_key").primaryKey(),
+  sourceUrl: text("source_url").notNull(),
+  content: text("content").notNull(),
+  nodeCount: integer("node_count").notNull().default(0),
+  updatedAt: integer("updated_at").notNull(),
+});
