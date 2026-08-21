@@ -20,11 +20,17 @@ export function validateAirportUrl(value: string) {
 
 export async function fetchAirportSubscription(sourceUrl: string) {
   const safeUrl = validateAirportUrl(sourceUrl);
-  const response = await fetch(safeUrl, {
-    headers: { "User-Agent": "clash.meta", Accept: "text/yaml,text/plain,application/yaml,*/*" },
-    cache: "no-store",
-    redirect: "follow",
-  });
+  const requestHeaders = [
+    { "User-Agent": "clash.meta", Accept: "text/yaml,text/plain,application/yaml,*/*" },
+    { "User-Agent": "Shadowrocket", Accept: "text/plain,text/yaml,application/yaml,*/*" },
+    { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36", Accept: "*/*" },
+  ];
+  let response: Response | undefined;
+  for (const headers of requestHeaders) {
+    response = await fetch(safeUrl, { headers, cache: "no-store", redirect: "follow" });
+    if (response.ok || response.status !== 403) break;
+  }
+  if (!response) throw new Error("机场订阅读取失败");
   if (!response.ok) throw new Error(`机场订阅读取失败（${response.status}）`);
   const declaredSize = Number(response.headers.get("content-length") || 0);
   if (declaredSize > 2_000_000) throw new Error("机场订阅内容过大");
