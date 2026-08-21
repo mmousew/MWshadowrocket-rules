@@ -277,7 +277,16 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
   const { converted, providers, skipped } = convertRules(rules);
   const airportDns = readAirportDns(sources);
   const defaultNameserver = airportDns.defaultNameserver.length ? airportDns.defaultNameserver : ["223.5.5.5", "119.29.29.29"];
-  const proxyServerNameserver = [...new Set([...airportDns.proxyServerNameserver, ...defaultNameserver])];
+  // `proxy-server-nameserver` is used to resolve proxy endpoint hostnames.
+  // Do not merge loopback resolvers from another airport (for example
+  // `udp://127.0.0.1:7874`) into a portable subscription: that address belongs
+  // to the source client's local DNS and is unavailable on the subscriber's
+  // device. Also keep ordinary default DNS servers out of this dedicated list;
+  // the original airport-specific resolver should be tried first.
+  const proxyServerNameserver = [...new Set(airportDns.proxyServerNameserver)]
+    .filter((item) => !/^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(item))
+    .filter((item) => !defaultNameserver.includes(item));
+  if (!proxyServerNameserver.length) proxyServerNameserver.push(...defaultNameserver);
   const nameserver = airportDns.nameserver.length ? airportDns.nameserver : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"];
   const fallback = airportDns.fallback.length ? airportDns.fallback : ["https://223.5.5.5/dns-query", "https://223.6.6.6/dns-query"];
   const nameserverPolicies = new Map<string, string[]>();
