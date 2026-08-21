@@ -246,7 +246,29 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
   const { converted, providers, skipped } = convertRules(rules);
   const providerYaml = providers.length ? `\nrule-providers:\n${providers.map((provider) => `  ${provider.name}:\n    type: http\n    behavior: classical\n    format: ${provider.format}\n    url: ${quote(provider.url)}\n    path: ./ruleset/${provider.name}.${provider.format === "yaml" ? "yaml" : "list"}\n    interval: 86400`).join("\n")}` : "";
 
-  return `# MW Rules for ClashX Meta\n# 自动合并机场节点与 GitHub 分流规则；跳过 ${skipped} 条 Clash 不支持的规则\nmixed-port: 7890\nmode: rule\nallow-lan: false\nlog-level: info\nipv6: false\nunified-delay: true\ntcp-concurrent: true\nfind-process-mode: strict\n\ndns:\n  enable: true\n  ipv6: false\n  enhanced-mode: fake-ip\n  nameserver:\n    - https://223.5.5.5/dns-query\n    - https://1.12.12.12/dns-query\n  fake-ip-filter:\n    - "*.lan"\n    - "+.local"\n    - "localhost.ptlogin2.qq.com"\n\nproxies:\n${yamlList(proxies)}\n\nproxy-groups:\n${yamlList(proxyGroups)}${providerYaml}\n\nrules:\n${converted.map((rule) => `  - ${quote(rule)}`).join("\n")}\n`;
+  const dnsYaml = [
+    "dns:",
+    "  enable: true",
+    "  ipv6: false",
+    "  default-nameserver:",
+    "    - 223.5.5.5",
+    "    - 119.29.29.29",
+    "  proxy-server-nameserver:",
+    "    - 223.5.5.5",
+    "    - 119.29.29.29",
+    "  enhanced-mode: fake-ip",
+    "  nameserver:",
+    "    - https://doh.pub/dns-query",
+    "    - https://dns.alidns.com/dns-query",
+    "  fallback:",
+    "    - https://223.5.5.5/dns-query",
+    "    - https://223.6.6.6/dns-query",
+    "  fake-ip-filter:",
+    "    - \"*.lan\"",
+    "    - \"+.local\"",
+    "    - \"localhost.ptlogin2.qq.com\"",
+  ].join("\n");
+  return `# MW Rules for ClashX Meta\n# 自动合并机场节点与 GitHub 分流规则；跳过 ${skipped} 条 Clash 不支持的规则\nmixed-port: 7890\nmode: rule\nallow-lan: false\nlog-level: info\nipv6: false\n\n${dnsYaml}\n\nproxies:\n${yamlList(proxies)}\n\nproxy-groups:\n${yamlList(proxyGroups)}${providerYaml}\n\nrules:\n${converted.map((rule) => `  - ${quote(rule)}`).join("\n")}\n`;
 }
 
 function shadowrocketProxyLine(proxy: ClashProxy) {
