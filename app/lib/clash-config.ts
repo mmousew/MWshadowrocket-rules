@@ -115,22 +115,36 @@ function parseClashProxies(content: string): ClashProxy[] {
 }
 
 function readAirportDns(sources: string[]) {
+  const proxyServerNameserver = new Set<string>();
+  const defaultNameserver = new Set<string>();
+  const nameserver = new Set<string>();
+  const fallback = new Set<string>();
   for (const source of sources) {
     try {
-      const parsed = parseYaml(source) as { dns?: unknown } | null;
-      if (!parsed?.dns || typeof parsed.dns !== "object") continue;
-      const dns = parsed.dns as Record<string, unknown>;
-      const list = (key: string) => Array.isArray(dns[key]) ? dns[key].filter((item): item is string => typeof item === "string") : [];
-      const proxyServerNameserver = list("proxy-server-nameserver");
-      const defaultNameserver = list("default-nameserver");
-      const nameserver = list("nameserver");
-      const fallback = list("fallback");
-      if (proxyServerNameserver.length || defaultNameserver.length || nameserver.length || fallback.length) {
-        return { proxyServerNameserver, defaultNameserver, nameserver, fallback };
+      let parsed: { dns?: unknown } | null = null;
+      try { parsed = parseYaml(source) as { dns?: unknown } | null; } catch { /* Shadowrocket format is parsed below */ }
+      if (parsed?.dns && typeof parsed.dns === "object") {
+        const dns = parsed.dns as Record<string, unknown>;
+        const list = (key: string) => Array.isArray(dns[key]) ? dns[key].filter((item): item is string => typeof item === "string") : [];
+        list("proxy-server-nameserver").forEach((item) => proxyServerNameserver.add(item));
+        list("default-nameserver").forEach((item) => defaultNameserver.add(item));
+        list("nameserver").forEach((item) => nameserver.add(item));
+        list("fallback").forEach((item) => fallback.add(item));
+      }
+      if (!parsed?.dns) {
+        const general = source.match(/^\[General\]([\s\S]*?)(?=^\[|$)/m)?.[1] || "";
+        const readGeneralList = (key: string) => general.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, "mi"))?.[1]?.split(",").map((item) => item.trim()).filter(Boolean) || [];
+        readGeneralList("dns-server").forEach((item) => defaultNameserver.add(item));
+        readGeneralList("fallback-dns-server").forEach((item) => fallback.add(item));
       }
     } catch { /* use the safe defaults below */ }
   }
-  return { proxyServerNameserver: [], defaultNameserver: [], nameserver: [], fallback: [] };
+  return {
+    proxyServerNameserver: [...proxyServerNameserver],
+    defaultNameserver: [...defaultNameserver],
+    nameserver: [...nameserver],
+    fallback: [...fallback],
+  };
 }
 
 function decodeLooseBase64(value: string) {
@@ -265,7 +279,7 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
   const { converted, providers, skipped } = convertRules(rules);
   const airportDns = readAirportDns(sources);
   const defaultNameserver = airportDns.defaultNameserver.length ? airportDns.defaultNameserver : ["223.5.5.5", "119.29.29.29"];
-  const proxyServerNameserver = airportDns.proxyServerNameserver.length ? airportDns.proxyServerNameserver : defaultNameserver;
+  const proxyServerNameserver = [...new Set([...airportDns.proxyServerNameserver, ...defaultNameserver])];
   const nameserver = airportDns.nameserver.length ? airportDns.nameserver : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"];
   const fallback = airportDns.fallback.length ? airportDns.fallback : ["https://223.5.5.5/dns-query", "https://223.6.6.6/dns-query"];
   const providerYaml = providers.length ? `\nrule-providers:\n${providers.map((provider) => `  ${provider.name}:\n    type: http\n    behavior: classical\n    format: ${provider.format}\n    url: ${quote(provider.url)}\n    path: ./ruleset/${provider.name}.${provider.format === "yaml" ? "yaml" : "list"}\n    interval: 86400`).join("\n")}` : "";
