@@ -29,6 +29,20 @@
       "when": 1787322881760,
       "tag": "0003_remarkable_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1787328710101,
+      "tag": "0004_great_thena",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1787328726601,
+      "tag": "0005_mighty_sinister_six",
+      "breakpoints": true
     }
   ]
 }

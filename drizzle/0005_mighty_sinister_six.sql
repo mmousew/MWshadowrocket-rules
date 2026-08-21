@@ -1,0 +1,1 @@
+CREATE INDEX `clash_links_profile_idx` ON `clash_links` (`profile_id`);

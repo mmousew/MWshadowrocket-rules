@@ -1,7 +1,17 @@
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
+export const clashProfiles = sqliteTable("clash_profiles", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().default("订阅配置"),
+  encryptedSource: text("encrypted_source").notNull().default(""),
+  status: text("status").notNull().default("active"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => ({ statusIdx: index("clash_profiles_status_idx").on(table.status) }));
+
 export const clashLinks = sqliteTable("clash_links", {
   id: text("id").primaryKey(),
+  profileId: text("profile_id").notNull().default("default"),
   name: text("name").notNull().default("订阅链接"),
   token: text("token").notNull(),
   tokenHash: text("token_hash").notNull().unique(),
@@ -10,7 +20,10 @@ export const clashLinks = sqliteTable("clash_links", {
   createdAt: integer("created_at").notNull(),
   revokedAt: integer("revoked_at"),
   deletedAt: integer("deleted_at"),
-}, (table) => ({ statusIdx: index("clash_links_status_idx").on(table.status) }));
+}, (table) => ({
+  statusIdx: index("clash_links_status_idx").on(table.status),
+  profileIdx: index("clash_links_profile_idx").on(table.profileId),
+}));
 
 export const clashSourceSnapshots = sqliteTable("clash_source_snapshots", {
   sourceKey: text("source_key").primaryKey(),

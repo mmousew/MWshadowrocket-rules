@@ -183,6 +183,37 @@ button,input,select,textarea { max-width:100%; }
 .addSourceButton { width:100%; justify-content:center; }
 .sourceActionRow { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
 .sourceActionRow button { width:100%; min-height:42px; justify-content:center; }
+.profileList { display:grid; gap:14px; margin:0 0 22px; }
+.profileListHead { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:15px 16px; border:1px solid #dce7e0; border-radius:13px; background:#fbfdfb; }
+.profileListHead h3 { margin:0 0 4px; color:#314139; font-size:15px; }
+.profileListHead p { margin:0; color:#849189; font-size:10px; line-height:1.5; }
+.profileListHead button { flex:0 0 auto; }
+.profileCreateForm { display:grid; gap:11px; padding:16px; border:1px solid #b9d9c5; border-radius:13px; background:#f4fbf6; }
+.profileCreateForm label { margin:0; }
+.profileCreateForm label small { color:#849189; font-size:9px; font-weight:500; }
+.profileCreateForm .filePicker { margin:0; }
+.profileEditorActions { display:flex; gap:9px; }
+.profileEditorActions button { flex:1; justify-content:center; }
+.profileCard { display:grid; gap:12px; padding:16px; border:1px solid #dce7e0; border-radius:15px; background:#fff; box-shadow:0 10px 28px #20392c08; }
+.profileCardHead { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.profileCardTitle { min-width:0; flex:1; }
+.profileCardTitle input { width:min(100%,300px) !important; margin:0 !important; padding:3px 7px !important; border:1px solid transparent !important; border-radius:7px !important; color:#17231e !important; background:transparent !important; font:750 16px/1.3 inherit !important; }
+.profileCardTitle input:hover,.profileCardTitle input:focus { border-color:#cbdcd1 !important; background:#f6faf7 !important; box-shadow:none !important; }
+.profileCardTitle p { margin:4px 0 0; color:#849189; font-size:10px; }
+.profileCardHead>button { flex:0 0 auto; min-width:72px; }
+.profileSourceSummary { display:flex; flex-wrap:wrap; gap:6px; min-width:0; }
+.profileSourceSummary span { max-width:100%; padding:5px 8px; border-radius:999px; color:#4f7561; background:#edf7f0; font-size:9px; overflow-wrap:anywhere; }
+.profileSourceSummary span.isHidden { color:#8a918d; background:#f0f2f0; text-decoration:line-through; }
+.profileEditor { display:grid; gap:11px; padding:13px; border:1px solid #c9e1d1; border-radius:12px; background:#f7fbf8; }
+.profileEditorHead { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.profileEditorHead h4,.profileLinksHead h4 { margin:0; color:#314139; font-size:12px; }
+.profileEditorHead p { margin:4px 0 0; color:#849189; font-size:9px; line-height:1.5; }
+.profileEditorHead button { flex:0 0 auto; min-width:48px; padding:7px 9px; font-size:10px; }
+.profileLinks { display:grid; gap:9px; padding-top:5px; border-top:1px solid #e7eee9; }
+.profileLinksHead { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.profileLinksHead span { color:#849189; font-size:9px; }
+.profileLinks .clashLinkCard { margin:0; }
+.profileGenerateButton { justify-content:center; }
 .clashSuccess { margin:0 0 15px; padding:11px 12px; border:1px solid #c8e7d5; border-radius:10px; color:#276f53; background:#eaf7ef; font-size:11px; }
 .clashLinkList { display:grid; gap:12px; margin:0 0 22px; }
 .clashLinkCard { position:relative; padding:14px; border:1px solid #dce7e0; border-radius:13px; background:#fff; }
@@ -215,6 +246,12 @@ button,input,select,textarea { max-width:100%; }
   .clashPanel { padding:22px 17px; }
   .clashActions { align-items:stretch; flex-direction:column; }
   .clashActions>* { justify-content:center; width:100%; text-align:center; }
+  .profileListHead { align-items:stretch; flex-direction:column; }
+  .profileListHead button { width:100%; justify-content:center; }
+  .profileCardHead { align-items:stretch; flex-direction:column; }
+  .profileCardHead>button { width:100%; justify-content:center; }
+  .profileCardTitle input { width:100% !important; }
+  .profileEditorActions { flex-direction:column; }
   .sourceActionRow { grid-template-columns:1fr 1fr; gap:8px; }
   .sourceActionRow button { padding-left:8px; padding-right:8px; font-size:11px; }
 }

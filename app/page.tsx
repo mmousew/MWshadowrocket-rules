@@ -481,7 +481,7 @@ export default function Home() {
   );
 }
 
-function ClashSubscription() {
+function LegacyClashSubscription() {
   type LinkRecord = { id: string; name: string; url: string; status: "active" | "revoked"; createdAt: number; revokedAt: number | null; legacy?: boolean };
   type SourceRecord = { index: number; name: string; kind: "url" | "content"; value: string | null; hidden: boolean; nodes: number | null };
   const [links, setLinks] = useState<LinkRecord[]>([]);
@@ -653,6 +653,208 @@ function ClashSubscription() {
   }
 
   return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">在下面添加机场订阅或上传 YAML 文件。首次添加会自动生成链接，后续添加会同步到现有链接。</p>{error && <div className="clashError">{error}</div>}<section className="sourceManager"><div className="sourceManagerHead"><div><h3>当前机场来源</h3><p>这里显示已经添加成功的机场；添加或删除会同步到现有订阅链接。</p></div></div><div className="sourceList">{airportSources.length ? airportSources.map((source) => <div className={`sourceRow ${source.hidden ? "sourceHidden" : ""}`} key={source.index}><div><input className="sourceNameInput" value={source.name} onChange={(event) => setAirportSources((current) => current.map((item) => item.index === source.index ? { ...item, name: event.target.value } : item))} onBlur={() => void renameAirportSource(source.index, source.name).catch((cause) => setError(cause instanceof Error ? cause.message : "保存来源名称失败"))} aria-label="机场来源名称" /><small>{source.hidden ? "已隐藏显示 · " : ""}{source.kind === "content" ? `本地文件 · ${source.nodes ?? 0} 个节点` : "在线订阅地址"}</small></div>{editingSource === source.index && source.kind === "url" && <div className="sourceEditRow"><input value={editingSourceUrl} onChange={(event) => setEditingSourceUrl(event.target.value)} placeholder="新的机场订阅地址" aria-label="新的机场订阅地址" /><button type="button" className="primary" disabled={sourceBusy} onClick={() => void saveAirportSourceEdit(source.index)}>保存</button><button type="button" className="ghost" disabled={sourceBusy} onClick={() => { setEditingSource(null); setEditingSourceUrl(""); }}>取消</button></div>}<button type="button" className="ghost" disabled={sourceBusy || (!source.hidden && airportSources.filter((item) => !item.hidden).length <= 1)} onClick={() => void toggleAirportSource(source.index, !source.hidden)}>{source.hidden ? "取消隐藏" : "隐藏"}</button>{source.kind === "url" && <button type="button" className="ghost" disabled={sourceBusy} onClick={() => startEditAirportSource(source)}>编辑</button>}<button type="button" className="danger" disabled={sourceBusy || airportSources.length <= 1} onClick={() => void removeAirportSource(source.index)}>删除</button></div>) : <p className="clashLoading">还没有读取到机场来源。</p>}</div><form className="sourceAddForm" onSubmit={addAirportSource}><div className="sourceAddFields"><label>新增订阅地址<input value={extraSourceUrl} onChange={(event) => setExtraSourceUrl(event.target.value)} placeholder="https://新的机场订阅地址" /></label><label className="filePicker">或者上传 YAML 文件<input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" onChange={(event) => setExtraSourceFile(event.target.files?.[0] || null)} /></label>{extraSourceFile && <div className="selectedFiles">已选择：{extraSourceFile.name}</div>}<button className="primary addSourceButton" type="submit" disabled={sourceBusy}>{sourceBusy ? "处理中…" : "添加到当前配置"}</button></div><div className="sourceActionRow"><button className="primary" type="button" disabled={sourceBusy || airportSources.length === 0} onClick={() => void createNewLink()}>生成新链接</button><button className="ghost" type="button" disabled={sourceBusy || airportSources.length === 0} onClick={() => void refreshCurrentConfig()}>更新当前配置</button></div></form></section><div className="clashLinkList">{links.length ? links.map((item) => <article className={`clashLinkCard ${item.status === "revoked" ? "revoked" : ""}`} key={item.id}><div className="clashCardActions">{item.status === "active" && <button type="button" className="ghost" onClick={() => setPendingLinkAction({ id: item.id, action: "revoke" })}>失效</button>}<button type="button" className="danger" onClick={() => setPendingLinkAction({ id: item.id, action: "delete" })}>删除</button></div><div className="clashLinkMeta"><input className="clashNameInput" value={item.name} onChange={(event) => setLinks((current) => current.map((link) => link.id === item.id ? { ...link, name: event.target.value } : link))} onBlur={() => void renameLink(item.id, item.name).catch((cause) => setError(cause instanceof Error ? cause.message : "保存名称失败"))} aria-label="订阅备注名称" /><span>{item.status === "active" ? "已启用" : "已失效"} · {item.createdAt ? new Date(item.createdAt).toLocaleString("zh-CN") : "历史链接"}</span></div><label className="clientLinkLabel">CLASH 地址<div className="clientLinkRow"><input readOnly value={clashRelayUrl(item.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(clashRelayUrl(item.url))}>复制</button></div></label><label className="clientLinkLabel">小火箭地址<div className="clientLinkRow"><input readOnly value={shadowrocketUrl(item.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(shadowrocketUrl(item.url))}>复制</button></div></label><div className="clashActions">{item.status === "active" && <button type="button" className="ghost" onClick={() => void showQr(clashRelayUrl(item.url), "CLASH")}>CLASH 二维码</button>}{item.status === "active" && <button type="button" className="ghost" onClick={() => void showQr(shadowrocketUrl(item.url), "小火箭")}>小火箭二维码</button>}</div></article>) : <p className="clashLoading">还没有订阅链接，请在上方添加第一条机场来源。</p>}</div><ul><li>两个地址共用同一个订阅令牌，失效或删除会同时停止访问。</li><li>CLASH 地址返回 YAML，小火箭地址返回 Shadowrocket 配置。</li><li>同一条链接会随 GitHub 规则和机场节点更新。</li></ul>{pendingLinkAction && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭订阅操作确认" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingLinkAction(null); }} onKeyDown={(event) => { if (event.key === "Escape") setPendingLinkAction(null); }}><section className="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="link-action-title"><span className="confirmMark">!</span><h2 id="link-action-title">确认{pendingLinkAction.action === "delete" ? "删除" : "使链接失效"}？</h2><p>{pendingLinkAction.action === "delete" ? "删除后将无法恢复这条订阅链接。" : "失效后这条订阅链接将无法继续获取配置。"}</p><footer><button className="ghost" type="button" onClick={() => setPendingLinkAction(null)}>取消</button><button className="deleteConfirm" type="button" onClick={() => void confirmLinkAction()}>确认</button></footer></section></div>}{qrCode && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭二维码" onMouseDown={(event) => { if (event.target === event.currentTarget) { setQrCode(""); setQrLink(""); setQrLabel(""); } }} onKeyDown={(event) => { if (event.key === "Escape") { setQrCode(""); setQrLink(""); setQrLabel(""); } }}><section className="qrModal" role="dialog" aria-modal="true" aria-labelledby="qr-title"><header><div><h2 id="qr-title">{qrLabel} 订阅二维码</h2><p>使用对应客户端扫描</p></div><button type="button" onClick={() => { setQrCode(""); setQrLink(""); setQrLabel(""); }}>×</button></header><img src={qrCode} alt={`${qrLabel} 私有订阅二维码`} /><button type="button" className="ghost qrCopy" onClick={() => void copyLink(qrLink)}>{copied ? "已复制订阅链接" : "复制订阅链接"}</button></section></div>}</section>;
+}
+
+void LegacyClashSubscription;
+
+function ClashSubscription() {
+  type SourceRecord = { index: number; name: string; kind: "url" | "content"; value: string | null; hidden: boolean; nodes: number | null };
+  type ProfileRecord = { id: string; name: string; sourceCount: number; nodeCount: number; updatedAt: number; sources?: SourceRecord[] };
+  type LinkRecord = { id: string; profileId: string; name: string; url: string; status: "active" | "revoked"; createdAt: number; revokedAt: number | null; legacy?: boolean };
+  const [profiles, setProfiles] = useState<ProfileRecord[]>([]);
+  const [links, setLinks] = useState<LinkRecord[]>([]);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [editorProfileId, setEditorProfileId] = useState<string | null>(null);
+  const [editorSources, setEditorSources] = useState<SourceRecord[]>([]);
+  const [editorUrl, setEditorUrl] = useState("");
+  const [editorFile, setEditorFile] = useState<File | null>(null);
+  const [editingSource, setEditingSource] = useState<string | null>(null);
+  const [editingSourceUrl, setEditingSourceUrl] = useState("");
+  const [newProfileOpen, setNewProfileOpen] = useState(false);
+  const [newProfileName, setNewProfileName] = useState("");
+  const [newProfileUrls, setNewProfileUrls] = useState("");
+  const [newProfileFile, setNewProfileFile] = useState<File | null>(null);
+  const [pendingLinkAction, setPendingLinkAction] = useState<{ id: string; action: "revoke" | "delete" } | null>(null);
+  const [qrCode, setQrCode] = useState("");
+  const [qrLink, setQrLink] = useState("");
+  const [qrLabel, setQrLabel] = useState("");
+
+  useEffect(() => {
+    void loadPage();
+  }, []);
+
+  async function loadPage() {
+    try {
+      const [profileResponse, linkResponse] = await Promise.all([fetch("/api/clash/profile", { cache: "no-store" }), fetch("/api/clash/link", { cache: "no-store" })]);
+      const profileData = await profileResponse.json();
+      const linkData = await linkResponse.json();
+      if (!profileResponse.ok) throw new Error(profileData.error || "读取订阅配置失败");
+      if (!linkResponse.ok) throw new Error(linkData.error || "读取订阅链接失败");
+      setProfiles(profileData.profiles || []);
+      setLinks(linkData.links || []);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "读取订阅配置失败");
+    }
+  }
+
+  function updateProfileSources(profileId: string, sources: SourceRecord[]) {
+    setEditorSources(sources);
+    const nodeCount = sources.reduce((total, source) => total + (source.nodes || 0), 0);
+    setProfiles((current) => current.map((profile) => profile.id === profileId ? { ...profile, sourceCount: sources.length, nodeCount, updatedAt: Date.now(), sources } : profile));
+  }
+
+  async function openEditor(profile: ProfileRecord) {
+    if (editorProfileId === profile.id) {
+      setEditorProfileId(null);
+      return;
+    }
+    setBusy(true); setError("");
+    try {
+      const response = await fetch(`/api/clash/source?profileId=${encodeURIComponent(profile.id)}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "读取配置来源失败");
+      setEditorProfileId(profile.id);
+      updateProfileSources(profile.id, data.sources || []);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "读取配置来源失败");
+    } finally { setBusy(false); }
+  }
+
+  async function addProfile(event: FormEvent) {
+    event.preventDefault();
+    if (!newProfileUrls.trim() && !newProfileFile) return setError("请填写订阅地址或选择 YAML 文件");
+    setBusy(true); setError("");
+    try {
+      const form = new FormData();
+      form.set("name", newProfileName.trim() || "订阅配置");
+      form.set("sourceUrls", newProfileUrls.trim());
+      if (newProfileFile) form.append("sourceFiles", newProfileFile, newProfileFile.name);
+      const response = await fetch("/api/clash/profile", { method: "POST", body: form });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "新增订阅配置失败");
+      if (data.warning) setError(data.warning);
+      const profile = data.profile as ProfileRecord;
+      setProfiles((current) => [...current, profile]);
+      setNewProfileOpen(false); setNewProfileName(""); setNewProfileUrls(""); setNewProfileFile(null);
+      setEditorProfileId(profile.id); updateProfileSources(profile.id, profile.sources || []);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "新增订阅配置失败");
+    } finally { setBusy(false); }
+  }
+
+  async function renameProfile(profile: ProfileRecord) {
+    const name = profile.name.trim() || "订阅配置";
+    try {
+      const response = await fetch("/api/clash/profile", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: profile.id, name }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存配置名称失败");
+      if (data.profile) setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, name: data.profile.name } : item));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "保存配置名称失败"); }
+  }
+
+  async function addSource(event: FormEvent) {
+    event.preventDefault();
+    if (!editorProfileId) return;
+    if (!editorUrl.trim() && !editorFile) return setError("请填写订阅地址或选择 YAML 文件");
+    setBusy(true); setError("");
+    try {
+      const form = new FormData(); form.set("profileId", editorProfileId); form.set("sourceUrl", editorUrl.trim());
+      if (editorFile) form.append("sourceFile", editorFile, editorFile.name);
+      const response = await fetch("/api/clash/source", { method: "POST", body: form });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "添加订阅来源失败");
+      updateProfileSources(editorProfileId, data.sources || []); setEditorUrl(""); setEditorFile(null);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "添加订阅来源失败"); }
+    finally { setBusy(false); }
+  }
+
+  async function updateSource(index: number, change: Record<string, unknown>) {
+    if (!editorProfileId) return;
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/clash/source", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: editorProfileId, index, ...change }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "更新订阅来源失败");
+      updateProfileSources(editorProfileId, data.sources || []); setEditingSource(null); setEditingSourceUrl("");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "更新订阅来源失败"); }
+    finally { setBusy(false); }
+  }
+
+  async function removeSource(index: number) {
+    if (!editorProfileId || !window.confirm("删除这个来源后，只会影响当前订阅配置，确定删除吗？")) return;
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/clash/source", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: editorProfileId, index }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "删除订阅来源失败");
+      updateProfileSources(editorProfileId, data.sources || []);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "删除订阅来源失败"); }
+    finally { setBusy(false); }
+  }
+
+  async function refreshProfile(profileId: string) {
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/clash/source", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId, action: "refresh" }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "更新当前配置失败");
+      if (editorProfileId === profileId) updateProfileSources(profileId, data.sources || []);
+      else await loadPage();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "更新当前配置失败"); }
+    finally { setBusy(false); }
+  }
+
+  async function createNewLink(profile: ProfileRecord) {
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/clash/source", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: profile.id, action: "new-link" }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "生成新链接失败");
+      if (data.link) setLinks((current) => [data.link, ...current]);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "生成新链接失败"); }
+    finally { setBusy(false); }
+  }
+
+  async function changeLink(id: string, action: "revoke" | "delete") {
+    const response = await fetch(`/api/clash/link/${encodeURIComponent(id)}`, { method: action === "delete" ? "DELETE" : "PATCH", headers: { "Content-Type": "application/json" }, body: action === "revoke" ? JSON.stringify({ action }) : undefined });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "操作链接失败");
+    if (action === "delete") setLinks((current) => current.filter((item) => item.id !== id));
+    else setLinks((current) => current.map((item) => item.id === id ? { ...item, status: "revoked" } : item));
+  }
+
+  async function renameLink(id: string, name: string) {
+    const response = await fetch(`/api/clash/link/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "rename", name }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "保存链接备注失败");
+    setLinks((current) => current.map((item) => item.id === id ? { ...item, name: name.trim() || "订阅链接" } : item));
+  }
+
+  async function copyLink(value: string) {
+    await navigator.clipboard.writeText(value); setCopied(true); window.setTimeout(() => setCopied(false), 1800);
+  }
+
+  function shadowrocketUrl(value: string) {
+    const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
+    return token ? `https://656577.xyz/mw-shadowrocket.php?token=${encodeURIComponent(token)}` : value.replace("/api/clash/", "/api/shadowrocket/");
+  }
+
+  function clashRelayUrl(value: string) {
+    const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
+    return token ? `https://656577.xyz/mw-clash.php?token=${encodeURIComponent(token)}&compat=clashxmeta` : value;
+  }
+
+  async function showQr(value: string, label: string) {
+    try {
+      setQrCode(await QRCode.toDataURL(value, { width: 280, margin: 2, errorCorrectionLevel: "M", color: { dark: "#17231e", light: "#ffffff" } })); setQrLink(value); setQrLabel(label);
+    } catch { setError(`${label}二维码生成失败，请稍后重试`); }
+  }
+
+  const profileLinkCard = (link: LinkRecord) => <article className={`clashLinkCard ${link.status === "revoked" ? "revoked" : ""}`} key={link.id}><div className="clashCardActions">{link.status === "active" && <button type="button" className="ghost" onClick={() => setPendingLinkAction({ id: link.id, action: "revoke" })}>失效</button>}<button type="button" className="danger" onClick={() => setPendingLinkAction({ id: link.id, action: "delete" })}>删除</button></div><div className="clashLinkMeta"><input className="clashNameInput" value={link.name} onChange={(event) => setLinks((current) => current.map((item) => item.id === link.id ? { ...item, name: event.target.value } : item))} onBlur={() => void renameLink(link.id, link.name).catch((cause) => setError(cause instanceof Error ? cause.message : "保存链接备注失败"))} aria-label="订阅链接备注" /><span>{link.status === "active" ? "已启用" : "已失效"} · {link.createdAt ? new Date(link.createdAt).toLocaleString("zh-CN") : "历史链接"}</span></div><label className="clientLinkLabel">CLASH 地址<div className="clientLinkRow"><input readOnly value={clashRelayUrl(link.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(clashRelayUrl(link.url))}>复制</button></div></label><label className="clientLinkLabel">小火箭地址<div className="clientLinkRow"><input readOnly value={shadowrocketUrl(link.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(shadowrocketUrl(link.url))}>复制</button></div></label><div className="clashActions">{link.status === "active" && <button type="button" className="ghost" onClick={() => void showQr(clashRelayUrl(link.url), "CLASH")}>CLASH 二维码</button>}{link.status === "active" && <button type="button" className="ghost" onClick={() => void showQr(shadowrocketUrl(link.url), "小火箭")}>小火箭二维码</button>}</div></article>;
+
+  return <section className="clashPanel"><div className="clashBadge">META</div><p className="eyebrow">PRIVATE SUBSCRIPTION</p><h2>ClashX Meta 私有订阅</h2><p className="clashIntro">每个订阅配置都有自己的机场来源和链接。编辑来源只更新当前配置，生成新链接才会增加新的订阅地址。</p>{error && <div className="clashError">{error}</div>}<section className="profileList"><div className="profileListHead"><div><h3>我的订阅配置</h3><p>例如花云400G、备用机场；不同配置互不影响。</p></div><button type="button" className="primary" onClick={() => { setNewProfileOpen((value) => !value); setError(""); }}>＋ 新增订阅地址</button></div>{newProfileOpen && <form className="profileCreateForm" onSubmit={addProfile}><label>配置备注名称<input value={newProfileName} onChange={(event) => setNewProfileName(event.target.value)} placeholder="例如：我的备用机场" /></label><label>机场订阅地址 <small>一行一个</small><textarea value={newProfileUrls} onChange={(event) => setNewProfileUrls(event.target.value)} placeholder="https://机场A.example/订阅\nhttps://机场B.example/订阅" /></label><label className="filePicker">或者上传 YAML 文件<input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" onChange={(event) => setNewProfileFile(event.target.files?.[0] || null)} /></label>{newProfileFile && <div className="selectedFiles">已选择：{newProfileFile.name}</div>}<div className="profileEditorActions"><button className="primary" type="submit" disabled={busy}>{busy ? "处理中…" : "保存并新增配置"}</button><button className="ghost" type="button" onClick={() => setNewProfileOpen(false)}>取消</button></div></form>}{profiles.length ? profiles.map((profile) => { const profileLinks = links.filter((link) => link.profileId === profile.id || (!link.profileId && profile.id === "default")); const editing = editorProfileId === profile.id; return <article className="profileCard" key={profile.id}><div className="profileCardHead"><div className="profileCardTitle"><input value={profile.name} onChange={(event) => setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, name: event.target.value } : item))} onBlur={() => void renameProfile(profile).catch((cause) => setError(cause instanceof Error ? cause.message : "保存配置名称失败"))} aria-label="订阅配置名称" /><p>{profile.sourceCount} 个来源 · 约 {profile.nodeCount} 个节点 · {profileLinks.length} 条链接</p></div><button type="button" className={editing ? "ghost" : "primary"} onClick={() => void openEditor(profile)}>{editing ? "收起编辑器" : "编辑来源"}</button></div><div className="profileSourceSummary">{profile.sources?.length ? profile.sources.map((source) => <span className={source.hidden ? "isHidden" : ""} key={`${profile.id}-${source.index}`}>{source.name}</span>) : <span>还没有添加来源</span>}</div>{editing && <section className="profileEditor"><div className="profileEditorHead"><div><h4>编辑「{profile.name}」的来源</h4><p>这里的修改只会更新当前配置，不会新增链接。</p></div><button type="button" className="ghost" onClick={() => setEditorProfileId(null)}>关闭</button></div><div className="sourceList">{editorSources.length ? editorSources.map((source) => { const sourceKey = `${profile.id}-${source.index}`; return <div className={`sourceRow ${source.hidden ? "sourceHidden" : ""}`} key={sourceKey}><div><input className="sourceNameInput" value={source.name} onChange={(event) => setEditorSources((current) => current.map((item) => item.index === source.index ? { ...item, name: event.target.value } : item))} onBlur={() => void updateSource(source.index, { name: source.name })} aria-label="机场来源名称" /><small>{source.kind === "content" ? `本地文件 · ${source.nodes || 0} 个节点` : source.value || "在线订阅地址"}</small>{editingSource === sourceKey && <div className="sourceEditRow"><input value={editingSourceUrl} onChange={(event) => setEditingSourceUrl(event.target.value)} placeholder="新的机场订阅地址" aria-label="新的机场订阅地址" /><button type="button" className="primary" disabled={busy} onClick={() => void updateSource(source.index, { value: editingSourceUrl.trim() })}>保存</button><button type="button" className="ghost" disabled={busy} onClick={() => { setEditingSource(null); setEditingSourceUrl(""); }}>取消</button></div>}</div><button type="button" className="ghost" disabled={busy || (!source.hidden && editorSources.filter((item) => !item.hidden).length <= 1)} onClick={() => void updateSource(source.index, { hidden: !source.hidden })}>{source.hidden ? "取消隐藏" : "隐藏"}</button>{source.kind === "url" && <button type="button" className="ghost" disabled={busy} onClick={() => { setEditingSource(sourceKey); setEditingSourceUrl(source.value || ""); }}>编辑</button>}<button type="button" className="danger" disabled={busy || editorSources.length <= 1} onClick={() => void removeSource(source.index)}>删除</button></div>; }) : <p className="clashLoading">还没有来源。</p>}</div><form className="sourceAddForm" onSubmit={addSource}><div className="sourceAddFields"><label>新增到这个配置<input value={editorUrl} onChange={(event) => setEditorUrl(event.target.value)} placeholder="https://新的机场订阅地址" /></label><label className="filePicker">或者上传 YAML 文件<input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" onChange={(event) => setEditorFile(event.target.files?.[0] || null)} /></label>{editorFile && <div className="selectedFiles">已选择：{editorFile.name}</div>}<button className="primary addSourceButton" type="submit" disabled={busy}>{busy ? "处理中…" : "添加到当前配置"}</button></div></form><div className="sourceActionRow"><button className="primary" type="button" disabled={busy || !editorSources.length} onClick={() => void createNewLink(profile)}>生成新链接</button><button className="ghost" type="button" disabled={busy || !editorSources.length} onClick={() => void refreshProfile(profile.id)}>更新当前配置</button></div></section>}<div className="profileLinks"><div className="profileLinksHead"><h4>Clash / 小火箭订阅链接</h4><span>每条链接独立管理</span></div>{profileLinks.length ? profileLinks.map(profileLinkCard) : <p className="clashLoading">还没有链接，请先编辑来源后生成新链接。</p>}{!editing && <button type="button" className="ghost profileGenerateButton" disabled={busy || profile.sourceCount === 0} onClick={() => void createNewLink(profile)}>＋ 生成新链接</button>}</div></article>; }) : <p className="clashLoading">还没有订阅配置。</p>}</section><ul><li>编辑来源只影响当前配置，已有链接地址不会改变。</li><li>生成新链接会在当前配置下增加一组新的 Clash 和小火箭地址。</li><li>每条链接都支持修改备注、复制、二维码、失效和删除。</li></ul>{pendingLinkAction && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭订阅操作确认" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingLinkAction(null); }} onKeyDown={(event) => { if (event.key === "Escape") setPendingLinkAction(null); }}><section className="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="link-action-title"><span className="confirmMark">!</span><h2 id="link-action-title">确认{pendingLinkAction.action === "delete" ? "删除" : "使链接失效"}？</h2><p>{pendingLinkAction.action === "delete" ? "删除后将无法恢复这条订阅链接。" : "失效后这条订阅链接将无法继续获取配置。"}</p><footer><button className="ghost" type="button" onClick={() => setPendingLinkAction(null)}>取消</button><button className="deleteConfirm" type="button" onClick={() => { const action = pendingLinkAction; setPendingLinkAction(null); void changeLink(action.id, action.action).catch((cause) => setError(cause instanceof Error ? cause.message : "操作链接失败")); }}>确认</button></footer></section></div>}{qrCode && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭二维码" onMouseDown={(event) => { if (event.target === event.currentTarget) { setQrCode(""); setQrLink(""); setQrLabel(""); } }} onKeyDown={(event) => { if (event.key === "Escape") { setQrCode(""); setQrLink(""); setQrLabel(""); } }}><section className="qrModal" role="dialog" aria-modal="true" aria-labelledby="qr-title"><header><div><h2 id="qr-title">{qrLabel} 订阅二维码</h2><p>使用对应客户端扫描</p></div><button type="button" onClick={() => { setQrCode(""); setQrLink(""); setQrLabel(""); }}>×</button></header><img src={qrCode} alt={`${qrLabel} 私有订阅二维码`} /><button type="button" className="ghost qrCopy" onClick={() => void copyLink(qrLink)}>{copied ? "已复制订阅链接" : "复制订阅链接"}</button></section></div>}</section>;
 }
 
 function GroupCard({ group, ruleCount, tone, onEdit, onRules }: { group: Group; ruleCount: number; tone: string; onEdit: () => void; onRules: () => void }) {
