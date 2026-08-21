@@ -543,7 +543,7 @@ function ClashSubscription() {
 
   function clashRelayUrl(value: string) {
     const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
-    return token ? `https://656577.xyz/mw-clash.php?token=${encodeURIComponent(token)}` : value;
+    return token ? `https://656577.xyz/mw-clash.php?token=${encodeURIComponent(token)}&compat=clashxmeta` : value;
   }
 
   async function showQr(value: string, label: string) {
