@@ -176,10 +176,13 @@ button,input,select,textarea { max-width:100%; }
 .sourceEditRow { display:flex; align-items:center; gap:6px; flex:1; min-width:0; }
 .sourceEditRow input { flex:1; min-width:160px; }
 .sourceEditRow button { min-width:42px; }
-.sourceAddForm { display:grid; gap:10px; padding-top:12px; border-top:1px solid #e7eee9; }
+.sourceAddForm { display:grid; gap:14px; padding-top:12px; border-top:1px solid #e7eee9; }
+.sourceAddFields { display:grid; gap:10px; padding:13px; border:1px solid #dce7e0; border-radius:11px; background:#f7fbf8; }
 .sourceAddForm label { margin:0; }
 .sourceAddForm .filePicker { margin:0; }
-.sourceAddForm>button { width:100%; justify-content:center; }
+.addSourceButton { width:100%; justify-content:center; }
+.sourceActionRow { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.sourceActionRow button { width:100%; min-height:42px; justify-content:center; }
 .clashSuccess { margin:0 0 15px; padding:11px 12px; border:1px solid #c8e7d5; border-radius:10px; color:#276f53; background:#eaf7ef; font-size:11px; }
 .clashLinkList { display:grid; gap:12px; margin:0 0 22px; }
 .clashLinkCard { position:relative; padding:14px; border:1px solid #dce7e0; border-radius:13px; background:#fff; }
@@ -212,6 +215,8 @@ button,input,select,textarea { max-width:100%; }
   .clashPanel { padding:22px 17px; }
   .clashActions { align-items:stretch; flex-direction:column; }
   .clashActions>* { justify-content:center; width:100%; text-align:center; }
+  .sourceActionRow { grid-template-columns:1fr 1fr; gap:8px; }
+  .sourceActionRow button { padding-left:8px; padding-right:8px; font-size:11px; }
 }
 
 @media(max-width:390px){
