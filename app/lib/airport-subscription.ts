@@ -26,7 +26,7 @@ export async function fetchAirportSubscription(sourceUrl: string) {
   // HTTPS sources are fetched directly from the hosted worker. Some providers
   // reject the VPS relay IP even though the same HTTPS URL works normally.
   // The relay remains necessary only for explicitly approved HTTP sources.
-  if (relayUrl && relaySecret && new URL(safeUrl).protocol === "http:") {
+  async function fetchViaRelay() {
     const relayResponse = await fetch(relayUrl, {
       method: "POST",
       headers: {
@@ -43,6 +43,7 @@ export async function fetchAirportSubscription(sourceUrl: string) {
     if (!nodeCount) throw new Error("没有识别到节点，请确认该地址支持 Clash 或 Shadowrocket 格式");
     return { content, nodeCount };
   }
+  if (relayUrl && relaySecret && new URL(safeUrl).protocol === "http:") return fetchViaRelay();
   const requestHeaders = [
     { "User-Agent": "clash.meta", Accept: "text/yaml,text/plain,application/yaml,*/*" },
     { "User-Agent": "Shadowrocket", Accept: "text/plain,text/yaml,application/yaml,*/*" },
@@ -52,6 +53,11 @@ export async function fetchAirportSubscription(sourceUrl: string) {
   for (const headers of requestHeaders) {
     response = await fetch(safeUrl, { headers, cache: "no-store", redirect: "follow" });
     if (response.ok || response.status !== 403) break;
+  }
+  // Some providers allow the user's VPS but reject the hosted worker egress.
+  // Retry through the configured relay before reporting a transient 403.
+  if (response && !response.ok && relayUrl && relaySecret && [401, 403, 408, 429, 500, 502, 503, 504].includes(response.status)) {
+    try { return await fetchViaRelay(); } catch { /* keep the original direct-fetch status below */ }
   }
   if (!response) throw new Error("机场订阅读取失败");
   if (!response.ok) throw new Error(`机场订阅读取失败（${response.status}）`);
