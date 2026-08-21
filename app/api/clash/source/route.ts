@@ -39,7 +39,15 @@ export async function POST(request: NextRequest) {
       const value = form.get("sourceFile");
       file = value instanceof File ? value : null;
     } else {
-      const body = await request.json() as { sourceUrl?: string };
+      const body = await request.json() as { sourceUrl?: string; action?: string };
+      if (body.action === "new-link") {
+        const { entries } = await currentState();
+        if (!entries.length) throw new Error("请先添加至少一个机场来源");
+        const created = await createClashLink(await encryptSourceUrl(entries), `订阅链接 ${new Date().toLocaleDateString("zh-CN")}`);
+        const token = created.token || process.env.CLASH_ACCESS_TOKEN || "";
+        const link = { id: created.id, name: created.name || "订阅链接", url: `${new URL(request.url).origin}/api/clash/${encodeURIComponent(token)}`, status: created.status, createdAt: created.createdAt, revokedAt: created.revokedAt ?? null, legacy: false };
+        return NextResponse.json({ sources: publicSources(entries), link });
+      }
       sourceUrl = String(body.sourceUrl || "").trim();
     }
     if (!sourceUrl && !file) throw new Error("请输入订阅地址或选择 YAML 文件");
