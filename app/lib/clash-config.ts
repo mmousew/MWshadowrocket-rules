@@ -278,13 +278,11 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
   const airportDns = readAirportDns(sources);
   const defaultNameserver = airportDns.defaultNameserver.length ? airportDns.defaultNameserver : ["223.5.5.5", "119.29.29.29"];
   // `proxy-server-nameserver` is used to resolve proxy endpoint hostnames.
-  // Do not merge loopback resolvers from another airport (for example
-  // `udp://127.0.0.1:7874`) into a portable subscription: that address belongs
-  // to the source client's local DNS and is unavailable on the subscriber's
-  // device. Also keep ordinary default DNS servers out of this dedicated list;
-  // the original airport-specific resolver should be tried first.
+  // Keep airport-specific resolvers, including a local Clash DNS endpoint
+  // such as `udp://127.0.0.1:7874` when an airport explicitly requires it.
+  // Only keep ordinary default DNS servers out of this dedicated list: mixing
+  // them here can make proxy endpoint resolution race with the wrong resolver.
   const proxyServerNameserver = [...new Set(airportDns.proxyServerNameserver)]
-    .filter((item) => !/^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(item))
     .filter((item) => !defaultNameserver.includes(item));
   if (!proxyServerNameserver.length) proxyServerNameserver.push(...defaultNameserver);
   const nameserver = airportDns.nameserver.length ? airportDns.nameserver : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"];
