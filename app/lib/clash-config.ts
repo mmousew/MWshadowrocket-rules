@@ -114,6 +114,25 @@ function parseClashProxies(content: string): ClashProxy[] {
   } catch { return []; }
 }
 
+function readAirportDns(sources: string[]) {
+  for (const source of sources) {
+    try {
+      const parsed = parseYaml(source) as { dns?: unknown } | null;
+      if (!parsed?.dns || typeof parsed.dns !== "object") continue;
+      const dns = parsed.dns as Record<string, unknown>;
+      const list = (key: string) => Array.isArray(dns[key]) ? dns[key].filter((item): item is string => typeof item === "string") : [];
+      const proxyServerNameserver = list("proxy-server-nameserver");
+      const defaultNameserver = list("default-nameserver");
+      const nameserver = list("nameserver");
+      const fallback = list("fallback");
+      if (proxyServerNameserver.length || defaultNameserver.length || nameserver.length || fallback.length) {
+        return { proxyServerNameserver, defaultNameserver, nameserver, fallback };
+      }
+    } catch { /* use the safe defaults below */ }
+  }
+  return { proxyServerNameserver: [], defaultNameserver: [], nameserver: [], fallback: [] };
+}
+
 function decodeLooseBase64(value: string) {
   try { return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"); } catch { return ""; }
 }
@@ -244,6 +263,11 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
   const { groups, rules } = parseGroupsAndRules(ruleContent);
   const proxyGroups = convertGroups(groups, proxies.map((proxy) => String(proxy.name)));
   const { converted, providers, skipped } = convertRules(rules);
+  const airportDns = readAirportDns(sources);
+  const defaultNameserver = airportDns.defaultNameserver.length ? airportDns.defaultNameserver : ["223.5.5.5", "119.29.29.29"];
+  const proxyServerNameserver = airportDns.proxyServerNameserver.length ? airportDns.proxyServerNameserver : defaultNameserver;
+  const nameserver = airportDns.nameserver.length ? airportDns.nameserver : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"];
+  const fallback = airportDns.fallback.length ? airportDns.fallback : ["https://223.5.5.5/dns-query", "https://223.6.6.6/dns-query"];
   const providerYaml = providers.length ? `\nrule-providers:\n${providers.map((provider) => `  ${provider.name}:\n    type: http\n    behavior: classical\n    format: ${provider.format}\n    url: ${quote(provider.url)}\n    path: ./ruleset/${provider.name}.${provider.format === "yaml" ? "yaml" : "list"}\n    interval: 86400`).join("\n")}` : "";
 
   const dnsYaml = [
@@ -251,18 +275,14 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     "  enable: true",
     "  ipv6: false",
     "  default-nameserver:",
-    "    - 223.5.5.5",
-    "    - 119.29.29.29",
+    ...defaultNameserver.map((item) => `    - ${quote(item)}`),
     "  proxy-server-nameserver:",
-    "    - 223.5.5.5",
-    "    - 119.29.29.29",
+    ...proxyServerNameserver.map((item) => `    - ${quote(item)}`),
     "  enhanced-mode: fake-ip",
     "  nameserver:",
-    "    - https://doh.pub/dns-query",
-    "    - https://dns.alidns.com/dns-query",
+    ...nameserver.map((item) => `    - ${quote(item)}`),
     "  fallback:",
-    "    - https://223.5.5.5/dns-query",
-    "    - https://223.6.6.6/dns-query",
+    ...fallback.map((item) => `    - ${quote(item)}`),
     "  fake-ip-filter:",
     "    - \"*.lan\"",
     "    - \"+.local\"",
