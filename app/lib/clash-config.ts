@@ -119,6 +119,9 @@ function readAirportDns(sources: string[]) {
   const defaultNameserver = new Set<string>();
   const nameserver = new Set<string>();
   const fallback = new Set<string>();
+  const fakeIpFilter = new Set<string>();
+  let fakeIpRange = "";
+  let useHosts = false;
   for (const source of sources) {
     try {
       const general = source.match(/^\[General\]([\s\S]*?)(?=^\[|$)/m)?.[1] || "";
@@ -134,6 +137,9 @@ function readAirportDns(sources: string[]) {
         list("default-nameserver").forEach((item) => defaultNameserver.add(item));
         list("nameserver").forEach((item) => nameserver.add(item));
         list("fallback").forEach((item) => fallback.add(item));
+        list("fake-ip-filter").forEach((item) => fakeIpFilter.add(item));
+        if (!fakeIpRange && typeof dns["fake-ip-range"] === "string") fakeIpRange = dns["fake-ip-range"];
+        if (dns["use-hosts"] === true) useHosts = true;
       }
     } catch { /* use the safe defaults below */ }
   }
@@ -142,6 +148,9 @@ function readAirportDns(sources: string[]) {
     defaultNameserver: [...defaultNameserver],
     nameserver: [...nameserver],
     fallback: [...fallback],
+    fakeIpFilter: [...fakeIpFilter],
+    fakeIpRange,
+    useHosts,
   };
 }
 
@@ -284,6 +293,7 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
   // them here can make proxy endpoint resolution race with the wrong resolver.
   const proxyServerNameserver = [...new Set(airportDns.proxyServerNameserver)]
     .filter((item) => !defaultNameserver.includes(item));
+  proxyServerNameserver.sort((left) => /^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(left) ? -1 : 1);
   if (!proxyServerNameserver.length) proxyServerNameserver.push(...defaultNameserver);
   const nameserver = airportDns.nameserver.length ? airportDns.nameserver : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"];
   const fallback = airportDns.fallback.length ? airportDns.fallback : ["https://223.5.5.5/dns-query", "https://223.6.6.6/dns-query"];
@@ -312,15 +322,15 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     "  proxy-server-nameserver:",
     ...proxyServerNameserver.map((item) => `    - ${quote(item)}`),
     "  enhanced-mode: fake-ip",
+    ...(airportDns.fakeIpRange ? [`  fake-ip-range: ${quote(airportDns.fakeIpRange)}`] : []),
+    ...(airportDns.useHosts ? ["  use-hosts: true"] : []),
     "  nameserver:",
     ...nameserver.map((item) => `    - ${quote(item)}`),
     "  fallback:",
     ...fallback.map((item) => `    - ${quote(item)}`),
     ...(nameserverPolicies.size ? ["  nameserver-policy:", ...[...nameserverPolicies.entries()].flatMap(([suffix, resolvers]) => [`    ${quote(`+.${suffix}`)}:`, ...resolvers.map((item) => `      - ${quote(item)}`)])] : []),
     "  fake-ip-filter:",
-    "    - \"*.lan\"",
-    "    - \"+.local\"",
-    "    - \"localhost.ptlogin2.qq.com\"",
+    ...[...new Set(["*.lan", "+.local", "localhost.ptlogin2.qq.com", ...airportDns.fakeIpFilter])].map((item) => `    - ${quote(item)}`),
   ].join("\n");
   return `# MW Rules for ClashX Meta\n# 自动合并机场节点与 GitHub 分流规则；跳过 ${skipped} 条 Clash 不支持的规则\nmixed-port: 7890\nmode: rule\nallow-lan: false\nlog-level: info\nipv6: false\n\n${dnsYaml}\n\nproxies:\n${yamlList(proxies)}\n\nproxy-groups:\n${yamlList(proxyGroups)}${providerYaml}\n\nrules:\n${converted.map((rule) => `  - ${quote(rule)}`).join("\n")}\n`;
 }
