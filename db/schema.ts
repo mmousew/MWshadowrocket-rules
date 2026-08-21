@@ -32,3 +32,18 @@ export const clashSourceSnapshots = sqliteTable("clash_source_snapshots", {
   nodeCount: integer("node_count").notNull().default(0),
   updatedAt: integer("updated_at").notNull(),
 });
+
+export const clashAirportSources = sqliteTable("clash_airport_sources", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().default("机场订阅"),
+  kind: text("kind").notNull().default("url"),
+  sourceUrl: text("source_url").notNull().default(""),
+  content: text("content").notNull().default(""),
+  hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
+  status: text("status").notNull().default("active"),
+  nodeCount: integer("node_count"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => ({
+  statusIdx: index("clash_airport_sources_status_idx").on(table.status),
+}));

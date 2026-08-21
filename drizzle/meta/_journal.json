@@ -43,6 +43,13 @@
       "when": 1787328726601,
       "tag": "0005_mighty_sinister_six",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787331961153,
+      "tag": "0006_past_maximus",
+      "breakpoints": true
     }
   ]
 }

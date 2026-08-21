@@ -79,7 +79,7 @@ function validateConfig(content: string) {
         errors.push(`第 ${ruleStart + offset + 2} 行规则字段不足`);
         return;
       }
-      const [type, value, policy] = parts;
+      const policy = parts[2];
       if (!BUILTIN_POLICIES.has(policy) && !groups.has(policy)) {
         errors.push(`第 ${ruleStart + offset + 2} 行引用不存在的策略：${policy}`);
       }

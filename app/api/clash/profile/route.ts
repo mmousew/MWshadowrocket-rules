@@ -13,7 +13,7 @@ function sourceName(entry: ClashSourceEntry, index: number) {
 
 async function publicSources(value: string) {
   const entries = value ? parseSourceEntries(value) : [];
-  return Promise.all(entries.map(async (entry, index) => ({ index, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null })));
+  return Promise.all(entries.map(async (entry, index) => ({ index, sourceId: entry.sourceId || null, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null })));
 }
 
 async function publicProfile(profile: { id: string; name: string; encrypted_source: string; status: string; created_at: number; updated_at: number }) {
@@ -55,7 +55,10 @@ export async function POST(request: NextRequest) {
       name = String(body.name || "订阅配置").trim();
       sourceUrls = (body.sourceUrls || body.sourceUrl?.split(/\r?\n/) || []).map((url) => url.trim()).filter(Boolean);
     }
-    if (!sourceUrls.length && !uploaded.length) throw new Error("请填写订阅地址或选择 YAML 文件");
+    if (!sourceUrls.length && !uploaded.length) {
+      const profile = await createClashProfile(name || "订阅配置", await encryptSourceUrl([]));
+      return NextResponse.json({ profile: await publicProfile(profile), warning: null });
+    }
     const settled = await Promise.allSettled(sourceUrls.map((url) => fetchAirportSubscription(url)));
     const successful = settled.flatMap((item, index) => item.status === "fulfilled" ? [{ kind: "url" as const, value: sourceUrls[index] }] : []);
     const failed = settled.flatMap((item, index) => item.status === "rejected" ? [{ host: (() => { try { return new URL(sourceUrls[index]).hostname; } catch { return "地址格式错误"; } })(), reason: item.reason instanceof Error ? item.reason.message : "读取失败" }] : []);

@@ -39,7 +39,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
   try {
     const encryptedValue = encryptedSource ? await decryptSourceUrl(encryptedSource) : process.env.AIRPORT_SHADOWROCKET_URL || "";
     let airportUrls: string[] = [];
-    let inlineContent: string[] = [];
+    const inlineContent: string[] = [];
     try {
       const parsed = JSON.parse(encryptedValue);
       if (Array.isArray(parsed)) {
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       airportUrls = [encryptedValue];
     }
     airportUrls = airportUrls.map((url) => url.trim()).filter(Boolean);
-    if (!airportUrls.length) return new NextResponse("尚未配置机场来源", { status: 503 });
+    if (!airportUrls.length && !inlineContent.length) return new NextResponse("尚未配置机场来源", { status: 503 });
     const [ruleResponse, airportResult] = await Promise.all([
       fetch(`${API_URL}?ref=${encodeURIComponent(BRANCH)}`, {
         headers: {

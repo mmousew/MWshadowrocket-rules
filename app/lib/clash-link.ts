@@ -7,7 +7,7 @@ function getKey() {
   return Uint8Array.from(raw.match(/.{2}/g) || [], (byte) => Number.parseInt(byte, 16));
 }
 
-export type ClashSourceEntry = { kind: "url"; value: string; name?: string; hidden?: boolean } | { kind: "content"; value: string; name?: string; hidden?: boolean };
+export type ClashSourceEntry = { kind: "url"; value: string; name?: string; hidden?: boolean; sourceId?: string } | { kind: "content"; value: string; name?: string; hidden?: boolean; sourceId?: string };
 
 export function parseSourceEntries(value: string): ClashSourceEntry[] {
   try {
@@ -15,8 +15,8 @@ export function parseSourceEntries(value: string): ClashSourceEntry[] {
     if (Array.isArray(parsed)) {
       return parsed.flatMap((item): ClashSourceEntry[] => {
         if (typeof item === "string") return [{ kind: "url", value: item }];
-        if (item?.kind === "url" && typeof item.value === "string") return [{ kind: "url", value: item.value, name: typeof item.name === "string" ? item.name : undefined, hidden: item.hidden === true }];
-        if (item?.kind === "content" && typeof item.value === "string") return [{ kind: "content", value: item.value, name: typeof item.name === "string" ? item.name : undefined, hidden: item.hidden === true }];
+        if (item?.kind === "url" && typeof item.value === "string") return [{ kind: "url", value: item.value, name: typeof item.name === "string" ? item.name : undefined, hidden: item.hidden === true, sourceId: typeof item.sourceId === "string" ? item.sourceId : undefined }];
+        if (item?.kind === "content" && typeof item.value === "string") return [{ kind: "content", value: item.value, name: typeof item.name === "string" ? item.name : undefined, hidden: item.hidden === true, sourceId: typeof item.sourceId === "string" ? item.sourceId : undefined }];
         return [];
       });
     }

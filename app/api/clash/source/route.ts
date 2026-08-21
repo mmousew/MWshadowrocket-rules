@@ -4,6 +4,7 @@ import { encryptSourceUrl, parseSourceEntries, decryptSourceUrl, type ClashSourc
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { getAirportProxyCount } from "../../../lib/clash-config";
 import { createClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot, updateClashProfileSource } from "../../../lib/clash-links";
+import { getClashAirportSource } from "../../../lib/clash-airport-sources";
 
 function sourceName(entry: ClashSourceEntry, index: number) {
   if (entry.name?.trim()) return entry.name.trim();
@@ -12,7 +13,7 @@ function sourceName(entry: ClashSourceEntry, index: number) {
 }
 
 async function publicSources(entries: ClashSourceEntry[]) {
-  return Promise.all(entries.map(async (entry, index) => ({ index, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null })));
+  return Promise.all(entries.map(async (entry, index) => ({ index, sourceId: entry.sourceId || null, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null })));
 }
 
 async function currentState(profileId: string) {
@@ -44,18 +45,21 @@ export async function POST(request: NextRequest) {
     const contentType = request.headers.get("content-type") || "";
     let profileId = "default";
     let sourceUrl = "";
+    let airportSourceId = "";
     let file: File | null = null;
     let action = "";
     if (contentType.includes("multipart/form-data")) {
       const form = await request.formData();
       profileId = String(form.get("profileId") || "default").trim();
       sourceUrl = String(form.get("sourceUrl") || "").trim();
+      airportSourceId = String(form.get("airportSourceId") || "").trim();
       const value = form.get("sourceFile");
       file = value instanceof File ? value : null;
     } else {
-      const body = await request.json() as { profileId?: string; sourceUrl?: string; action?: string };
+      const body = await request.json() as { profileId?: string; sourceUrl?: string; airportSourceId?: string; action?: string };
       profileId = String(body.profileId || "default").trim();
       sourceUrl = String(body.sourceUrl || "").trim();
+      airportSourceId = String(body.airportSourceId || "").trim();
       action = String(body.action || "");
     }
     const { profile, entries } = await currentState(profileId);
@@ -78,7 +82,16 @@ export async function POST(request: NextRequest) {
       const created = await createClashLink(await encryptSourceUrl(entries), `${profile.name} · ${new Date().toLocaleDateString("zh-CN")}`, profileId);
       return NextResponse.json({ profileId, sources: await publicSources(entries), link: publicLink(request, { id: created.id, profile_id: profileId, name: created.name, token: created.token, status: created.status, created_at: created.createdAt }) });
     }
-    if (!sourceUrl && !file) throw new Error("请输入订阅地址或选择 YAML 文件");
+    if (airportSourceId) {
+      const airportSource = await getClashAirportSource(airportSourceId);
+      if (!airportSource) throw new Error("机场列表中找不到这个订阅");
+      const added: ClashSourceEntry = { kind: airportSource.kind, value: airportSource.kind === "url" ? airportSource.sourceUrl : airportSource.content, name: airportSource.name, sourceId: airportSource.id };
+      if (entries.some((entry) => entry.sourceId === airportSource.id || (entry.kind === added.kind && entry.value === added.value))) throw new Error("这个机场已经添加到当前配置");
+      const nextEntries = [...entries, added];
+      await updateClashProfileSource(profileId, await encryptSourceUrl(nextEntries));
+      return NextResponse.json({ profileId, sources: await publicSources(nextEntries), added: sourceName(added, nextEntries.length - 1) });
+    }
+    if (!sourceUrl && !file) throw new Error("请选择机场列表中的订阅");
     let added: ClashSourceEntry;
     if (file) {
       if (file.size > 900_000) throw new Error("文件过大，请先下载较小的 Clash YAML 文件");
@@ -107,7 +120,6 @@ export async function DELETE(request: NextRequest) {
     const index = Number(body.index);
     const { entries } = await currentState(profileId);
     if (!Number.isInteger(index) || index < 0 || index >= entries.length) throw new Error("订阅来源不存在");
-    if (entries.length <= 1) throw new Error("至少保留一个订阅来源");
     const nextEntries = entries.filter((_, entryIndex) => entryIndex !== index);
     await updateClashProfileSource(profileId, await encryptSourceUrl(nextEntries));
     return NextResponse.json({ profileId, sources: await publicSources(nextEntries) });
