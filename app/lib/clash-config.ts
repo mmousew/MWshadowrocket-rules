@@ -193,8 +193,7 @@ function readAirportDnsPolicies(sources: string[]) {
   for (const source of sources) {
     try {
       const parsed = parseYaml(source) as { dns?: unknown } | null;
-      if (!parsed?.dns || typeof parsed.dns !== "object") continue;
-      const dns = parsed.dns as Record<string, unknown>;
+      const dns = parsed?.dns && typeof parsed.dns === "object" ? parsed.dns as Record<string, unknown> : {};
       const readPolicyMap = (value: unknown) => {
         if (!value || typeof value !== "object" || Array.isArray(value)) return [] as Array<[string, string[]]>;
         return Object.entries(value as Record<string, unknown>).flatMap(([suffix, resolvers]) => {
@@ -212,6 +211,17 @@ function readAirportDnsPolicies(sources: string[]) {
       }
       for (const [suffix, resolvers] of readPolicyMap(dns["nameserver-policy"])) {
         if (!nameserverPolicies.has(suffix)) nameserverPolicies.set(suffix, resolvers);
+      }
+      const resolvers = readSourceProxyDnsResolvers(source).filter((item) => !isLocalResolver(item));
+      if (resolvers.length) {
+        for (const proxy of parseAirportProxies(source)) {
+          const host = String(proxy.server || "").trim().toLowerCase();
+          if (!host || /^[0-9a-f:.]+$/i.test(host)) continue;
+          const labels = host.split(".").filter(Boolean);
+          if (labels.length < 2) continue;
+          const suffix = labels.slice(-2).join(".");
+          if (!proxyPolicies.has(suffix)) proxyPolicies.set(suffix, resolvers);
+        }
       }
     } catch {
       // Ignore malformed or non-YAML sources and keep the portable defaults.
@@ -524,8 +534,7 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
   // Use only portable resolvers in the merged file. A source-local resolver
   // such as 127.0.0.1:7874 can self-reference the generated config and break
   // every airport when multiple sources are combined.
-  const sourceProxyServerNameserver = airportDns.proxyServerNameserver.length ? airportDns.proxyServerNameserver : defaultNameserver;
-  const proxyServerNameserver = [...new Set(sourceProxyServerNameserver)]
+  const proxyServerNameserver = [...new Set([...airportDns.proxyServerNameserver, ...defaultNameserver])]
     .filter((item) => !/^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(item));
   const nameserver = airportDns.nameserver.length ? airportDns.nameserver : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"];
   const fallback = airportDns.fallback.length ? airportDns.fallback : ["https://223.5.5.5/dns-query", "https://223.6.6.6/dns-query"];

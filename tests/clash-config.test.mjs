@@ -99,9 +99,12 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   assert.equal(clashFlower.server, "flower.example.com");
   assert.deepEqual(clash.dns["proxy-server-nameserver"], [
     "https://kqs-resolver.example/dns-query",
+    "223.5.5.5",
+  ]);
+  assert.deepEqual(clash.dns["proxy-server-nameserver-policy"]["+.kunlun03dns.com"], [
+    "https://kqs-resolver.example/dns-query",
   ]);
   assert.equal(clash.dns["nameserver-policy"], undefined);
-  assert.equal(clash.dns["proxy-server-nameserver-policy"], undefined);
   assert.ok(!clash.dns["fake-ip-filter"].includes("*"));
   assert.ok(clash.dns["fake-ip-filter"].includes("+.lan"));
   assert.ok(clash.dns["fake-ip-filter"].includes("+.local"));
