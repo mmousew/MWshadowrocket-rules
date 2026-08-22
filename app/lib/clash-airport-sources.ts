@@ -1,4 +1,4 @@
-import { getRawDb } from "../../db";
+import { getReadyRawDb } from "../../db";
 import { decryptSourceUrl, encryptSourceUrl, parseSourceEntries, type ClashSourceEntry } from "./clash-link";
 import { fetchAirportSubscription } from "./airport-subscription";
 import { getAirportProxyCount } from "./clash-config";
@@ -55,7 +55,7 @@ function normalize(row: {
 }
 
 async function getById(id: string) {
-  const row = await getRawDb().prepare("SELECT id, name, kind, source_url, content, hidden, status, node_count, created_at, updated_at FROM clash_airport_sources WHERE id = ? LIMIT 1").bind(id).first<{
+  const row = await (await getReadyRawDb()).prepare("SELECT id, name, kind, source_url, content, hidden, status, node_count, created_at, updated_at FROM clash_airport_sources WHERE id = ? LIMIT 1").bind(id).first<{
     id: string; name: string; kind: string; source_url: string; content: string; hidden: number; status: string; node_count: number | null; created_at: number; updated_at: number;
   }>();
   return row ? normalize(row) : null;
@@ -68,7 +68,7 @@ async function findByEntry(entry: ClashSourceEntry) {
   // `entry.value` is the source value from the encrypted profile payload.
   // Do not pass it through `sourceValue`, which expects a normalized DB row
   // with `source_url`/`content` fields and would otherwise return undefined.
-  const row = await getRawDb().prepare(query).bind(entry.value).first<{
+  const row = await (await getReadyRawDb()).prepare(query).bind(entry.value).first<{
     id: string; name: string; kind: string; source_url: string; content: string; hidden: number; status: string; node_count: number | null; created_at: number; updated_at: number;
   }>();
   return row ? normalize(row) : null;
@@ -86,7 +86,7 @@ async function insertSource(entry: ClashSourceEntry, name = sourceName(entry), n
   const sourceUrl = entry.kind === "url" ? String(entry.value || "") : "";
   const content = entry.kind === "content" ? String(entry.value || "") : "";
   const safeNodeCount = typeof count === "number" ? count : null;
-  await getRawDb().prepare(
+  await (await getReadyRawDb()).prepare(
     "INSERT INTO clash_airport_sources (id, name, kind, source_url, content, hidden, status, node_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, 'active', ?, ?, ?)"
   ).bind(id, name.trim().slice(0, 80) || "机场订阅", entry.kind, sourceUrl, content, safeNodeCount, now, now).run();
   return getById(id);
@@ -117,7 +117,7 @@ export async function ensureClashAirportSources() {
     }
     if (changed) await updateClashProfileSource(profile.id, await encryptSourceUrl(nextEntries));
   }
-  const rows = await getRawDb().prepare("SELECT id, name, kind, source_url, content, hidden, status, node_count, created_at, updated_at FROM clash_airport_sources WHERE status <> 'deleted' ORDER BY created_at ASC").all<{
+  const rows = await (await getReadyRawDb()).prepare("SELECT id, name, kind, source_url, content, hidden, status, node_count, created_at, updated_at FROM clash_airport_sources WHERE status <> 'deleted' ORDER BY created_at ASC").all<{
     id: string; name: string; kind: string; source_url: string; content: string; hidden: number; status: string; node_count: number | null; created_at: number; updated_at: number;
   }>();
   return rows.results.map(normalize);
@@ -179,12 +179,12 @@ export async function refreshClashAirportSource(id: string) {
   if (!source) throw new Error("机场不存在");
   if (source.kind !== "url") {
     const count = getAirportProxyCount(source.content);
-    await getRawDb().prepare("UPDATE clash_airport_sources SET node_count = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(count, Date.now(), id).run();
+    await (await getReadyRawDb()).prepare("UPDATE clash_airport_sources SET node_count = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(count, Date.now(), id).run();
     return getClashAirportSource(id);
   }
   const fetched = await fetchAirportSubscription(source.sourceUrl);
   await saveSourceSnapshot(source.sourceUrl, fetched.content, fetched.nodeCount);
-  await getRawDb().prepare("UPDATE clash_airport_sources SET content = ?, node_count = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(fetched.content, fetched.nodeCount, Date.now(), id).run();
+  await (await getReadyRawDb()).prepare("UPDATE clash_airport_sources SET content = ?, node_count = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(fetched.content, fetched.nodeCount, Date.now(), id).run();
   return getClashAirportSource(id);
 }
 
@@ -207,7 +207,7 @@ export async function updateClashAirportSource(id: string, patch: { name?: strin
   const safeSourceUrl = String(next.sourceUrl || "");
   const safeContent = String(next.content || "");
   const safeNodeCount = typeof next.nodeCount === "number" ? next.nodeCount : null;
-  await getRawDb().prepare("UPDATE clash_airport_sources SET name = ?, source_url = ?, content = ?, node_count = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(safeName, safeSourceUrl, safeContent, safeNodeCount, Date.now(), id).run();
+  await (await getReadyRawDb()).prepare("UPDATE clash_airport_sources SET name = ?, source_url = ?, content = ?, node_count = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(safeName, safeSourceUrl, safeContent, safeNodeCount, Date.now(), id).run();
   const updated = await getClashAirportSource(id);
   if (!updated) throw new Error("更新机场失败");
   if (oldSource.name !== updated.name || sourceValue(oldSource) !== sourceValue(updated)) await rewriteProfiles(oldSource, updated);
@@ -217,7 +217,7 @@ export async function updateClashAirportSource(id: string, patch: { name?: strin
 export async function setClashAirportSourceHidden(id: string, hidden: boolean) {
   const source = await getClashAirportSource(id);
   if (!source) throw new Error("机场不存在");
-  await getRawDb().prepare("UPDATE clash_airport_sources SET hidden = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(hidden ? 1 : 0, Date.now(), id).run();
+  await (await getReadyRawDb()).prepare("UPDATE clash_airport_sources SET hidden = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(hidden ? 1 : 0, Date.now(), id).run();
   await setProfilesSourceHidden(source, hidden);
   return getClashAirportSource(id);
 }
@@ -226,5 +226,5 @@ export async function deleteClashAirportSource(id: string) {
   const source = await getClashAirportSource(id);
   if (!source) throw new Error("机场不存在");
   await rewriteProfiles(source, null);
-  await getRawDb().prepare("UPDATE clash_airport_sources SET status = 'deleted', updated_at = ? WHERE id = ?").bind(Date.now(), id).run();
+  await (await getReadyRawDb()).prepare("UPDATE clash_airport_sources SET status = 'deleted', updated_at = ? WHERE id = ?").bind(Date.now(), id).run();
 }

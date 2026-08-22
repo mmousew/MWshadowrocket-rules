@@ -1,4 +1,4 @@
-import { getRawDb } from "../../db";
+import { getReadyRawDb } from "../../db";
 
 const encoder = new TextEncoder();
 export type ClashLinkStatus = "active" | "revoked" | "deleted";
@@ -15,7 +15,7 @@ function randomToken() {
 }
 
 export async function createClashLink(encryptedSource: string, name = "订阅链接", profileId = "default") {
-  const db = getRawDb();
+  const db = await getReadyRawDb();
   const token = randomToken();
   const id = crypto.randomUUID();
   const createdAt = Date.now();
@@ -24,11 +24,11 @@ export async function createClashLink(encryptedSource: string, name = "订阅链
 }
 
 export async function syncActiveClashSources(encryptedSource: string, profileId = "default") {
-  await getRawDb().prepare("UPDATE clash_links SET encrypted_source = ? WHERE status = 'active' AND profile_id = ?").bind(encryptedSource, profileId).run();
+  await (await getReadyRawDb()).prepare("UPDATE clash_links SET encrypted_source = ? WHERE status = 'active' AND profile_id = ?").bind(encryptedSource, profileId).run();
 }
 
 export async function ensureDefaultClashProfile() {
-  const db = getRawDb();
+  const db = await getReadyRawDb();
   const existing = await db.prepare("SELECT id, name, encrypted_source, status, created_at, updated_at FROM clash_profiles WHERE id = 'default' LIMIT 1").first<ClashProfileRow>();
   if (existing) return existing;
   const source = await db.prepare("SELECT encrypted_source, created_at FROM clash_links WHERE profile_id = 'default' AND status <> 'deleted' AND encrypted_source <> '' ORDER BY created_at ASC LIMIT 1").first<{ encrypted_source: string; created_at: number }>();
@@ -39,50 +39,50 @@ export async function ensureDefaultClashProfile() {
 
 export async function listClashProfiles() {
   await ensureDefaultClashProfile();
-  const result = await getRawDb().prepare("SELECT id, name, encrypted_source, status, created_at, updated_at FROM clash_profiles WHERE status <> 'deleted' ORDER BY created_at ASC").all<ClashProfileRow>();
+  const result = await (await getReadyRawDb()).prepare("SELECT id, name, encrypted_source, status, created_at, updated_at FROM clash_profiles WHERE status <> 'deleted' ORDER BY created_at ASC").all<ClashProfileRow>();
   return result.results;
 }
 
 export async function getClashProfile(id: string) {
   await ensureDefaultClashProfile();
-  return getRawDb().prepare("SELECT id, name, encrypted_source, status, created_at, updated_at FROM clash_profiles WHERE id = ? AND status <> 'deleted' LIMIT 1").bind(id).first<ClashProfileRow>();
+  return (await getReadyRawDb()).prepare("SELECT id, name, encrypted_source, status, created_at, updated_at FROM clash_profiles WHERE id = ? AND status <> 'deleted' LIMIT 1").bind(id).first<ClashProfileRow>();
 }
 
 export async function createClashProfile(name: string, encryptedSource: string) {
   const id = crypto.randomUUID();
   const now = Date.now();
   const safeName = name.trim().slice(0, 80) || "订阅配置";
-  await getRawDb().prepare("INSERT INTO clash_profiles (id, name, encrypted_source, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)").bind(id, safeName, encryptedSource, now, now).run();
+  await (await getReadyRawDb()).prepare("INSERT INTO clash_profiles (id, name, encrypted_source, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)").bind(id, safeName, encryptedSource, now, now).run();
   return { id, name: safeName, encrypted_source: encryptedSource, status: "active" as const, created_at: now, updated_at: now };
 }
 
 export async function updateClashProfileSource(id: string, encryptedSource: string) {
   const now = Date.now();
-  await getRawDb().prepare("UPDATE clash_profiles SET encrypted_source = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(encryptedSource, now, id).run();
+  await (await getReadyRawDb()).prepare("UPDATE clash_profiles SET encrypted_source = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(encryptedSource, now, id).run();
   await syncActiveClashSources(encryptedSource, id);
 }
 
 export async function renameClashProfile(id: string, name: string) {
-  await getRawDb().prepare("UPDATE clash_profiles SET name = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(name.trim().slice(0, 80) || "订阅配置", Date.now(), id).run();
+  await (await getReadyRawDb()).prepare("UPDATE clash_profiles SET name = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(name.trim().slice(0, 80) || "订阅配置", Date.now(), id).run();
 }
 
 export async function renameClashLink(id: string, name: string) {
-  await getRawDb().prepare("UPDATE clash_links SET name = ? WHERE id = ? AND status <> 'deleted'").bind(name.trim().slice(0, 80) || "订阅链接", id).run();
+  await (await getReadyRawDb()).prepare("UPDATE clash_links SET name = ? WHERE id = ? AND status <> 'deleted'").bind(name.trim().slice(0, 80) || "订阅链接", id).run();
 }
 
 export async function findClashLink(token: string) {
-  return getRawDb().prepare("SELECT id, encrypted_source, status, created_at, revoked_at, deleted_at FROM clash_links WHERE token_hash = ? LIMIT 1")
+  return (await getReadyRawDb()).prepare("SELECT id, encrypted_source, status, created_at, revoked_at, deleted_at FROM clash_links WHERE token_hash = ? LIMIT 1")
     .bind(await hashToken(token)).first<{ id: string; encrypted_source: string; status: ClashLinkStatus; created_at: number; revoked_at: number | null; deleted_at: number | null }>();
 }
 
 export async function listClashLinks() {
-  const result = await getRawDb().prepare("SELECT id, profile_id, name, token, encrypted_source, status, created_at, revoked_at, deleted_at FROM clash_links WHERE status <> 'deleted' ORDER BY created_at DESC").all<{ id: string; profile_id: string; name: string; token: string; encrypted_source: string; status: ClashLinkStatus; created_at: number; revoked_at: number | null; deleted_at: number | null }>();
+  const result = await (await getReadyRawDb()).prepare("SELECT id, profile_id, name, token, encrypted_source, status, created_at, revoked_at, deleted_at FROM clash_links WHERE status <> 'deleted' ORDER BY created_at DESC").all<{ id: string; profile_id: string; name: string; token: string; encrypted_source: string; status: ClashLinkStatus; created_at: number; revoked_at: number | null; deleted_at: number | null }>();
   return result.results;
 }
 
 export async function updateClashLink(id: string, status: "revoked" | "deleted") {
   const now = Date.now();
-  await getRawDb().prepare("UPDATE clash_links SET status = ?, revoked_at = CASE WHEN ? = 'revoked' THEN ? ELSE revoked_at END, deleted_at = CASE WHEN ? = 'deleted' THEN ? ELSE deleted_at END WHERE id = ?").bind(status, status, now, status, now, id).run();
+  await (await getReadyRawDb()).prepare("UPDATE clash_links SET status = ?, revoked_at = CASE WHEN ? = 'revoked' THEN ? ELSE revoked_at END, deleted_at = CASE WHEN ? = 'deleted' THEN ? ELSE deleted_at END WHERE id = ?").bind(status, status, now, status, now, id).run();
 }
 
 const snapshotEncoder = new TextEncoder();
@@ -94,14 +94,14 @@ export async function getSourceKey(sourceUrl: string) {
 
 export async function saveSourceSnapshot(sourceUrl: string, content: string, nodeCount: number) {
   const sourceKey = await getSourceKey(sourceUrl);
-  await getRawDb().prepare(
+  await (await getReadyRawDb()).prepare(
     "INSERT INTO clash_source_snapshots (source_key, source_url, content, node_count, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(source_key) DO UPDATE SET source_url = excluded.source_url, content = excluded.content, node_count = excluded.node_count, updated_at = excluded.updated_at"
   ).bind(sourceKey, sourceUrl, content, nodeCount, Date.now()).run();
 }
 
 export async function getSourceSnapshot(sourceUrl: string) {
   const sourceKey = await getSourceKey(sourceUrl);
-  return getRawDb().prepare("SELECT source_url, content, node_count, updated_at FROM clash_source_snapshots WHERE source_key = ? LIMIT 1")
+  return (await getReadyRawDb()).prepare("SELECT source_url, content, node_count, updated_at FROM clash_source_snapshots WHERE source_key = ? LIMIT 1")
     .bind(sourceKey)
     .first<{ source_url: string; content: string; node_count: number; updated_at: number }>();
 }

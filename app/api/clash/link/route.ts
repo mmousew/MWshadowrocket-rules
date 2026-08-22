@@ -4,7 +4,7 @@ import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { encryptSourceUrl, type ClashSourceEntry } from "../../../lib/clash-link";
 import { getAirportProxyCount } from "../../../lib/clash-config";
 import { createClashLink, getClashProfile, hashToken, listClashLinks, updateClashProfileSource } from "../../../lib/clash-links";
-import { getRawDb } from "../../../../db";
+import { getReadyRawDb } from "../../../../db";
 
 function publicLink(request: NextRequest, item: { id: string; profileId?: string; profile_id?: string; name?: string; token?: string; status: string; createdAt: number; revokedAt?: number | null }) {
   const token = item.token || process.env.CLASH_ACCESS_TOKEN || "";
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
   const token = process.env.CLASH_ACCESS_TOKEN;
   try {
     if (token) {
-      const db = getRawDb();
+      const db = await getReadyRawDb();
       const existing = await db.prepare("SELECT id FROM clash_links WHERE id = 'legacy' LIMIT 1").first();
       if (!existing) await db.prepare("INSERT INTO clash_links (id, name, token, token_hash, encrypted_source, status, created_at) VALUES ('legacy', '旧版订阅链接', ?, ?, '', 'active', ?)").bind(token, await hashToken(token), Date.now()).run();
     }
