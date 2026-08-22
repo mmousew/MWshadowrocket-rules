@@ -115,22 +115,12 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   assert.match(shadowrocket, /^kqs-hk\.kunlun03dns\.com = 54\.95\.1\.133$/m);
 });
 
-test("Shadowrocket host resolution falls back to HTTPS JSON DoH and rejects Fake-IP", async () => {
+test("Shadowrocket does not force a public DNS address when the airport resolver is unavailable", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => {
-    const url = String(input);
-    if (url.startsWith("https://kqs-resolver.example/")) return new Response("", { status: 503 });
-    if (url.startsWith("https://dns.google/resolve")) {
-      return new Response(JSON.stringify({ Answer: [
-        { type: 1, data: "198.18.0.7" },
-        { type: 1, data: "54.95.1.133" },
-      ] }), { status: 200, headers: { "content-type": "application/json" } });
-    }
-    return new Response(JSON.stringify({ Answer: [] }), { status: 200 });
-  };
+  globalThis.fetch = async () => new Response("", { status: 503 });
   try {
     const mappings = await resolveAirportProxyHosts([kqsAirport]);
-    assert.equal(mappings["kqs-hk.kunlun03dns.com"], "54.95.1.133");
+    assert.deepEqual(mappings, {});
   } finally {
     globalThis.fetch = originalFetch;
   }
