@@ -593,6 +593,35 @@ function normalizeShadowrocketConfig(config: string) {
   return [...metadata, ...ordered.flatMap((block) => ["", ...block]), ...remaining.flatMap((block) => ["", ...block])].join("\n").trim() + "\n";
 }
 
+function addShadowrocketAirportDns(config: string, sources: string[]) {
+  const airportDns = readAirportDns(sources);
+  const resolvers = [...new Set([
+    ...airportDns.proxyServerNameserver,
+    ...airportDns.defaultNameserver,
+  ])].filter((item) => !isLocalResolver(item));
+  if (!resolvers.length) return config;
+
+  const lines = config.split(/\r?\n/);
+  let generalStart = lines.findIndex((line) => line.trim().toLowerCase() === "[general]");
+  if (generalStart < 0) {
+    lines.unshift("[General]");
+    generalStart = 0;
+  }
+  const generalEnd = lines.findIndex((line, index) => index > generalStart && /^\s*\[.+\]\s*$/.test(line));
+  const end = generalEnd >= 0 ? generalEnd : lines.length;
+  const general = lines.slice(generalStart + 1, end);
+  const dnsIndex = general.findIndex((line) => /^\s*dns-server\s*=/i.test(line));
+  const existing = dnsIndex >= 0
+    ? general[dnsIndex].slice(general[dnsIndex].indexOf("=") + 1).split(",").map((item) => item.trim()).filter((item) => item && !/^system$/i.test(item))
+    : [];
+  const merged = [...new Set([...resolvers, ...existing])];
+  const dnsLine = `dns-server = ${merged.join(",")}`;
+  if (dnsIndex >= 0) general[dnsIndex] = dnsLine;
+  else general.push(dnsLine);
+  lines.splice(generalStart + 1, end - generalStart - 1, ...general);
+  return lines.join("\n");
+}
+
 function addShadowrocketHostMappings(config: string, hostMappings: Record<string, string>) {
   const entries = Object.entries(hostMappings).filter(([host, address]) => host && address);
   if (!entries.length) return config;
@@ -754,7 +783,8 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   if (proxyStart < 0) {
     const config = normalizeFinalGroupForShadowrocket(`${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`);
     const expanded = expandShadowrocketIncludeAllGroups(config, [...names]);
-    return normalizeShadowrocketConfig(addShadowrocketHostMappings(normalizeShadowrocketPolicyReferences(expanded, [...names]), hostMappings));
+    const normalized = normalizeShadowrocketPolicyReferences(expanded, [...names]);
+    return normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(normalized, sources), hostMappings));
   }
   const end = nextSection > proxyStart ? nextSection : lines.length;
   const config = normalizeFinalGroupForShadowrocket([...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n"));
@@ -762,7 +792,7 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   const normalizedConfig = normalizeShadowrocketPolicyReferences(expandedConfig, [...names]);
   // Shadowrocket does not understand geosite rule references; omit them only from its output.
   const withoutGeosite = normalizedConfig.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n");
-  return normalizeShadowrocketConfig(addShadowrocketHostMappings(withoutGeosite, hostMappings));
+  return normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(withoutGeosite, sources), hostMappings));
 }
 
 export function buildShadowrocketRulesConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}) {

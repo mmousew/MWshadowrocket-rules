@@ -113,6 +113,7 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   assert.match(shadowrocket, /^花云香港 IEPL 1=ss,flower\.example\.com,443,/m);
   assert.match(shadowrocket, /^use-local-host-item-for-proxy = true$/m);
   assert.match(shadowrocket, /^kqs-hk\.kunlun03dns\.com = 54\.95\.1\.133$/m);
+  assert.match(shadowrocket, /^dns-server = https:\/\/kqs-resolver\.example\/dns-query,223\.5\.5\.5$/m);
 });
 
 test("Shadowrocket preserves an airport's UDP relay setting", () => {
