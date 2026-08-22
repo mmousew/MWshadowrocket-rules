@@ -45,6 +45,10 @@ dns:
     - https://doh.example/dns-query
   fallback:
     - https://fallback.example/dns-query
+  fake-ip-filter:
+    - "*"
+    - "+.lan"
+    - "+.local"
 proxies:
   - name: VIP 香港 01
     type: ss
@@ -97,6 +101,9 @@ test("Merged outputs preserve each airport's original proxy server", () => {
     "https://kqs-resolver.example/dns-query",
     "223.5.5.5",
   ]);
+  assert.ok(!clash.dns["fake-ip-filter"].includes("*"));
+  assert.ok(clash.dns["fake-ip-filter"].includes("+.lan"));
+  assert.ok(clash.dns["fake-ip-filter"].includes("+.local"));
 
   const shadowrocket = buildShadowrocketConfig(rules, kqsAirport);
   assert.match(shadowrocket, /^VIP 香港 01=ss,kqs-hk\.kunlun03dns\.com,25101,/m);

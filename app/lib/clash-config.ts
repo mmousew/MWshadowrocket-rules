@@ -141,7 +141,12 @@ function readAirportDns(sources: string[]) {
         list("default-nameserver").forEach((item) => defaultNameserver.add(item));
         list("nameserver").forEach((item) => nameserver.add(item));
         list("fallback").forEach((item) => fallback.add(item));
-        list("fake-ip-filter").forEach((item) => fakeIpFilter.add(item));
+        // A source-level wildcard applies to every domain. Merging it would
+        // let one airport override the DNS behavior of all other airports.
+        list("fake-ip-filter")
+          .map((item) => item.trim())
+          .filter((item) => item !== "*")
+          .forEach((item) => fakeIpFilter.add(item));
         if (!fakeIpRange && typeof dns["fake-ip-range"] === "string") fakeIpRange = dns["fake-ip-range"];
         if (dns["use-hosts"] === true) useHosts = true;
         if (!listen && typeof dns.listen === "string") listen = dns.listen;
