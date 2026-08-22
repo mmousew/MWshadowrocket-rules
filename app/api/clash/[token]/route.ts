@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig, resolveAirportProxyHosts } from "../../../lib/clash-config";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
-import { findClashLink, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
+import { findClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -18,21 +18,48 @@ function getAirportSnapshot() {
   return encoded ? `[Proxy]\n${Buffer.from(encoded, "base64").toString("utf8")}\n` : "";
 }
 
+function configFilename(name: string, extension: "yaml" | "conf") {
+  const base = (name.trim() || "订阅配置")
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+    .replace(/\s+/g, " ")
+    .slice(0, 80)
+    .trim() || "订阅配置";
+  const filename = `${base}.${extension}`;
+  const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "_") || `subscription.${extension}`;
+  const encoded = encodeURIComponent(filename).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `inline; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+}
+
 export async function GET(request: NextRequest, context: { params: Promise<{ token: string }> }) {
   const { token } = await context.params;
   const expectedToken = process.env.CLASH_ACCESS_TOKEN;
   const querySource = request.nextUrl.searchParams.get("source");
   let encryptedSource = querySource;
   let managedLink = false;
+  let profileName = "订阅配置";
   try {
     const record = await findClashLink(token);
     if (record) {
       managedLink = true;
       if (record.status !== "active") return new NextResponse("订阅链接已失效", { status: 404 });
       encryptedSource = record.encrypted_source || null;
+      try {
+        const profile = await getClashProfile(record.profile_id || "default");
+        if (profile?.name?.trim()) profileName = profile.name.trim();
+      } catch {
+        // 文件名不能影响订阅本身的生成；数据库暂时不可用时使用通用名称。
+      }
     }
   } catch {
     // D1 不可用时保留旧版环境变量链接的兼容路径。
+  }
+  if (!managedLink) {
+    try {
+      const profile = await getClashProfile("default");
+      if (profile?.name?.trim()) profileName = profile.name.trim();
+    } catch {
+      // Legacy environment-variable links may not have a profile record.
+    }
   }
   if (!managedLink && (!expectedToken || token !== expectedToken)) return new NextResponse("订阅链接无效", { status: 404 });
 
@@ -105,7 +132,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     return new NextResponse(config, {
       headers: {
         "Content-Type": shadowrocket ? "text/plain; charset=utf-8" : "text/yaml; charset=utf-8",
-        "Content-Disposition": `inline; filename=${shadowrocketRules ? "MW-Shadowrocket-Rules.conf" : shadowrocket ? "MW-Shadowrocket.conf" : "MW-ClashX-Meta.yaml"}`,
+        "Content-Disposition": configFilename(profileName, shadowrocketRules || shadowrocket ? "conf" : "yaml"),
+        "X-MW-Config-Name": encodeURIComponent(profileName),
         // Always return the newest airport/rules merge after a client update.
         // Caching the generated profile can make one airport appear broken after
         // another source has just been fixed.

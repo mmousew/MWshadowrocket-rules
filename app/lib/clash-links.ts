@@ -71,8 +71,8 @@ export async function renameClashLink(id: string, name: string) {
 }
 
 export async function findClashLink(token: string) {
-  return (await getReadyRawDb()).prepare("SELECT id, encrypted_source, status, created_at, revoked_at, deleted_at FROM clash_links WHERE token_hash = ? LIMIT 1")
-    .bind(await hashToken(token)).first<{ id: string; encrypted_source: string; status: ClashLinkStatus; created_at: number; revoked_at: number | null; deleted_at: number | null }>();
+  return (await getReadyRawDb()).prepare("SELECT id, profile_id, encrypted_source, status, created_at, revoked_at, deleted_at FROM clash_links WHERE token_hash = ? LIMIT 1")
+    .bind(await hashToken(token)).first<{ id: string; profile_id: string; encrypted_source: string; status: ClashLinkStatus; created_at: number; revoked_at: number | null; deleted_at: number | null }>();
 }
 
 export async function listClashLinks() {
