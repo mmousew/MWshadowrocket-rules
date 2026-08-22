@@ -100,6 +100,9 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   assert.deepEqual(clash.dns["nameserver-policy"]["+.kunlun03dns.com"], [
     "https://kqs-resolver.example/dns-query",
   ]);
+  assert.deepEqual(clash.dns["proxy-server-nameserver-policy"]["+.kunlun03dns.com"], [
+    "https://kqs-resolver.example/dns-query",
+  ]);
   assert.deepEqual(clash.dns["proxy-server-nameserver"], [
     "https://kqs-resolver.example/dns-query",
     "223.5.5.5",

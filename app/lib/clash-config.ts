@@ -527,6 +527,7 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     ...nameserver.map((item) => `    - ${quote(item)}`),
     "  fallback:",
     ...fallback.map((item) => `    - ${quote(item)}`),
+    ...(nameserverPolicies.length ? ["  proxy-server-nameserver-policy:", ...nameserverPolicies.flatMap(([suffix, resolvers]) => [`    ${quote(`+.${suffix}`)}:`, ...resolvers.map((item) => `      - ${quote(item)}`)])] : []),
     ...(nameserverPolicies.length ? ["  nameserver-policy:", ...nameserverPolicies.flatMap(([suffix, resolvers]) => [`    ${quote(`+.${suffix}`)}:`, ...resolvers.map((item) => `      - ${quote(item)}`)])] : []),
     "  fake-ip-filter:",
     ...[...new Set(["*.lan", "+.local", "localhost.ptlogin2.qq.com", ...airportDns.fakeIpFilter])].map((item) => `    - ${quote(item)}`),
