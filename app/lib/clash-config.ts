@@ -190,6 +190,7 @@ function isLocalResolver(value: string) {
 function readAirportDnsPolicies(sources: string[]) {
   const proxyPolicies = new Map<string, string[]>();
   const nameserverPolicies = new Map<string, string[]>();
+  const safeProxyResolvers = ["223.5.5.5", "119.29.29.29", "1.12.12.12"];
   for (const source of sources) {
     try {
       const parsed = parseYaml(source) as { dns?: unknown } | null;
@@ -213,14 +214,15 @@ function readAirportDnsPolicies(sources: string[]) {
         if (!nameserverPolicies.has(suffix)) nameserverPolicies.set(suffix, resolvers);
       }
       const resolvers = readSourceProxyDnsResolvers(source).filter((item) => !isLocalResolver(item));
-      if (resolvers.length) {
+      const proxyResolvers = resolvers.length ? resolvers : safeProxyResolvers;
+      if (proxyResolvers.length) {
         for (const proxy of parseAirportProxies(source)) {
           const host = String(proxy.server || "").trim().toLowerCase();
           if (!host || /^[0-9a-f:.]+$/i.test(host)) continue;
           const labels = host.split(".").filter(Boolean);
           if (labels.length < 2) continue;
           const suffix = labels.slice(-2).join(".");
-          if (!proxyPolicies.has(suffix)) proxyPolicies.set(suffix, resolvers);
+          if (!proxyPolicies.has(suffix)) proxyPolicies.set(suffix, proxyResolvers);
         }
       }
     } catch {
