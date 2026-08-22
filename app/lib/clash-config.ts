@@ -245,7 +245,15 @@ export function getAirportProxyCount(content: string) {
 }
 
 function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
-  const available = new Set(["DIRECT", "REJECT", "PROXY", ...proxyNames, ...groups.map((group) => group.name)]);
+  const available = new Map<string, string>([
+    ["direct", "DIRECT"],
+    ["reject", "REJECT"],
+    ["proxy", "PROXY"],
+  ]);
+  proxyNames.forEach((name) => available.set(name.trim().toLowerCase(), name));
+  groups.filter((group) => group.name.trim().toLowerCase() !== "proxies").forEach((group) => {
+    available.set(group.name.trim().toLowerCase(), group.name);
+  });
   const converted: Record<string, unknown>[] = [{ name: "PROXY", type: "select", proxies: proxyNames.length ? proxyNames : ["DIRECT"] }];
   for (const group of groups) {
     if (group.name.trim().toLowerCase() === "proxies") continue;
@@ -264,7 +272,10 @@ function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
       converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", proxies: matched.length ? matched : ["DIRECT"] });
       continue;
     }
-    const proxies = group.items.filter((item) => !item.includes("=") && !/^(Traffic|Expire|流量|到期|剩余)\b/i.test(item) && available.has(item)).map((item) => item === "Proxies" ? "PROXY" : item);
+    const proxies = group.items
+      .filter((item) => !item.includes("=") && !/^(Traffic|Expire|流量|到期|剩余)\b/i.test(item))
+      .map((item) => item.trim().toLowerCase() === "proxies" ? "PROXY" : available.get(item.trim().toLowerCase()) || "")
+      .filter(Boolean);
     converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", proxies: proxies.length ? proxies : ["DIRECT"] });
   }
   return converted;
@@ -404,6 +415,13 @@ function expandShadowrocketIncludeAllGroups(config: string, proxyNames: string[]
   if (groupStart < 0) return config;
 
   const allNames = [...new Set(proxyNames.filter(Boolean))];
+  const groupNames = lines.slice(groupStart + 1, nextSection > groupStart ? nextSection : undefined)
+    .map((line) => {
+      const separator = line.indexOf("=");
+      return separator > 0 ? line.slice(0, separator).trim() : "";
+    })
+    .filter(Boolean);
+  const groupNameByKey = new Map(groupNames.map((name) => [name.toLowerCase(), name]));
   return lines.map((raw, index) => {
     if (index <= groupStart || (nextSection > groupStart && index >= nextSection)) return raw;
     const separator = raw.indexOf("=");
@@ -428,7 +446,15 @@ function expandShadowrocketIncludeAllGroups(config: string, proxyNames: string[]
     // Shadowrocket does not expand include-all-proxies=true reliably. Write
     // the actual node names into the group so they are visible in every
     // client, while preserving helper policies such as PROXIES and DIRECT.
-    const extras = values.slice(1).filter((item) => item !== "include-all-proxies=true" && !item.startsWith("policy-regex-filter="));
+    const extras = values.slice(1)
+      .filter((item) => item !== "include-all-proxies=true" && !item.startsWith("policy-regex-filter="))
+      .map((item) => {
+        const key = item.toLowerCase();
+        // Advanced configs often use PROXIES while the actual helper group is
+        // named Proxies. Resolve policy references without case sensitivity.
+        if (key === "proxies") return groupNameByKey.get("proxies") || "PROXY";
+        return groupNameByKey.get(key) || item;
+      });
     const items = [...new Set([...extras, ...matched])];
     return `${left} = ${[kind, ...items].join(",")}`;
   }).join("\n");
