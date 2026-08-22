@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent } from "react";
 import QRCode from "qrcode";
 
-type View = "overview" | "groups" | "rules" | "sets" | "clash" | "conflicts";
+type View = "overview" | "groups" | "rules" | "sets" | "clash" | "airports" | "conflicts";
 type Group = { index: number; name: string; kind: string; items: string[] };
 type Rule = { index: number; type: string; value: string; policy: string; options: string[] };
 type CatalogResult = { name: string; file: string; url: string; source: string };
@@ -52,7 +52,8 @@ const nav: { id: View; label: string }[] = [
   { id: "groups", label: "分组" },
   { id: "rules", label: "域名" },
   { id: "sets", label: "规则" },
-  { id: "clash", label: "订阅" },
+  { id: "clash", label: "私有订阅" },
+  { id: "airports", label: "机场列表" },
   { id: "conflicts", label: "检查" },
 ];
 
@@ -461,6 +462,7 @@ export default function Home() {
         </>}
 
         {view === "clash" && <ClashSubscription />}
+        {view === "airports" && <ClashSubscription mode="airports" />}
 
         {view === "conflicts" && <section className="panel audit"><div className={`auditMark ${conflicts.length ? "warn" : ""}`}>{conflicts.length ? "!" : "✓"}</div><h2>{conflicts.length ? "需要处理后才能保存" : "配置检查通过"}</h2><p>{conflicts.length ? "以下规则需要确认策略名称。" : duplicateRuleCount ? `机场规则中有 ${duplicateRuleCount} 处重复匹配，这是机场原始配置的正常重叠，按规则顺序执行，不阻止保存。` : "代理分组引用与规则顺序均通过检查。"}</p>{conflicts.length > 0 && <ul>{conflicts.map((item) => <li key={item}>{item}</li>)}</ul>}<button className="ghost" onClick={() => setPreview(true)}>查看原始配置</button></section>}
       </section>
@@ -648,14 +650,13 @@ function LegacyClashSubscription() {
 
 void LegacyClashSubscription;
 
-function ClashSubscription() {
+function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports" }) {
   type SourceRecord = { index: number; sourceId: string | null; name: string; kind: "url" | "content"; value: string | null; hidden: boolean; nodes: number | null };
   type ProfileRecord = { id: string; name: string; sourceCount: number; nodeCount: number | null; updatedAt: number; sources?: SourceRecord[] };
   type LinkRecord = { id: string; profileId: string; name: string; url: string; status: "active" | "revoked"; createdAt: number; revokedAt: number | null; legacy?: boolean };
   const [profiles, setProfiles] = useState<ProfileRecord[]>([]);
   const [links, setLinks] = useState<LinkRecord[]>([]);
   const [airportSources, setAirportSources] = useState<AirportSourceRecord[]>([]);
-  const [subscriptionTab, setSubscriptionTab] = useState<"private" | "airports">("private");
   const [airportPickerOpen, setAirportPickerOpen] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
@@ -830,9 +831,9 @@ function ClashSubscription() {
   const availableAirports = (sources: SourceRecord[]) => airportSources.filter((source) => !source.hidden && !sources.some((entry) => entry.sourceId === source.id || (entry.kind === source.kind && source.kind === "url" && entry.value === source.sourceUrl)));
 
   return <section className="clashPanel">
-    <div className="subscriptionHead"><div className="subscriptionTitleTabs"><h2>私有订阅</h2><button type="button" className={subscriptionTab === "airports" ? "tabButton active" : "tabButton"} onClick={() => setSubscriptionTab((value) => value === "airports" ? "private" : "airports")}>{subscriptionTab === "airports" ? "返回私有订阅" : "机场列表"}</button></div>{subscriptionTab === "private" && <button type="button" className="primary" onClick={() => { setNewProfileOpen((value) => !value); setError(""); }}>＋ 新增订阅配置</button>}</div>
+    {mode === "private" && <div className="subscriptionHead"><h2>私有订阅</h2><button type="button" className="primary" onClick={() => { setNewProfileOpen((value) => !value); setError(""); }}>＋ 新增订阅配置</button></div>}
     {error && <div className="clashError">{error}</div>}
-    {subscriptionTab === "airports" ? <AirportList sources={airportSources} onSourcesChange={setAirportSources} onError={setError} /> : <>
+    {mode === "airports" ? <AirportList sources={airportSources} onSourcesChange={setAirportSources} onError={setError} /> : <>
       {newProfileOpen && <form className="profileCreateForm" onSubmit={addProfile}><label>配置备注名称<input value={newProfileName} onChange={(event) => setNewProfileName(event.target.value)} placeholder="例如：我的备用机场" /></label><p className="formHint">新增后在编辑来源里从“机场列表”选择要加入的订阅。</p><div className="profileEditorActions"><button className="primary" type="submit" disabled={busy}>{busy ? "处理中…" : "保存并新增配置"}</button><button className="ghost" type="button" onClick={() => setNewProfileOpen(false)}>取消</button></div></form>}
       <section className="profileList">{profiles.length ? profiles.map((profile) => {
         const profileLinks = links.filter((link) => link.profileId === profile.id || (!link.profileId && profile.id === "default"));
