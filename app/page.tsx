@@ -3,10 +3,11 @@
 import { FormEvent, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent } from "react";
 import QRCode from "qrcode";
 
-type View = "overview" | "groups" | "rules" | "sets" | "clash" | "airports" | "conflicts";
+type View = "overview" | "groups" | "rules" | "sets" | "configs" | "clash" | "airports" | "conflicts";
 type Group = { index: number; name: string; kind: string; items: string[] };
 type Rule = { index: number; type: string; value: string; policy: string; options: string[] };
 type CatalogResult = { name: string; file: string; url: string; source: string };
+type RuleConfigRecord = { id: string; name: string; content: string; status: "active" | "deleted"; created_at: number; updated_at: number; profile_count?: number };
 type Editor =
   | { mode: "group"; index: number | null; name: string; items: string }
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
@@ -67,6 +68,7 @@ const nav: { id: View; label: string }[] = [
   { id: "groups", label: "分组" },
   { id: "rules", label: "域名" },
   { id: "sets", label: "规则" },
+  { id: "configs", label: "方案" },
   { id: "clash", label: "私有订阅" },
   { id: "airports", label: "机场列表" },
   { id: "conflicts", label: "检查" },
@@ -153,6 +155,9 @@ export default function Home() {
   const [branch, setBranch] = useState("rules/initial-region-module");
   const [sourceUrl, setSourceUrl] = useState("https://github.com/mmousew/MWshadowrocket-rules");
   const [saveEnabled, setSaveEnabled] = useState(false);
+  const [ruleConfigs, setRuleConfigs] = useState<RuleConfigRecord[]>([]);
+  const [selectedRuleConfigId, setSelectedRuleConfigId] = useState(() => typeof window === "undefined" ? "default" : new URL(window.location.href).searchParams.get("config") || "default");
+  const [ruleConfigBusy, setRuleConfigBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -181,15 +186,31 @@ export default function Home() {
   }, [view]);
 
   useEffect(() => {
-    fetch("/api/config", { cache: "no-store" })
-      .then(async (response) => {
-        const data = await response.json();
-        if (response.status === 401) { setAuthRequired(true); setLoading(false); return; }
-        if (!response.ok) throw new Error(data.error || "读取配置失败");
-        setContent(data.content); setSha(data.sha); setRepository(data.repository); setBranch(data.branch);
-        setSourceUrl(data.sourceUrl); setSaveEnabled(data.saveEnabled); setLoading(false);
+    const url = new URL(window.location.href);
+    if (selectedRuleConfigId === "default") url.searchParams.delete("config");
+    else url.searchParams.set("config", selectedRuleConfigId);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [selectedRuleConfigId]);
+
+  useEffect(() => {
+    const requestedConfigId = new URL(window.location.href).searchParams.get("config");
+    Promise.all([
+      fetch("/api/config", { cache: "no-store" }),
+      fetch(`/api/rule-config${requestedConfigId ? `?id=${encodeURIComponent(requestedConfigId)}` : ""}`, { cache: "no-store" }),
+    ])
+      .then(async ([configResponse, ruleConfigResponse]) => {
+        const data = await configResponse.json();
+        if (configResponse.status === 401 || ruleConfigResponse.status === 401) { setAuthRequired(true); setLoading(false); return; }
+        if (!configResponse.ok) throw new Error(data.error || "读取配置失败");
+        const ruleConfigData = await ruleConfigResponse.json();
+        if (!ruleConfigResponse.ok) throw new Error(ruleConfigData.error || "读取规则方案失败");
+        const configs = (ruleConfigData.configs || []) as RuleConfigRecord[];
+        const selectedId = ruleConfigData.selectedId || configs[0]?.id || "default";
+        const selected = configs.find((config) => config.id === selectedId) || configs[0];
+        setContent(selected?.content || data.content); setSha(data.sha); setRepository(data.repository); setBranch(data.branch);
+        setSourceUrl(data.sourceUrl); setSaveEnabled(data.saveEnabled); setRuleConfigs(configs); setSelectedRuleConfigId(selected?.id || "default"); setLoading(false);
       })
-      .catch((cause) => { setError(cause.message); setLoading(false); });
+      .catch((cause) => { setError(cause instanceof Error ? cause.message : "读取配置失败"); setLoading(false); });
   }, []);
 
   const parsed = useMemo(() => parseConfig(content), [content]);
@@ -215,7 +236,70 @@ export default function Home() {
   const filteredRuleKey = filteredRules.map((rule) => rule.index).join(",");
   const effectiveSelectedRuleIndexes = selectionKey === filteredRuleKey ? selectedRuleIndexes : filteredRules.map((rule) => rule.index);
 
-  function markContent(next: string) { setContent(next); setDirty(true); setToast("修改已暂存，保存后同步到 GitHub"); }
+  function markContent(next: string) { setContent(next); setDirty(true); setToast(`「${ruleConfigs.find((config) => config.id === selectedRuleConfigId)?.name || "当前方案"}」修改已暂存，保存后生效`); }
+
+  function selectRuleConfig(id: string, openEditor = false) {
+    const config = ruleConfigs.find((item) => item.id === id);
+    if (!config) return;
+    setSelectedRuleConfigId(config.id);
+    setContent(config.content);
+    setDirty(false);
+    setQuery("");
+    setError("");
+    setToast(`已切换到「${config.name}」`);
+    if (openEditor) setView("groups");
+  }
+
+  async function createRuleConfig(name: string) {
+    const safeName = name.trim();
+    if (!safeName) return setError("请输入规则方案名称");
+    setRuleConfigBusy(true); setError("");
+    try {
+      const response = await fetch("/api/rule-config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: safeName, sourceId: selectedRuleConfigId }) });
+      const data = await response.json();
+      if (!response.ok || !data.config) throw new Error(data.error || "新增规则方案失败");
+      setRuleConfigs((current) => [...current, data.config]);
+      setSelectedRuleConfigId(data.config.id);
+      setContent(data.config.content);
+      setDirty(false);
+      setQuery("");
+      setView("groups");
+      setToast(`已新增「${data.config.name}」，现在可以编辑它的分组和规则`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "新增规则方案失败");
+    } finally { setRuleConfigBusy(false); }
+  }
+
+  async function renameRuleConfig(id: string, name: string) {
+    const safeName = name.trim();
+    if (!safeName) return setError("规则方案名称不能为空");
+    try {
+      const response = await fetch("/api/rule-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name: safeName }) });
+      const data = await response.json();
+      if (!response.ok || !data.config) throw new Error(data.error || "保存方案名称失败");
+      setRuleConfigs((current) => current.map((config) => config.id === id ? data.config : config));
+      setToast("方案名称已保存");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "保存方案名称失败");
+    }
+  }
+
+  async function deleteRuleConfig(id: string) {
+    const config = ruleConfigs.find((item) => item.id === id);
+    if (!config || id === "default" || !window.confirm(`删除「${config.name}」？使用它的订阅会自动改用默认规则。`)) return;
+    setRuleConfigBusy(true); setError("");
+    try {
+      const response = await fetch("/api/rule-config", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "删除规则方案失败");
+      const nextConfigs = (data.configs || []) as RuleConfigRecord[];
+      setRuleConfigs(nextConfigs);
+      if (selectedRuleConfigId === id) selectRuleConfig(nextConfigs[0]?.id || "default", true);
+      setToast(`「${config.name}」已删除`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "删除规则方案失败");
+    } finally { setRuleConfigBusy(false); }
+  }
 
   function openNew() {
     if (view === "groups") setEditor({ mode: "group", index: null, name: "", items: "select\nDIRECT" });
@@ -434,10 +518,18 @@ export default function Home() {
     if (conflicts.length) return setView("conflicts");
     setSaving(true); setError("");
     try {
-      const response = await fetch("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content, sha, message: "Update rules from MW Rules manager" }) });
+      let githubSaved = false;
+      if (selectedRuleConfigId === "default" && saveEnabled) {
+        const response = await fetch("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content, sha, message: "Update rules from MW Rules manager" }) });
+        const data = await response.json();
+        if (!response.ok) throw new Error([data.error, ...(data.details || [])].join("\n"));
+        setSha(data.sha || sha); githubSaved = true;
+      }
+      const response = await fetch("/api/rule-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: selectedRuleConfigId, content }) });
       const data = await response.json();
-      if (!response.ok) throw new Error([data.error, ...(data.details || [])].join("\n"));
-      setSha(data.sha || sha); setDirty(false); setToast("已保存到 GitHub，小火箭可以更新配置了");
+      if (!response.ok || !data.config) throw new Error(data.error || "保存规则方案失败");
+      setRuleConfigs((current) => current.map((config) => config.id === selectedRuleConfigId ? data.config : config));
+      setDirty(false); setToast(githubSaved ? "默认方案已保存到 GitHub，订阅更新后即可生效" : "规则方案已保存，绑定它的订阅更新后即可生效");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "保存失败"); }
     finally { setSaving(false); }
   }
@@ -456,7 +548,7 @@ export default function Home() {
       <section className="content">
         <header className="topbar">
           <div className="titleBlock"><div><p className="eyebrow">SHADOWROCKET CONFIGURATION</p><h1>{nav.find((item) => item.id === view)?.label}{view === "rules" && parsed.groups.some((group) => group.name === query) ? ` · ${query}` : ""}</h1></div></div>
-          <div className="topActions"><button className="ghost" onClick={() => setPreview(true)}>预览配置</button>{(["groups", "rules", "sets"] as View[]).includes(view) && <button className="primary" onClick={openNew}>＋ 新增</button>}<button className={`saveButton ${dirty ? "ready" : ""}`} disabled={!dirty || saving} onClick={save}>{saving ? "保存中…" : "保存到 GitHub"}</button></div>
+          <div className="topActions"><button className="ghost" onClick={() => setPreview(true)}>预览配置</button>{(["groups", "rules", "sets"] as View[]).includes(view) && <button className="primary" onClick={openNew}>＋ 新增</button>}{view === "configs" && <button className="primary" onClick={() => setView("groups")}>编辑当前方案</button>}<button className={`saveButton ${dirty ? "ready" : ""}`} disabled={!dirty || saving} onClick={save}>{saving ? "保存中…" : selectedRuleConfigId === "default" && saveEnabled ? "保存到 GitHub" : "保存方案"}</button></div>
         </header>
 
         {error && <div className="errorBanner"><span>!</span><pre>{error}</pre><button onClick={() => setError("")}>×</button></div>}
@@ -498,6 +590,8 @@ export default function Home() {
           ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div><span className="pill">{linkedCount} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div></>
           : <>{viewingFinal && <div className="listNote finalRuleNote">这是系统兜底规则：未匹配到其它规则的流量会进入「{viewingGroup}」分组。它不是重复的代理分组，可通过“节点筛选”配置这个分组使用的节点。</div>}<div className="listPanel">{filteredRules.map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><input className="ruleSelect" type="checkbox" checked={effectiveSelectedRuleIndexes.includes(rule.index)} onChange={() => toggleRuleSelection(rule.index)} aria-label={`选择规则 ${rule.value}`} /><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}</div></>}
         </>}
+
+        {view === "configs" && <RuleConfigManager configs={ruleConfigs} selectedId={selectedRuleConfigId} busy={ruleConfigBusy} onSelect={(id) => selectRuleConfig(id)} onEdit={(id) => selectRuleConfig(id, true)} onCreate={(name) => void createRuleConfig(name)} onRename={(id, name) => void renameRuleConfig(id, name)} onDelete={(id) => void deleteRuleConfig(id)} />}
 
         {view === "clash" && <ClashSubscription />}
         {view === "airports" && <ClashSubscription mode="airports" />}
@@ -688,9 +782,34 @@ function LegacyClashSubscription() {
 
 void LegacyClashSubscription;
 
+function RuleConfigManager({ configs, selectedId, busy, onSelect, onEdit, onCreate, onRename, onDelete }: {
+  configs: RuleConfigRecord[];
+  selectedId: string;
+  busy: boolean;
+  onSelect: (id: string) => void;
+  onEdit: (id: string) => void;
+  onCreate: (name: string) => void;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [newName, setNewName] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  return <section className="panel ruleConfigPanel">
+    <div className="panelHead"><div><h2>规则方案列表</h2><p>每个方案是一整套分组、域名和规则。私有订阅可以分别选择方案，互不覆盖。</p></div><span className="configCount">{configs.length} 个方案</span></div>
+    <div className="ruleConfigHint"><strong>当前方案：{configs.find((config) => config.id === selectedId)?.name || "默认规则"}</strong><span>在“分组、域名、规则”里编辑后，点击右上角保存；只有默认方案会同步到 GitHub。</span></div>
+    <div className="ruleConfigList">{configs.map((config) => <article className={`ruleConfigCard ${config.id === selectedId ? "selected" : ""}`} key={config.id}>
+      <div className="ruleConfigMain"><input value={drafts[config.id] ?? config.name} onChange={(event) => setDrafts((current) => ({ ...current, [config.id]: event.target.value }))} onBlur={() => { const name = (drafts[config.id] ?? config.name).trim(); if (name && name !== config.name) onRename(config.id, name); }} aria-label={`${config.name}方案名称`} /><p>{config.id === "default" ? "默认方案" : "独立方案"} · {config.profile_count || 0} 个订阅使用 · {new Date(config.updated_at).toLocaleString("zh-CN")}</p></div>
+      <div className="ruleConfigActions"><button type="button" className={config.id === selectedId ? "primary" : "ghost"} disabled={busy} onClick={() => onSelect(config.id)}>{config.id === selectedId ? "当前使用" : "使用此方案"}</button><button type="button" className="ghost" disabled={busy} onClick={() => onEdit(config.id)}>编辑规则</button>{config.id !== "default" && <button type="button" className="danger" disabled={busy} onClick={() => onDelete(config.id)}>删除</button>}</div>
+    </article>)}</div>
+    <form className="ruleConfigCreate" onSubmit={(event) => { event.preventDefault(); const name = newName.trim(); if (!name) return; onCreate(name); setNewName(""); }}><label>新增方案名称<input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：工作、备用、家庭" /></label><button type="submit" className="primary" disabled={busy || !newName.trim()}>复制当前方案并新增</button></form>
+  </section>;
+}
+
 function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports" }) {
   type SourceRecord = { index: number; sourceId: string | null; name: string; kind: "url" | "content"; value: string | null; hidden: boolean; nodes: number | null };
-  type ProfileRecord = { id: string; name: string; sourceCount: number; nodeCount: number | null; updatedAt: number; sources?: SourceRecord[] };
+  type ProfileRecord = { id: string; name: string; ruleConfigId: string; ruleConfigName: string; sourceCount: number; nodeCount: number | null; updatedAt: number; sources?: SourceRecord[] };
+  type RuleConfigOption = { id: string; name: string };
   type LinkRecord = { id: string; profileId: string; name: string; url: string; status: "active" | "revoked"; createdAt: number; revokedAt: number | null; legacy?: boolean };
   const [profiles, setProfiles] = useState<ProfileRecord[]>([]);
   const [links, setLinks] = useState<LinkRecord[]>([]);
@@ -707,28 +826,45 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
   const [qrCode, setQrCode] = useState("");
   const [qrLink, setQrLink] = useState("");
   const [qrLabel, setQrLabel] = useState("");
+  const [ruleConfigs, setRuleConfigs] = useState<RuleConfigOption[]>([]);
 
   useEffect(() => { void loadPage(); }, []);
 
   async function loadPage() {
     try {
-      const [profileResponse, linkResponse] = await Promise.all([
+      const [profileResponse, linkResponse, ruleConfigResponse] = await Promise.all([
         fetch("/api/clash/profile", { cache: "no-store" }),
         fetch("/api/clash/link", { cache: "no-store" }),
+        fetch("/api/rule-config", { cache: "no-store" }),
       ]);
       const airportResponse = await fetch("/api/clash/airport", { cache: "no-store" });
       const profileData = await profileResponse.json();
       const linkData = await linkResponse.json();
+      const ruleConfigData = await ruleConfigResponse.json();
       const airportData = await airportResponse.json();
       if (!profileResponse.ok) throw new Error(profileData.error || "读取订阅配置失败");
       if (!linkResponse.ok) throw new Error(linkData.error || "读取订阅链接失败");
+      if (!ruleConfigResponse.ok) throw new Error(ruleConfigData.error || "读取规则方案失败");
       if (!airportResponse.ok) throw new Error(airportData.error || "读取机场列表失败");
       setProfiles(profileData.profiles || []);
       setLinks(linkData.links || []);
+      setRuleConfigs((ruleConfigData.configs || []).map((config: RuleConfigRecord) => ({ id: config.id, name: config.name })));
       setAirportSources(airportData.sources || []);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "读取订阅配置失败");
     }
+  }
+
+  async function changeProfileRuleConfig(profile: ProfileRecord, ruleConfigId: string) {
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/clash/profile", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: profile.id, ruleConfigId }) });
+      const data = await response.json();
+      if (!response.ok || !data.profile) throw new Error(data.error || "保存规则方案选择失败");
+      setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, ruleConfigId: data.profile.ruleConfigId, ruleConfigName: data.profile.ruleConfigName } : item));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "保存规则方案选择失败");
+    } finally { setBusy(false); }
   }
 
   function updateProfileSources(profileId: string, sources: SourceRecord[]) {
@@ -831,13 +967,6 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
     else setLinks((current) => current.map((item) => item.id === id ? { ...item, status: "revoked" } : item));
   }
 
-  async function renameLink(id: string, name: string) {
-    const response = await fetch(`/api/clash/link/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "rename", name }) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "保存链接备注失败");
-    setLinks((current) => current.map((item) => item.id === id ? { ...item, name: name.trim() || "订阅链接" } : item));
-  }
-
   async function copyLink(value: string) {
     await navigator.clipboard.writeText(value); setCopied(true); window.setTimeout(() => setCopied(false), 1800);
   }
@@ -892,7 +1021,7 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
         const profileLinks = links.filter((link) => link.profileId === profile.id || (!link.profileId && profile.id === "default"));
         const editing = editorProfileId === profile.id;
         return <article className="profileCard" key={profile.id}>
-          <div className="profileCardHead"><div className="profileCardTitle"><input value={profile.name} onChange={(event) => setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, name: event.target.value } : item))} onBlur={() => { const name = profile.name.trim() || "订阅配置"; void fetch("/api/clash/profile", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: profile.id, name }) }).catch(() => setError("保存配置名称失败")); }} aria-label="订阅配置名称" /><p>{profile.sourceCount} 个来源 · {profile.nodeCount == null ? "节点数待更新" : "约 " + profile.nodeCount + " 个节点"} · {profileLinks.length} 条链接</p></div><div className="profileCardHeadActions"><button type="button" className="ghost" disabled={busy || profile.sourceCount === 0} onClick={() => void createNewLink(profile)}>＋ 生成新链接</button><button type="button" className="ghost" disabled={busy || profile.sourceCount === 0} onClick={() => void refreshProfile(profile)}>更新当前配置</button><button type="button" className={editing ? "ghost" : "primary"} onClick={() => void openEditor(profile)}>{editing ? "收起编辑器" : "编辑来源"}</button></div></div>
+          <div className="profileCardHead"><div className="profileCardTitle"><input value={profile.name} onChange={(event) => setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, name: event.target.value } : item))} onBlur={() => { const name = profile.name.trim() || "订阅配置"; void fetch("/api/clash/profile", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: profile.id, name }) }).catch(() => setError("保存配置名称失败")); }} aria-label="订阅配置名称" /><p>{profile.sourceCount} 个来源 · {profile.nodeCount == null ? "节点数待更新" : "约 " + profile.nodeCount + " 个节点"} · {profileLinks.length} 条链接</p><label className="profileRuleConfig"><span>规则方案</span><select value={profile.ruleConfigId || "default"} disabled={busy || !ruleConfigs.length} onChange={(event) => void changeProfileRuleConfig(profile, event.target.value)}>{ruleConfigs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label></div><div className="profileCardHeadActions"><button type="button" className="ghost" disabled={busy || profile.sourceCount === 0} onClick={() => void createNewLink(profile)}>＋ 生成新链接</button><button type="button" className="ghost" disabled={busy || profile.sourceCount === 0} onClick={() => void refreshProfile(profile)}>更新当前配置</button><button type="button" className={editing ? "ghost" : "primary"} onClick={() => void openEditor(profile)}>{editing ? "收起编辑器" : "编辑来源"}</button></div></div>
           {editing && <section className="profileEditor"><div className="profileEditorHead"><div><h4>编辑「{profile.name}」的来源</h4><p>这里只能选择机场列表中的来源；移除只影响当前配置。</p></div><button type="button" className="ghost" onClick={() => { setEditorProfileId(null); setAirportPickerOpen(false); }}>关闭</button></div>
             <div className="sourceList">{editorSources.length ? editorSources.map((source) => <div className={`sourceRow ${source.hidden ? "sourceHidden" : ""}`} key={`${profile.id}-${source.index}`}><div><strong>{source.name}</strong><small>{source.kind === "content" ? `本地文件 · ${source.nodes ?? 0} 个节点` : source.value || "在线订阅地址"}</small></div><button type="button" className="danger" disabled={busy} onClick={() => void removeSource(source.index)}>从当前配置移除</button></div>) : <p className="clashLoading">当前还没有来源，请从机场列表选择。</p>}</div>
             <div className="sourceAddForm"><button className="primary addSourceButton" type="button" onClick={() => setAirportPickerOpen((value) => !value)} disabled={busy}>{airportPickerOpen ? "收起机场列表" : "＋ 从机场列表添加"}</button>{airportPickerOpen && <div className="airportPicker">{availableAirports(editorSources).map((source) => <div className="airportPickerRow" key={source.id}><div><strong>{source.name}</strong><small>{source.kind === "url" ? source.sourceUrl : "本地 YAML 文件"} · {source.nodeCount == null ? "节点数待更新" : source.nodeCount + " 个节点"}</small></div><button type="button" className="ghost" disabled={busy} onClick={() => void addAirportToProfile(source)}>添加</button></div>)}{availableAirports(editorSources).length === 0 && <p className="clashLoading">机场列表中没有可添加的订阅，请先去机场列表新增。</p>}</div>}</div>

@@ -3,7 +3,8 @@ import { getGitHubLogin } from "../../../lib/github-auth";
 import { encryptSourceUrl, parseSourceEntries, type ClashSourceEntry } from "../../../lib/clash-link";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { getAirportProxyCount } from "../../../lib/clash-config";
-import { createClashProfile, getClashProfile, getSourceSnapshot, listClashProfiles, renameClashProfile } from "../../../lib/clash-links";
+import { createClashProfile, getClashProfile, getSourceSnapshot, listClashProfiles, renameClashProfile, updateClashProfileRuleConfig } from "../../../lib/clash-links";
+import { getRuleConfig } from "../../../lib/rule-configs";
 
 function sourceName(entry: ClashSourceEntry, index: number) {
   if (entry.name?.trim()) return entry.name.trim();
@@ -16,10 +17,12 @@ async function publicSources(value: string) {
   return Promise.all(entries.map(async (entry, index) => ({ index, sourceId: entry.sourceId || null, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null })));
 }
 
-async function publicProfile(profile: { id: string; name: string; encrypted_source: string; status: string; created_at: number; updated_at: number }) {
+async function publicProfile(profile: { id: string; name: string; encrypted_source: string; rule_config_id?: string; status: string; created_at: number; updated_at: number }) {
   const sources = await publicSources(profile.encrypted_source);
   const nodeCount = sources.every((item) => item.nodes !== null) ? sources.reduce((total, item) => total + (item.nodes || 0), 0) : null;
-  return { id: profile.id, name: profile.name || "订阅配置", sourceCount: sources.length, nodeCount, updatedAt: profile.updated_at, sources };
+  const ruleConfigId = profile.rule_config_id || "default";
+  const ruleConfig = await getRuleConfig(ruleConfigId);
+  return { id: profile.id, name: profile.name || "订阅配置", ruleConfigId, ruleConfigName: ruleConfig?.name || "默认规则", sourceCount: sources.length, nodeCount, updatedAt: profile.updated_at, sources };
 }
 
 export async function GET(request: NextRequest) {
@@ -56,7 +59,7 @@ export async function POST(request: NextRequest) {
       sourceUrls = (body.sourceUrls || body.sourceUrl?.split(/\r?\n/) || []).map((url) => url.trim()).filter(Boolean);
     }
     if (!sourceUrls.length && !uploaded.length) {
-      const profile = await createClashProfile(name || "订阅配置", await encryptSourceUrl([]));
+      const profile = await createClashProfile(name || "订阅配置", await encryptSourceUrl([]), "default");
       return NextResponse.json({ profile: await publicProfile(profile), warning: null });
     }
     const settled = await Promise.allSettled(sourceUrls.map((url) => fetchAirportSubscription(url)));
@@ -64,7 +67,7 @@ export async function POST(request: NextRequest) {
     const failed = settled.flatMap((item, index) => item.status === "rejected" ? [{ host: (() => { try { return new URL(sourceUrls[index]).hostname; } catch { return "地址格式错误"; } })(), reason: item.reason instanceof Error ? item.reason.message : "读取失败" }] : []);
     if (!successful.length && !uploaded.length) throw new Error(failed.map((item) => `${item.host}：${item.reason}`).join("；") || "所有机场订阅都读取失败");
     const entries: ClashSourceEntry[] = [...successful, ...uploaded.map((item) => ({ kind: "content" as const, value: item.content, name: item.name }))];
-    const profile = await createClashProfile(name, await encryptSourceUrl(entries));
+    const profile = await createClashProfile(name, await encryptSourceUrl(entries), "default");
     return NextResponse.json({ profile: await publicProfile(profile), warning: failed.length ? `以下订阅读取失败：${failed.map((item) => `${item.host}（${item.reason}）`).join("、")}；其余来源已保存。` : null });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "新增订阅配置失败" }, { status: 422 });
@@ -74,12 +77,16 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { id?: string; name?: string };
+    const body = await request.json() as { id?: string; name?: string; ruleConfigId?: string };
     const id = String(body.id || "").trim();
     if (!id) throw new Error("订阅配置不存在");
     const profile = await getClashProfile(id);
     if (!profile) throw new Error("订阅配置不存在");
-    await renameClashProfile(id, typeof body.name === "string" ? body.name : profile.name);
+    if (typeof body.name === "string") await renameClashProfile(id, body.name);
+    if (typeof body.ruleConfigId === "string") {
+      if (body.ruleConfigId !== "default" && !await getRuleConfig(body.ruleConfigId)) throw new Error("所选规则方案不存在");
+      await updateClashProfileRuleConfig(id, body.ruleConfigId);
+    }
     const updated = await getClashProfile(id);
     return NextResponse.json({ profile: updated ? await publicProfile(updated) : null });
   } catch (error) {

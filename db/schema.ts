@@ -4,10 +4,20 @@ export const clashProfiles = sqliteTable("clash_profiles", {
   id: text("id").primaryKey(),
   name: text("name").notNull().default("订阅配置"),
   encryptedSource: text("encrypted_source").notNull().default(""),
+  ruleConfigId: text("rule_config_id").notNull().default("default"),
   status: text("status").notNull().default("active"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
-}, (table) => ({ statusIdx: index("clash_profiles_status_idx").on(table.status) }));
+}, (table) => ({ statusIdx: index("clash_profiles_status_idx").on(table.status), ruleConfigIdx: index("clash_profiles_rule_config_idx").on(table.ruleConfigId) }));
+
+export const ruleConfigs = sqliteTable("rule_configs", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().default("默认规则"),
+  content: text("content").notNull().default(""),
+  status: text("status").notNull().default("active"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => ({ statusIdx: index("rule_configs_status_idx").on(table.status) }));
 
 export const clashLinks = sqliteTable("clash_links", {
   id: text("id").primaryKey(),

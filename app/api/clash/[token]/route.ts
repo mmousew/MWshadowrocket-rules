@@ -3,6 +3,7 @@ import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
+import { getRuleConfig } from "../../../lib/rule-configs";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -20,7 +21,7 @@ function getAirportSnapshot() {
 
 function configFilename(name: string, extension: "yaml" | "conf") {
   const base = (name.trim() || "订阅配置")
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+    .replace(new RegExp("[\\\\/:*?\\\"<>|\\\\u0000-\\\\u001f]", "g"), "_")
     .replace(/\s+/g, " ")
     .slice(0, 80)
     .trim() || "订阅配置";
@@ -37,6 +38,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
   let encryptedSource = querySource;
   let managedLink = false;
   let profileName = "订阅配置";
+  let ruleConfigId = "default";
   try {
     const record = await findClashLink(token);
     if (record) {
@@ -46,6 +48,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       try {
         const profile = await getClashProfile(record.profile_id || "default");
         if (profile?.name?.trim()) profileName = profile.name.trim();
+        if (profile?.rule_config_id?.trim()) ruleConfigId = profile.rule_config_id.trim();
       } catch {
         // 文件名不能影响订阅本身的生成；数据库暂时不可用时使用通用名称。
       }
@@ -86,17 +89,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     const shadowrocketRules = requestedFormat === "shadowrocket-rules";
     const shadowrocket = shadowrocketRules || requestedFormat === "shadowrocket" || /shadowrocket/i.test(userAgent);
     const subscriptionClient = shadowrocket ? "shadowrocket" as const : "clash" as const;
-    const [ruleResponse, airportResult] = await Promise.all([
-      fetch(`${API_URL}?ref=${encodeURIComponent(BRANCH)}`, {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "mw-clash-subscription",
-          ...(process.env.GITHUB_RULES_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_RULES_TOKEN}` } : {}),
-        },
-        cache: "no-store",
-      }),
-      Promise.allSettled(airportUrls.map(async (url) => {
+    let ruleContent = "";
+    try { ruleContent = (await getRuleConfig(ruleConfigId))?.content || ""; } catch { /* 兼容旧数据库/旧链接，继续读取 GitHub */ }
+    const airportResult = await Promise.allSettled(airportUrls.map(async (url) => {
         try {
           const fetched = await fetchAirportSubscription(url, subscriptionClient);
           try { await saveSourceSnapshot(url, fetched.content, fetched.nodeCount, subscriptionClient); } catch { /* 快照写入失败不影响本次在线更新 */ }
@@ -111,12 +106,22 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
         content: [...inlineContent, ...results.flatMap((result) => result.status === "fulfilled" ? [result.value.content] : [])],
         liveCount: results.filter((result) => result.status === "fulfilled" && result.value.kind === "live").length,
         snapshotCount: results.filter((result) => result.status === "fulfilled" && result.value.kind === "snapshot").length,
-      })),
-    ]);
-    if (!ruleResponse.ok) throw new Error(`读取 GitHub 规则失败（${ruleResponse.status}）`);
-    const file = await ruleResponse.json() as GitHubFile;
-    if (!file.content) throw new Error(file.message || "GitHub 规则内容为空");
-    const ruleContent = Buffer.from(file.content.replace(/\n/g, ""), "base64").toString("utf8");
+      }));
+    if (!ruleContent) {
+      const ruleResponse = await fetch(`${API_URL}?ref=${encodeURIComponent(BRANCH)}`, {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "mw-clash-subscription",
+          ...(process.env.GITHUB_RULES_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_RULES_TOKEN}` } : {}),
+        },
+        cache: "no-store",
+      });
+      if (!ruleResponse.ok) throw new Error(`读取规则方案失败，且 GitHub 备用读取失败（${ruleResponse.status}）`);
+      const file = await ruleResponse.json() as GitHubFile;
+      if (!file.content) throw new Error(file.message || "规则方案内容为空");
+      ruleContent = Buffer.from(file.content.replace(/\n/g, ""), "base64").toString("utf8");
+    }
     const liveAirportContent = airportResult.content;
     const airportContent = liveAirportContent.length ? liveAirportContent : (encryptedSource ? [] : [getAirportSnapshot()]);
     if (!airportContent.length || !airportContent[0]) throw new Error("机场在线地址暂时不可用，且没有安全节点快照");

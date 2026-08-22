@@ -50,6 +50,13 @@
       "when": 1787331961153,
       "tag": "0006_past_maximus",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1787418244127,
+      "tag": "0007_curved_albert_cleary",
+      "breakpoints": true
     }
   ]
 }
