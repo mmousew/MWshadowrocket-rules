@@ -25,6 +25,7 @@ export type SubscriptionClient = "clash" | "shadowrocket";
 async function downloadSubscription(url: string, client: SubscriptionClient = "clash") {
   const relayUrl = process.env.AIRPORT_RELAY_URL;
   const relaySecret = process.env.AIRPORT_RELAY_SECRET;
+  const remoteHostIsIp = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(new URL(url).hostname);
   async function fetchViaRelay() {
     const relayResponse = await fetch(relayUrl!, {
       method: "POST",
@@ -35,7 +36,12 @@ async function downloadSubscription(url: string, client: SubscriptionClient = "c
     if (!relayResponse.ok) throw new Error(`机场订阅读取失败（${relayResponse.status}）`);
     return relayResponse.text();
   }
-  if (relayUrl && relaySecret && new URL(url).protocol === "http:") return fetchViaRelay();
+  // Public HTTPS subscriptions on a bare IP often use a certificate issued
+  // for a hostname. The client can still read them, but a Worker fetch may
+  // reject the certificate before the airport can return its native format.
+  // Use the existing controlled relay for Shadowrocket IP sources only; Clash
+  // keeps its original direct-fetch path and DNS handling.
+  if (relayUrl && relaySecret && (new URL(url).protocol === "http:" || client === "shadowrocket" && remoteHostIsIp)) return fetchViaRelay();
   const clientHeaders = client === "shadowrocket"
     ? { "User-Agent": "Shadowrocket", Accept: "text/plain,text/yaml,application/yaml,*/*" }
     : { "User-Agent": "clash.meta", Accept: "text/yaml,text/plain,application/yaml,*/*" };
