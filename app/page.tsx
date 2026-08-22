@@ -63,6 +63,7 @@ function parseConfig(content: string) {
   const ruleStart = lines.findIndex((line) => line.trim() === "[Rule]");
   const groups: Group[] = [];
   const rules: Rule[] = [];
+  let finalRule: Rule | null = null;
   lines.forEach((raw, index) => {
     if (index > groupStart && index < ruleStart) {
       const match = raw.match(/^\s*([^#=]+?)\s*=\s*(.+)$/);
@@ -73,10 +74,14 @@ function parseConfig(content: string) {
     }
     if (index > ruleStart && raw.trim() && !raw.trim().startsWith("#")) {
       const parts = splitRuleLine(raw);
+      if (parts[0] === "FINAL" && parts[1]) {
+        finalRule = { index, type: "FINAL", value: "", policy: parts[1], options: parts.slice(2) };
+        return;
+      }
       if (parts.length >= 3) rules.push({ index, type: parts[0], value: parts[1], policy: parts[2], options: parts.slice(3) });
     }
   });
-  return { lines, groups, rules, groupStart, ruleStart };
+  return { lines, groups, rules, finalRule, groupStart, ruleStart };
 }
 
 function getConflicts(groups: Group[], rules: Rule[]) {
@@ -166,15 +171,24 @@ export default function Home() {
   }, []);
 
   const parsed = useMemo(() => parseConfig(content), [content]);
-  const conflicts = useMemo(() => getConflicts(parsed.groups, parsed.rules), [parsed.groups, parsed.rules]);
+  const conflicts = useMemo(() => {
+    const issues = getConflicts(parsed.groups, parsed.rules);
+    if (parsed.finalRule && !BUILTINS.includes(parsed.finalRule.policy) && !parsed.groups.some((group) => group.name === parsed.finalRule?.policy)) {
+      issues.push(`FINAL 引用了不存在的策略「${parsed.finalRule.policy}」`);
+    }
+    return Array.from(new Set(issues));
+  }, [parsed.groups, parsed.rules, parsed.finalRule]);
   const duplicateRuleCount = useMemo(() => getDuplicateRuleCount(parsed.rules), [parsed.rules]);
   const ruleSets = useMemo(() => parsed.rules.filter((rule) => rule.type === "RULE-SET"), [parsed.rules]);
   const domainRules = useMemo(() => parsed.rules.filter((rule) => rule.type !== "RULE-SET" && rule.type !== "FINAL"), [parsed.rules]);
   const policies = useMemo(() => [...parsed.groups.map((group) => group.name), ...BUILTINS], [parsed.groups]);
+  const ruleCountForPolicy = (policy: string) => parsed.rules.filter((rule) => rule.policy === policy).length + (parsed.finalRule?.policy === policy ? 1 : 0);
   const filteredGroups = parsed.groups.filter((group) => `${group.name} ${group.items.join(" ")}`.toLowerCase().includes(query.toLowerCase()));
   const viewingGroup = view === "rules" && parsed.groups.some((group) => group.name === query) ? query : "";
   const activeRules = viewingGroup ? parsed.rules.filter((rule) => rule.policy === viewingGroup) : view === "sets" ? ruleSets : domainRules;
   const filteredRules = activeRules.filter((rule) => viewingGroup || `${rule.type} ${rule.value} ${rule.policy}`.toLowerCase().includes(query.toLowerCase()));
+  const viewingFinal = Boolean(viewingGroup && parsed.finalRule?.policy === viewingGroup);
+  const visibleRuleCount = filteredRules.length + (viewingFinal ? 1 : 0);
   const filteredRuleKey = filteredRules.map((rule) => rule.index).join(",");
   const effectiveSelectedRuleIndexes = selectionKey === filteredRuleKey ? selectedRuleIndexes : filteredRules.map((rule) => rule.index);
 
@@ -290,7 +304,8 @@ export default function Home() {
               return `${left.trim()} = ${tokens.join(",")}`;
             }
             const parts = raw.split(",");
-            if (parts[2]?.trim() === oldName) parts[2] = name;
+            if (parts[0]?.trim() === "FINAL" && parts[1]?.trim() === oldName) parts[1] = name;
+            else if (parts[2]?.trim() === oldName) parts[2] = name;
             return parts.join(",");
           });
           next = nextLines.join("\n");
@@ -374,7 +389,7 @@ export default function Home() {
   }
 
   function removeGroup(group: Group) {
-    const used = parsed.rules.some((rule) => rule.policy === group.name) || parsed.groups.some((item) => item.index !== group.index && item.items.includes(group.name));
+    const used = parsed.finalRule?.policy === group.name || parsed.rules.some((rule) => rule.policy === group.name) || parsed.groups.some((item) => item.index !== group.index && item.items.includes(group.name));
     if (used) return setError(`「${group.name}」仍被其他规则或分组引用，不能直接删除`);
     setDeleteTarget({ kind: "group", group });
   }
@@ -426,14 +441,14 @@ export default function Home() {
 
         {view === "overview" && <>
           <div className={`notice ${conflicts.length ? "warning" : ""}`}><span>{conflicts.length ? "!" : "✓"}</span><div><strong>{conflicts.length ? `发现 ${conflicts.length} 个问题` : "配置状态正常"}</strong><p>{conflicts.length ? "有规则引用了不存在的策略，请先处理。" : duplicateRuleCount ? `机场原始规则有 ${duplicateRuleCount} 处重叠，按文件顺序执行，不影响保存。` : saveEnabled ? "已连接 GitHub，可直接编辑并保存。" : "已连接只读数据，配置写入凭据后即可在线保存。"}</p></div><button onClick={() => setView("conflicts")}>查看检查结果</button></div>
-          <section className="metrics"><article><span>国家与节点组</span><strong>{parsed.groups.filter((group) => group.items.some((item) => item.startsWith("policy-regex-filter"))).length}</strong><small>动态匹配机场节点</small></article><article><span>全部分组</span><strong>{parsed.groups.length}</strong><small>国家、服务与策略</small></article><article><span>有效规则</span><strong>{parsed.rules.length.toLocaleString()}</strong><small>按优先级顺序执行</small></article><article><span>规则冲突</span><strong className={conflicts.length ? "bad" : "ok"}>{conflicts.length}</strong><small>{duplicateRuleCount ? `另有 ${duplicateRuleCount} 处重叠提示` : "保存前自动检查"}</small></article></section>
-          <section className="panel"><div className="panelHead"><div><h2>常用分组</h2><p>节点筛选和分流规则分别管理，但会在这里汇总显示。</p></div><button className="textButton" onClick={() => setView("groups")}>查看全部 →</button></div><div className="groupGrid">{parsed.groups.filter((group) => ["德国", "Google", "PayPal"].includes(group.name)).map((group, i) => <GroupCard key={group.name} group={group} ruleCount={parsed.rules.filter((rule) => rule.policy === group.name).length} tone={["mint", "blue", "amber"][i]} onEdit={() => editGroup(group)} onRules={() => showGroupRules(group)} />)}</div></section>
+          <section className="metrics"><article><span>国家与节点组</span><strong>{parsed.groups.filter((group) => group.items.some((item) => item.startsWith("policy-regex-filter"))).length}</strong><small>动态匹配机场节点</small></article><article><span>全部分组</span><strong>{parsed.groups.length}</strong><small>国家、服务与策略</small></article><article><span>有效规则</span><strong>{(parsed.rules.length + (parsed.finalRule ? 1 : 0)).toLocaleString()}</strong><small>包含最后的兜底规则</small></article><article><span>规则冲突</span><strong className={conflicts.length ? "bad" : "ok"}>{conflicts.length}</strong><small>{duplicateRuleCount ? `另有 ${duplicateRuleCount} 处重叠提示` : "保存前自动检查"}</small></article></section>
+          <section className="panel"><div className="panelHead"><div><h2>常用分组</h2><p>节点筛选和分流规则分别管理，但会在这里汇总显示。</p></div><button className="textButton" onClick={() => setView("groups")}>查看全部 →</button></div><div className="groupGrid">{parsed.groups.filter((group) => ["德国", "Google", "PayPal", parsed.finalRule?.policy].includes(group.name)).map((group, i) => <GroupCard key={group.name} group={group} ruleCount={ruleCountForPolicy(group.name)} tone={["mint", "blue", "amber", "rose"][i]} onEdit={() => editGroup(group)} onRules={() => showGroupRules(group)} />)}</div></section>
           <section className="panel compact"><div className="panelHead"><div><h2>工作方式</h2><p>每次保存先检查冲突，再生成一条可追溯的 GitHub 提交。</p></div></div><div className="activity"><span className="activityIcon">↻</span><div><strong>在线配置与小火箭保持同一来源</strong><p>保存后在设备上更新配置即可生效</p></div><a href={sourceUrl} target="_blank" rel="noreferrer">打开仓库</a></div></section>
         </>}
 
         {(view === "groups" || view === "rules" || view === "sets") && <>
-          <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label>{view !== "groups" && query.trim() && filteredRules.length > 0 && <div className="bulkTransfer"><label className="selectAll"><input type="checkbox" checked={effectiveSelectedRuleIndexes.length === filteredRules.length} onChange={(event) => { setSelectionKey(filteredRuleKey); setSelectedRuleIndexes(event.target.checked ? filteredRules.map((rule) => rule.index) : []); }} />全选</label><span>转移到</span><select value={bulkTargetPolicy || policies[0] || ""} onChange={(event) => setBulkTargetPolicy(event.target.value)} aria-label="批量转移目标分组">{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><button type="button" onClick={() => transferFilteredRules(bulkTargetPolicy || policies[0] || "")}>转移选中 {effectiveSelectedRuleIndexes.length} 条</button></div>}<span>{view === "groups" ? filteredGroups.length : filteredRules.length} 项</span></div>
-          {view === "groups" ? <><p className={`dragHelp ${query ? "disabled" : ""}`}>{query ? "清空搜索后可以拖拽调整完整分组顺序" : "按住左侧或整行拖动排序；也可以用上移/下移"}</p><div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); return <div
+          <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label>{view !== "groups" && query.trim() && filteredRules.length > 0 && <div className="bulkTransfer"><label className="selectAll"><input type="checkbox" checked={effectiveSelectedRuleIndexes.length === filteredRules.length} onChange={(event) => { setSelectionKey(filteredRuleKey); setSelectedRuleIndexes(event.target.checked ? filteredRules.map((rule) => rule.index) : []); }} />全选</label><span>转移到</span><select value={bulkTargetPolicy || policies[0] || ""} onChange={(event) => setBulkTargetPolicy(event.target.value)} aria-label="批量转移目标分组">{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><button type="button" onClick={() => transferFilteredRules(bulkTargetPolicy || policies[0] || "")}>转移选中 {effectiveSelectedRuleIndexes.length} 条</button></div>}<span>{view === "groups" ? filteredGroups.length : visibleRuleCount} 项</span></div>
+          {view === "groups" ? <><p className={`dragHelp ${query ? "disabled" : ""}`}>{query ? "清空搜索后可以拖拽调整完整分组顺序" : "按住左侧或整行拖动排序；也可以用上移/下移"}</p><div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); const isFinalGroup = parsed.finalRule?.policy === group.name; const linkedCount = linked.length + (isFinalGroup ? 1 : 0); return <div
             className={`listRow groupListRow ${draggingGroup === group.name ? "dragging" : ""} ${dragTargetGroup === group.name && draggingGroup !== group.name ? "dropTarget" : ""}`}
             data-group-name={group.name}
             key={`${group.index}-${group.name}`}
@@ -457,8 +472,8 @@ export default function Home() {
             onPointerUp={() => finishGroupDrag()}
             onPointerCancel={() => finishGroupDrag("", "")}
             onKeyDown={(event) => moveGroupWithKeyboard(event, group)}
-          ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div><span className="pill">{linked.length} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div></>
-          : <div className="listPanel">{filteredRules.map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><input className="ruleSelect" type="checkbox" checked={effectiveSelectedRuleIndexes.includes(rule.index)} onChange={() => toggleRuleSelection(rule.index)} aria-label={`选择规则 ${rule.value}`} /><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}</div>}
+          ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div><span className="pill">{linkedCount} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div></>
+          : <>{viewingFinal && <div className="listNote finalRuleNote">这是系统兜底规则：未匹配到其它规则的流量会进入「{viewingGroup}」分组。它不是重复的代理分组，可通过“节点筛选”配置这个分组使用的节点。</div>}<div className="listPanel">{filteredRules.map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><input className="ruleSelect" type="checkbox" checked={effectiveSelectedRuleIndexes.includes(rule.index)} onChange={() => toggleRuleSelection(rule.index)} aria-label={`选择规则 ${rule.value}`} /><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}</div></>}
         </>}
 
         {view === "clash" && <ClashSubscription />}
