@@ -399,6 +399,13 @@ function parseLinkSubscription(content: string) {
   return links.flatMap((link, index) => /^ss:\/\//i.test(link) ? [parseSsLink(link, index)].filter((proxy): proxy is ClashProxy => Boolean(proxy)) : []);
 }
 
+function isNativeShadowrocketSource(content: string) {
+  const trimmed = content.trim();
+  if (/^\s*\[Proxy\]/mi.test(trimmed) || /(?:^|\r?\n)\s*ss:\/\//i.test(trimmed)) return true;
+  const decoded = /^([A-Za-z0-9+/_=-]+\s*)+$/.test(trimmed) ? decodeLooseBase64(trimmed) : "";
+  return /(?:^|\r?\n)\s*ss:\/\//i.test(decoded);
+}
+
 export function parseAirportProxies(content: string): ClashProxy[] {
   const shadowrocket = parseShadowrocketProxies(content);
   const clash = shadowrocket.length ? [] : parseClashProxies(content);
@@ -819,7 +826,14 @@ function normalizeShadowrocketPolicyReferences(config: string, proxyNames: strin
 }
 
 export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}) {
-  const sources = Array.isArray(airportContent) ? airportContent : [airportContent];
+  const rawSources = Array.isArray(airportContent) ? airportContent : [airportContent];
+  // If the same node name exists in multiple sources, prefer the airport's
+  // native Shadowrocket source over a Clash-converted copy. This keeps the
+  // native cipher/options and avoids a Clash-only DNS/UDP description
+  // replacing a working Shadowrocket node.
+  const nativeSources = rawSources.filter(isNativeShadowrocketSource);
+  const sources = [...rawSources].sort((left, right) => Number(isNativeShadowrocketSource(right)) - Number(isNativeShadowrocketSource(left)));
+  const dnsSources = nativeSources.length ? nativeSources : sources;
   const airportProxies = sources.flatMap((source) => parseAirportProxies(source));
   if (!airportProxies.length) throw new Error("机场配置没有可转换的小火箭节点");
   const lines = ruleContent.split(/\r?\n/);
@@ -841,7 +855,7 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
     const config = normalizeFinalGroupForShadowrocket(`${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`);
     const expanded = expandShadowrocketIncludeAllGroups(config, [...names]);
     const normalized = normalizeShadowrocketPolicyReferences(expanded, [...names]);
-    return normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(normalized, sources), hostMappings));
+    return normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(normalized, dnsSources), hostMappings));
   }
   const end = nextSection > proxyStart ? nextSection : lines.length;
   const config = normalizeFinalGroupForShadowrocket([...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n"));
@@ -849,7 +863,7 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   const normalizedConfig = normalizeShadowrocketPolicyReferences(expandedConfig, [...names]);
   // Shadowrocket does not understand geosite rule references; omit them only from its output.
   const withoutGeosite = normalizedConfig.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n");
-  return normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(withoutGeosite, sources), hostMappings));
+  return normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(withoutGeosite, dnsSources), hostMappings));
 }
 
 export function buildShadowrocketRulesConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}) {

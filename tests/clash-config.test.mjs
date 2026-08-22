@@ -117,6 +117,16 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   assert.match(shadowrocket, /^dns-server = https:\/\/kqs-resolver\.example\/dns-query,223\.5\.5\.5$/m);
 });
 
+test("Shadowrocket prefers a native source when duplicate airport nodes exist", () => {
+  const nativeKqs = `
+ss://YWVzLTI1Ni1nY206dGVzdC1rcXM=@kqs-hk.kunlun03dns.com:25101#VIP%20%E9%A6%99%E6%B8%AF%2001
+`;
+  const config = buildShadowrocketConfig(rules, [kqsAirport, nativeKqs]);
+  assert.match(config, /^VIP 香港 01=ss,kqs-hk\.kunlun03dns\.com,25101,encrypt-method=aes-256-gcm,password=test-kqs$/m);
+  assert.doesNotMatch(config, /^VIP 香港 01=.*udp-relay=true$/m);
+  assert.doesNotMatch(config, /^dns-server = .*kqs-resolver\.example/m);
+});
+
 test("Clash replaces hostname-based airport proxies with source-resolved addresses", () => {
   const clash = parseYaml(buildClashConfig(rules, kqsAirport, {
     "kqs-hk.kunlun03dns.com": "15.152.30.113",
