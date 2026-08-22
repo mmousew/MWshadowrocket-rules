@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
     const encryptedSource = await encryptSourceUrl(entries);
     const defaultProfile = await getClashProfile("default");
     if (defaultProfile) await updateClashProfileSource("default", encryptedSource);
-    const created = await createClashLink(encryptedSource, `花云400G · ${new Date().toLocaleDateString("zh-CN")}`, "default");
+    const created = await createClashLink(encryptedSource, defaultProfile?.name?.trim() || "订阅配置", "default");
     return NextResponse.json({
       link: publicLink(request, created),
       nodeCount,

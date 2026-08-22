@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     }
     if (action === "new-link") {
       if (!entries.some((entry) => entry.hidden !== true)) throw new Error("请先保留至少一个可用订阅来源");
-      const created = await createClashLink(await encryptSourceUrl(entries), `${profile.name} · ${new Date().toLocaleDateString("zh-CN")}`, profileId);
+      const created = await createClashLink(await encryptSourceUrl(entries), profile.name.trim() || "订阅配置", profileId);
       return NextResponse.json({ profileId, sources: await publicSources(entries), link: publicLink(request, { id: created.id, profile_id: profileId, name: created.name, token: created.token, status: created.status, created_at: created.createdAt }) });
     }
     if (airportSourceId) {
