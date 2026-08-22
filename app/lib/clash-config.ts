@@ -397,6 +397,43 @@ function normalizeShadowrocketConfig(config: string) {
   return [...metadata, ...ordered.flatMap((block) => ["", ...block]), ...remaining.flatMap((block) => ["", ...block])].join("\n").trim() + "\n";
 }
 
+function expandShadowrocketIncludeAllGroups(config: string, proxyNames: string[]) {
+  const lines = config.split(/\r?\n/);
+  const groupStart = lines.findIndex((line) => line.trim() === "[Proxy Group]");
+  const nextSection = lines.findIndex((line, index) => index > groupStart && /^\s*\[.+\]\s*$/.test(line));
+  if (groupStart < 0) return config;
+
+  const allNames = [...new Set(proxyNames.filter(Boolean))];
+  return lines.map((raw, index) => {
+    if (index <= groupStart || (nextSection > groupStart && index >= nextSection)) return raw;
+    const separator = raw.indexOf("=");
+    if (separator < 1) return raw;
+
+    const left = raw.slice(0, separator).trim();
+    const values = raw.slice(separator + 1).split(",").map((item) => item.trim()).filter(Boolean);
+    if (!values.includes("include-all-proxies=true")) return raw;
+
+    const kind = values[0] || "select";
+    const regex = values.find((item) => item.startsWith("policy-regex-filter="))?.slice("policy-regex-filter=".length);
+    let matched = allNames;
+    if (regex) {
+      try {
+        const matcher = new RegExp(regex, "i");
+        matched = allNames.filter((name) => matcher.test(name));
+      } catch {
+        matched = allNames;
+      }
+    }
+
+    // Shadowrocket does not expand include-all-proxies=true reliably. Write
+    // the actual node names into the group so they are visible in every
+    // client, while preserving helper policies such as PROXIES and DIRECT.
+    const extras = values.slice(1).filter((item) => item !== "include-all-proxies=true" && !item.startsWith("policy-regex-filter="));
+    const items = [...extras, ...matched.filter((name) => !extras.includes(name))];
+    return `${left} = ${[kind, ...items].join(",")}`;
+  }).join("\n");
+}
+
 export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[]) {
   const sources = Array.isArray(airportContent) ? airportContent : [airportContent];
   const airportProxies = sources.flatMap((source) => parseAirportProxies(source));
@@ -413,9 +450,13 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
     return true;
   });
   const proxySection = ["[Proxy]", ...existing, ...generated];
-  if (proxyStart < 0) return `${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`;
+  if (proxyStart < 0) {
+    const config = `${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`;
+    return normalizeShadowrocketConfig(expandShadowrocketIncludeAllGroups(config, [...names]));
+  }
   const end = nextSection > proxyStart ? nextSection : lines.length;
   const config = [...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n");
+  const expandedConfig = expandShadowrocketIncludeAllGroups(config, [...names]);
   // Shadowrocket does not understand geosite rule references; omit them only from its output.
-  return normalizeShadowrocketConfig(config.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n"));
+  return normalizeShadowrocketConfig(expandedConfig.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n"));
 }
