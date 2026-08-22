@@ -5,6 +5,7 @@ import {
   buildClashConfig,
   buildShadowrocketConfig,
   buildShadowrocketRulesConfig,
+  resolveAirportProxyHosts,
 } from "../app/lib/clash-config.ts";
 
 const rules = `
@@ -112,4 +113,25 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   assert.match(shadowrocket, /^花云香港 IEPL 1=ss,flower\.example\.com,443,/m);
   assert.match(shadowrocket, /^use-local-host-item-for-proxy = true$/m);
   assert.match(shadowrocket, /^kqs-hk\.kunlun03dns\.com = 54\.95\.1\.133$/m);
+});
+
+test("Shadowrocket host resolution falls back to HTTPS JSON DoH and rejects Fake-IP", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.startsWith("https://kqs-resolver.example/")) return new Response("", { status: 503 });
+    if (url.startsWith("https://dns.google/resolve")) {
+      return new Response(JSON.stringify({ Answer: [
+        { type: 1, data: "198.18.0.7" },
+        { type: 1, data: "54.95.1.133" },
+      ] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ Answer: [] }), { status: 200 });
+  };
+  try {
+    const mappings = await resolveAirportProxyHosts([kqsAirport]);
+    assert.equal(mappings["kqs-hk.kunlun03dns.com"], "54.95.1.133");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

@@ -265,7 +265,31 @@ async function resolveHostWithDoH(host: string, resolver: string) {
     url.searchParams.set("dns", query);
     const response = await fetch(url, { headers: { Accept: "application/dns-message" }, cache: "no-store" });
     if (!response.ok) return [];
-    return parseDnsARecords(new Uint8Array(await response.arrayBuffer()));
+    return parseDnsARecords(new Uint8Array(await response.arrayBuffer())).filter(isUsableResolvedAddress);
+  } catch {
+    return [];
+  }
+}
+
+function isUsableResolvedAddress(value: string) {
+  const parts = value.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [first, second] = parts;
+  return !(first === 0 || first === 10 || first === 127 || first === 169 && second === 254 || first === 172 && second >= 16 && second <= 31 || first === 192 && second === 168 || first === 198 && second >= 18 && second <= 19);
+}
+
+async function resolveHostWithJsonDoH(host: string, resolver: string) {
+  try {
+    const url = new URL(resolver);
+    url.searchParams.set("name", host);
+    url.searchParams.set("type", "A");
+    const response = await fetch(url, { headers: { Accept: "application/dns-json,application/json" }, cache: "no-store" });
+    if (!response.ok) return [];
+    const payload = await response.json() as { Answer?: Array<{ type?: number; data?: string }> };
+    return (payload.Answer || [])
+      .filter((item) => item.type === 1 && typeof item.data === "string")
+      .map((item) => item.data!.trim())
+      .filter(isUsableResolvedAddress);
   } catch {
     return [];
   }
@@ -285,6 +309,10 @@ export async function resolveAirportProxyHosts(sources: string[]) {
   const resolved = await Promise.all([...hostResolvers.entries()].map(async ([host, resolvers]) => {
     for (const resolver of resolvers) {
       const addresses = await resolveHostWithDoH(host, resolver);
+      if (addresses.length) return [host, addresses[0]] as const;
+    }
+    for (const resolver of ["https://dns.google/resolve", "https://doh.pub/resolve"]) {
+      const addresses = await resolveHostWithJsonDoH(host, resolver);
       if (addresses.length) return [host, addresses[0]] as const;
     }
     return null;
