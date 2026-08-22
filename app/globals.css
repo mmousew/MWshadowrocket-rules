@@ -339,6 +339,23 @@ button,input,select,textarea { max-width:100%; }
 .ruleConfigCreate input:focus { border-color:#64a287; box-shadow:0 0 0 3px #64a28716; outline:0; }
 .ruleConfigCreate button { flex:0 0 auto; min-height:39px; justify-content:center; }
 
+/* Scheme-scoped editor navigation */
+.schemeWorkspace { margin:0 0 15px; overflow:hidden; border:1px solid #dce7e0; border-radius:16px; background:#fff; }
+.schemeWorkspaceIntro { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:16px 18px; border-bottom:1px solid #e7efea; background:#f7fbf8; }
+.schemeWorkspaceIntro strong { display:block; color:#1d6d50; font-size:14px; }
+.schemeWorkspaceIntro p { margin:5px 0 0; color:#718078; font-size:10px; line-height:1.5; }
+.schemeBack { flex:0 0 auto; padding:8px 11px; font-size:10px; }
+.schemeTabs { display:flex; align-items:stretch; gap:8px; overflow-x:auto; padding:10px; scrollbar-width:none; }
+.schemeTabs::-webkit-scrollbar { display:none; }
+.schemeTabsLabel { align-self:center; padding:0 6px 0 2px; color:#8a9890; font-size:10px; font-weight:750; white-space:nowrap; }
+.schemeTabs button { min-width:150px; padding:10px 12px; border:1px solid #dce7e0; border-radius:10px; color:#53645a; background:#fff; text-align:left; cursor:pointer; }
+.schemeTabs button:hover { border-color:#9cc9ad; background:#f7fcf8; }
+.schemeTabs button.active { border-color:#1d6d50; color:#1d6d50; background:#eaf7ef; box-shadow:0 0 0 2px #1d6d5014; }
+.schemeTabs button strong,.schemeTabs button small { display:block; }
+.schemeTabs button strong { font-size:12px; }
+.schemeTabs button small { margin-top:4px; color:#8a978f; font-size:9px; }
+.schemeTabs button.active small { color:#5d8a73; }
+
 @media(max-width:600px){
   .clashPanel { padding:22px 17px; }
   .subscriptionHead { align-items:stretch; flex-direction:column; }
@@ -388,6 +405,11 @@ button,input,select,textarea { max-width:100%; }
   .ruleConfigActions button { flex:1 1 30%; min-width:0; }
   .ruleConfigCreate { align-items:stretch; flex-direction:column; }
   .ruleConfigCreate button { width:100%; }
+  .schemeWorkspaceIntro { align-items:stretch; flex-direction:column; gap:10px; }
+  .schemeBack { width:100%; text-align:center; }
+  .schemeTabs { gap:6px; padding:9px; }
+  .schemeTabsLabel { display:none; }
+  .schemeTabs button { min-width:132px; flex:1 0 132px; }
 }
 
 @media(max-width:390px){

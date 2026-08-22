@@ -65,14 +65,17 @@ function policyExists(policy: string, groups: Group[]) {
 }
 const nav: { id: View; label: string }[] = [
   { id: "overview", label: "总览" },
-  { id: "groups", label: "分组" },
-  { id: "rules", label: "域名" },
-  { id: "sets", label: "规则" },
   { id: "configs", label: "方案" },
   { id: "clash", label: "私有订阅" },
   { id: "airports", label: "机场列表" },
   { id: "conflicts", label: "检查" },
 ];
+const schemeTabs: { id: View; label: string; description: string }[] = [
+  { id: "groups", label: "分组", description: "管理代理策略和节点筛选" },
+  { id: "rules", label: "域名", description: "管理域名匹配和执行策略" },
+  { id: "sets", label: "规则", description: "管理在线规则集和 geosite" },
+];
+const knownViews: View[] = [...nav.map((item) => item.id), ...schemeTabs.map((item) => item.id)];
 
 function parseConfig(content: string) {
   const lines = content.split(/\r?\n/);
@@ -147,7 +150,7 @@ export default function Home() {
   const [view, setView] = useState<View>(() => {
     if (typeof window === "undefined") return "overview";
     const saved = new URL(window.location.href).searchParams.get("view") as View | null;
-    return saved && nav.some((item) => item.id === saved) ? saved : "overview";
+    return saved && knownViews.includes(saved) ? saved : "overview";
   });
   const [content, setContent] = useState("");
   const [sha, setSha] = useState("");
@@ -223,6 +226,8 @@ export default function Home() {
     return Array.from(new Set(issues));
   }, [parsed.groups, parsed.rules, parsed.finalRule, parsed.finalRuleCount]);
   const duplicateRuleCount = useMemo(() => getDuplicateRuleCount(parsed.rules), [parsed.rules]);
+  const selectedRuleConfig = useMemo(() => ruleConfigs.find((config) => config.id === selectedRuleConfigId), [ruleConfigs, selectedRuleConfigId]);
+  const isSchemeView = schemeTabs.some((item) => item.id === view);
   const ruleSets = useMemo(() => parsed.rules.filter((rule) => rule.type === "RULE-SET"), [parsed.rules]);
   const domainRules = useMemo(() => parsed.rules.filter((rule) => rule.type !== "RULE-SET" && rule.type !== "FINAL"), [parsed.rules]);
   const policies = useMemo(() => [...parsed.groups.map((group) => group.name), ...BUILTINS], [parsed.groups]);
@@ -547,7 +552,7 @@ export default function Home() {
 
       <section className="content">
         <header className="topbar">
-          <div className="titleBlock"><div><p className="eyebrow">SHADOWROCKET CONFIGURATION</p><h1>{nav.find((item) => item.id === view)?.label}{view === "rules" && parsed.groups.some((group) => group.name === query) ? ` · ${query}` : ""}</h1></div></div>
+          <div className="titleBlock"><div><p className="eyebrow">{isSchemeView ? `RULE SCHEME · ${selectedRuleConfig?.name || "当前方案"}` : "SHADOWROCKET CONFIGURATION"}</p><h1>{isSchemeView ? selectedRuleConfig?.name || "当前方案" : nav.find((item) => item.id === view)?.label}</h1></div></div>
           <div className="topActions"><button className="ghost" onClick={() => setPreview(true)}>预览配置</button>{(["groups", "rules", "sets"] as View[]).includes(view) && <button className="primary" onClick={openNew}>＋ 新增</button>}{view === "configs" && <button className="primary" onClick={() => setView("groups")}>编辑当前方案</button>}<button className={`saveButton ${dirty ? "ready" : ""}`} disabled={!dirty || saving} onClick={save}>{saving ? "保存中…" : selectedRuleConfigId === "default" && saveEnabled ? "保存到 GitHub" : "保存方案"}</button></div>
         </header>
 
@@ -561,7 +566,12 @@ export default function Home() {
           <section className="panel compact"><div className="panelHead"><div><h2>工作方式</h2><p>每次保存先检查冲突，再生成一条可追溯的 GitHub 提交。</p></div></div><div className="activity"><span className="activityIcon">↻</span><div><strong>在线配置与小火箭保持同一来源</strong><p>保存后在设备上更新配置即可生效</p></div><a href={sourceUrl} target="_blank" rel="noreferrer">打开仓库</a></div></section>
         </>}
 
-        {(view === "groups" || view === "rules" || view === "sets") && <>
+        {isSchemeView && <section className="schemeWorkspace" aria-label={`${selectedRuleConfig?.name || "当前方案"}方案编辑区`}>
+          <div className="schemeWorkspaceIntro"><div><strong>{selectedRuleConfig?.name || "当前方案"}</strong><p>这套方案的分组、域名和规则彼此独立，修改后只影响绑定此方案的订阅。</p></div><button type="button" className="ghost schemeBack" onClick={() => setView("configs")}>返回方案列表</button></div>
+          <div className="schemeTabs" role="tablist" aria-label="方案内容"><span className="schemeTabsLabel">方案内容</span>{schemeTabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={view === tab.id} className={view === tab.id ? "active" : ""} onClick={() => { setView(tab.id); setQuery(""); }}><strong>{tab.label}</strong><small>{tab.description}</small></button>)}</div>
+        </section>}
+
+        {(isSchemeView) && <>
           <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label>{view !== "groups" && query.trim() && filteredRules.length > 0 && <div className="bulkTransfer"><label className="selectAll"><input type="checkbox" checked={effectiveSelectedRuleIndexes.length === filteredRules.length} onChange={(event) => { setSelectionKey(filteredRuleKey); setSelectedRuleIndexes(event.target.checked ? filteredRules.map((rule) => rule.index) : []); }} />全选</label><span>转移到</span><select value={bulkTargetPolicy || policies[0] || ""} onChange={(event) => setBulkTargetPolicy(event.target.value)} aria-label="批量转移目标分组">{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><button type="button" onClick={() => transferFilteredRules(bulkTargetPolicy || policies[0] || "")}>转移选中 {effectiveSelectedRuleIndexes.length} 条</button></div>}<span>{view === "groups" ? filteredGroups.length : visibleRuleCount} 项</span></div>
           {view === "groups" ? <><p className={`dragHelp ${query ? "disabled" : ""}`}>{query ? "清空搜索后可以拖拽调整完整分组顺序" : "按住左侧或整行拖动排序；也可以用上移/下移"}</p><div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); const isFinalGroup = parsed.finalRule?.policy === group.name; const linkedCount = linked.length + (isFinalGroup ? 1 : 0); return <div
             className={`listRow groupListRow ${draggingGroup === group.name ? "dragging" : ""} ${dragTargetGroup === group.name && draggingGroup !== group.name ? "dropTarget" : ""}`}
@@ -796,11 +806,11 @@ function RuleConfigManager({ configs, selectedId, busy, onSelect, onEdit, onCrea
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   return <section className="panel ruleConfigPanel">
-    <div className="panelHead"><div><h2>规则方案列表</h2><p>每个方案是一整套分组、域名和规则。私有订阅可以分别选择方案，互不覆盖。</p></div><span className="configCount">{configs.length} 个方案</span></div>
-    <div className="ruleConfigHint"><strong>当前方案：{configs.find((config) => config.id === selectedId)?.name || "默认规则"}</strong><span>在“分组、域名、规则”里编辑后，点击右上角保存；只有默认方案会同步到 GitHub。</span></div>
+    <div className="panelHead"><div><h2>规则方案列表</h2><p>每个方案都是独立的一整套分组、域名和规则。进入方案后再编辑，不会互相覆盖。</p></div><span className="configCount">{configs.length} 个方案</span></div>
+    <div className="ruleConfigHint"><strong>当前方案：{configs.find((config) => config.id === selectedId)?.name || "默认规则"}</strong><span>点击“编辑方案”后，在方案内部切换分组、域名、规则；保存只影响当前方案。</span></div>
     <div className="ruleConfigList">{configs.map((config) => <article className={`ruleConfigCard ${config.id === selectedId ? "selected" : ""}`} key={config.id}>
       <div className="ruleConfigMain"><input value={drafts[config.id] ?? config.name} onChange={(event) => setDrafts((current) => ({ ...current, [config.id]: event.target.value }))} onBlur={() => { const name = (drafts[config.id] ?? config.name).trim(); if (name && name !== config.name) onRename(config.id, name); }} aria-label={`${config.name}方案名称`} /><p>{config.id === "default" ? "默认方案" : "独立方案"} · {config.profile_count || 0} 个订阅使用 · {new Date(config.updated_at).toLocaleString("zh-CN")}</p></div>
-      <div className="ruleConfigActions"><button type="button" className={config.id === selectedId ? "primary" : "ghost"} disabled={busy} onClick={() => onSelect(config.id)}>{config.id === selectedId ? "当前使用" : "使用此方案"}</button><button type="button" className="ghost" disabled={busy} onClick={() => onEdit(config.id)}>编辑规则</button>{config.id !== "default" && <button type="button" className="danger" disabled={busy} onClick={() => onDelete(config.id)}>删除</button>}</div>
+      <div className="ruleConfigActions"><button type="button" className={config.id === selectedId ? "primary" : "ghost"} disabled={busy} onClick={() => onSelect(config.id)}>{config.id === selectedId ? "当前使用" : "使用此方案"}</button><button type="button" className="ghost" disabled={busy} onClick={() => onEdit(config.id)}>编辑方案</button>{config.id !== "default" && <button type="button" className="danger" disabled={busy} onClick={() => onDelete(config.id)}>删除</button>}</div>
     </article>)}</div>
     <form className="ruleConfigCreate" onSubmit={(event) => { event.preventDefault(); const name = newName.trim(); if (!name) return; onCreate(name); setNewName(""); }}><label>新增方案名称<input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：工作、备用、家庭" /></label><button type="submit" className="primary" disabled={busy || !newName.trim()}>复制当前方案并新增</button></form>
   </section>;
