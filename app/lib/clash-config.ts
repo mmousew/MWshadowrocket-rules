@@ -77,7 +77,7 @@ function parseGroupsAndRules(content: string) {
     }
     if (index > ruleStart && raw.trim() && !raw.trim().startsWith("#")) {
       const parts = splitRuleLine(raw);
-      if (parts[0] === "FINAL" && parts[1]) rules.push({ type: "FINAL", value: "", policy: parts[1], options: parts.slice(2) });
+      if (parts[0].toUpperCase() === "FINAL" && parts[1]) rules.push({ type: "FINAL", value: "", policy: parts[1], options: parts.slice(2) });
       else if (parts.length >= 3) rules.push({ type: parts[0], value: parts[1], policy: parts[2], options: parts.slice(3) });
     }
   });
@@ -96,7 +96,7 @@ function parseShadowrocketProxies(content: string): ClashProxy[] {
     const name = raw.slice(0, separator).trim();
     if (!name || /^(Traffic|Expire|流量|到期|剩余)\b/i.test(name)) return [];
     const values = raw.slice(separator + 1).split(",").map((item) => item.trim()).filter(Boolean);
-    if (values[0] !== "ss" || !values[1] || !values[2]) return [];
+    if (values[0].toLowerCase() !== "ss" || !values[1] || !values[2]) return [];
     const options = Object.fromEntries(values.slice(3).map((item) => {
       const optionSeparator = item.indexOf("=");
       return optionSeparator > 0 ? [item.slice(0, optionSeparator).trim(), item.slice(optionSeparator + 1).trim()] : [item, "true"];
@@ -215,7 +215,7 @@ function parseLinkSubscription(content: string) {
   const trimmed = content.trim();
   const decoded = /^([A-Za-z0-9+/_=-]+\s*)+$/.test(trimmed) ? decodeLooseBase64(trimmed) : "";
   const links = (decoded.includes("://") ? decoded : trimmed).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  return links.flatMap((link, index) => link.startsWith("ss://") ? [parseSsLink(link, index)].filter((proxy): proxy is ClashProxy => Boolean(proxy)) : []);
+  return links.flatMap((link, index) => /^ss:\/\//i.test(link) ? [parseSsLink(link, index)].filter((proxy): proxy is ClashProxy => Boolean(proxy)) : []);
 }
 
 export function parseAirportProxies(content: string): ClashProxy[] {
@@ -226,8 +226,9 @@ export function parseAirportProxies(content: string): ClashProxy[] {
   return candidates.filter((proxy) => {
     const name = String(proxy.name || "");
     const server = String(proxy.server || "");
-    if (!name || !server || /^(127\.0\.0\.1|localhost)$/i.test(server) || names.has(name) || /^(Traffic|Expire|流量|到期|剩余)\b/i.test(name)) return false;
-    names.add(name);
+    const nameKey = name.toLowerCase();
+    if (!name || !server || /^(127\.0\.0\.1|localhost)$/i.test(server) || names.has(nameKey) || /^(Traffic|Expire|流量|到期|剩余)\b/i.test(name)) return false;
+    names.add(nameKey);
     return true;
   });
 }
@@ -245,11 +246,7 @@ export function getAirportProxyCount(content: string) {
 }
 
 function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
-  const available = new Map<string, string>([
-    ["direct", "DIRECT"],
-    ["reject", "REJECT"],
-    ["proxy", "PROXY"],
-  ]);
+  const available = createPolicyAliases(groups, "PROXY");
   proxyNames.forEach((name) => available.set(name.trim().toLowerCase(), name));
   groups.filter((group) => group.name.trim().toLowerCase() !== "proxies").forEach((group) => {
     available.set(group.name.trim().toLowerCase(), group.name);
@@ -257,8 +254,8 @@ function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
   const converted: Record<string, unknown>[] = [{ name: "PROXY", type: "select", proxies: proxyNames.length ? proxyNames : ["DIRECT"] }];
   for (const group of groups) {
     if (group.name.trim().toLowerCase() === "proxies") continue;
-    const regex = group.items.find((item) => item.startsWith("policy-regex-filter="))?.slice("policy-regex-filter=".length);
-    const includeAll = group.items.includes("include-all-proxies=true");
+    const regex = findOption(group.items, "policy-regex-filter");
+    const includeAll = findOption(group.items, "include-all-proxies")?.toLowerCase() === "true";
     if (includeAll || regex) {
       let matched = proxyNames;
       if (regex) {
@@ -274,24 +271,46 @@ function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
     }
     const proxies = group.items
       .filter((item) => !item.includes("=") && !/^(Traffic|Expire|流量|到期|剩余)\b/i.test(item))
-      .map((item) => item.trim().toLowerCase() === "proxies" ? "PROXY" : available.get(item.trim().toLowerCase()) || "")
+      .map((item) => available.get(item.trim().toLowerCase()) || "")
       .filter(Boolean);
     converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", proxies: proxies.length ? proxies : ["DIRECT"] });
   }
   return converted;
 }
 
-function convertRules(rules: ShadowrocketRule[]) {
+function createPolicyAliases(groups: ShadowrocketGroup[], proxiesAlias: string) {
+  const aliases = new Map<string, string>([
+    ["direct", "DIRECT"],
+    ["reject", "REJECT"],
+    ["reject-drop", "REJECT-DROP"],
+    ["reject-no-drop", "REJECT-NO-DROP"],
+    ["proxy", "PROXY"],
+    ["proxies", proxiesAlias],
+  ]);
+  groups.filter((group) => group.name.trim().toLowerCase() !== "proxies").forEach((group) => {
+    aliases.set(group.name.trim().toLowerCase(), group.name.trim());
+  });
+  return aliases;
+}
+
+function findOption(items: string[], key: string) {
+  const prefix = `${key.toLowerCase()}=`;
+  return items.find((item) => item.trim().toLowerCase().startsWith(prefix))?.trim().slice(prefix.length);
+}
+
+function convertRules(rules: ShadowrocketRule[], groups: ShadowrocketGroup[]) {
+  const aliases = createPolicyAliases(groups, "PROXY");
   const converted: string[] = [];
   const providers: RuleProvider[] = [];
   let skipped = 0;
 
   for (const rule of rules) {
-    const policy = rule.policy.trim().toLowerCase() === "proxies" ? "PROXY" : rule.policy;
-    if (["USER-AGENT", "URL-REGEX"].includes(rule.type)) { skipped += 1; continue; }
-    if (rule.type === "FINAL") { converted.push(`MATCH,${policy}`); continue; }
-    if (rule.type === "RULE-SET") {
-      if (rule.value.startsWith("geosite:")) converted.push(`GEOSITE,${rule.value.slice(8)},${policy}${rule.options.length ? `,${rule.options.join(",")}` : ""}`);
+    const policy = aliases.get(rule.policy.trim().toLowerCase()) || rule.policy.trim();
+    const ruleType = rule.type.toUpperCase();
+    if (["USER-AGENT", "URL-REGEX"].includes(ruleType)) { skipped += 1; continue; }
+    if (ruleType === "FINAL") { converted.push(`MATCH,${policy}`); continue; }
+    if (ruleType === "RULE-SET") {
+      if (/^geosite:/i.test(rule.value)) converted.push(`GEOSITE,${rule.value.slice(8)},${policy}${rule.options.length ? `,${rule.options.join(",")}` : ""}`);
       else if (/^https?:\/\//i.test(rule.value)) {
         const existing = providers.find((item) => item.url === rule.value);
         const provider = existing || { name: `mw_set_${providers.length + 1}`, url: rule.value, format: /\.ya?ml(?:\?|$)/i.test(rule.value) ? "yaml" as const : "text" as const };
@@ -300,7 +319,7 @@ function convertRules(rules: ShadowrocketRule[]) {
       } else skipped += 1;
       continue;
     }
-    converted.push([rule.type, rule.value, policy, ...rule.options].filter(Boolean).join(","));
+    converted.push([ruleType, rule.value, policy, ...rule.options].filter(Boolean).join(","));
   }
   return { converted, providers, skipped };
 }
@@ -310,14 +329,15 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
   const seenProxyNames = new Set<string>();
   const proxies = sources.flatMap((source) => stabilizeKnownProxyHosts(parseAirportProxies(source))).filter((proxy) => {
     const name = String(proxy.name || "");
-    if (!name || seenProxyNames.has(name)) return false;
-    seenProxyNames.add(name);
+    const nameKey = name.trim().toLowerCase();
+    if (!name || seenProxyNames.has(nameKey)) return false;
+    seenProxyNames.add(nameKey);
     return true;
   });
   if (!proxies.length) throw new Error("机场配置没有可转换的节点");
   const { groups, rules } = parseGroupsAndRules(ruleContent);
   const proxyGroups = convertGroups(groups, proxies.map((proxy) => String(proxy.name)));
-  const { converted, providers, skipped } = convertRules(rules);
+  const { converted, providers, skipped } = convertRules(rules, groups);
   const airportDns = readAirportDns(sources);
   const defaultNameserver = airportDns.defaultNameserver.length ? airportDns.defaultNameserver : ["223.5.5.5", "119.29.29.29"];
   // Use only portable resolvers in the merged file. A source-local resolver
@@ -367,7 +387,7 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
 }
 
 function shadowrocketProxyLine(proxy: ClashProxy) {
-  const name = String(proxy.name || "").replace(/[\r\n=]/g, " ").trim();
+  const name = String(proxy.name || "").replace(/[\r\n=,#]/g, " ").trim();
   const server = String(proxy.server || "");
   const port = String(proxy.port || "");
   const cipher = String(proxy.cipher || "aes-128-gcm");
@@ -429,10 +449,10 @@ function expandShadowrocketIncludeAllGroups(config: string, proxyNames: string[]
 
     const left = raw.slice(0, separator).trim();
     const values = raw.slice(separator + 1).split(",").map((item) => item.trim()).filter(Boolean);
-    if (!values.includes("include-all-proxies=true")) return raw;
+    if (!values.some((item) => item.trim().toLowerCase() === "include-all-proxies=true")) return raw;
 
     const kind = values[0] || "select";
-    const regex = values.find((item) => item.startsWith("policy-regex-filter="))?.slice("policy-regex-filter=".length);
+    const regex = findOption(values, "policy-regex-filter");
     let matched = allNames;
     if (regex) {
       try {
@@ -447,7 +467,7 @@ function expandShadowrocketIncludeAllGroups(config: string, proxyNames: string[]
     // the actual node names into the group so they are visible in every
     // client, while preserving helper policies such as PROXIES and DIRECT.
     const extras = values.slice(1)
-      .filter((item) => item !== "include-all-proxies=true" && !item.startsWith("policy-regex-filter="))
+      .filter((item) => item.trim().toLowerCase() !== "include-all-proxies=true" && !item.trim().toLowerCase().startsWith("policy-regex-filter="))
       .map((item) => {
         const key = item.toLowerCase();
         // Advanced configs often use PROXIES while the actual helper group is
@@ -460,6 +480,61 @@ function expandShadowrocketIncludeAllGroups(config: string, proxyNames: string[]
   }).join("\n");
 }
 
+function normalizeShadowrocketPolicyReferences(config: string, proxyNames: string[]) {
+  const lines = config.split(/\r?\n/);
+  const groupStart = lines.findIndex((line) => line.trim() === "[Proxy Group]");
+  const ruleStart = lines.findIndex((line) => line.trim() === "[Rule]");
+  if (groupStart < 0 || ruleStart < 0 || ruleStart <= groupStart) return config;
+
+  const groupNames = lines.slice(groupStart + 1, ruleStart)
+    .map((line) => {
+      const separator = line.indexOf("=");
+      return separator > 0 ? line.slice(0, separator).trim() : "";
+    })
+    .filter(Boolean);
+  const proxyStart = lines.findIndex((line) => line.trim() === "[Proxy]");
+  const proxyEnd = lines.findIndex((line, index) => index > proxyStart && /^\s*\[.+\]\s*$/.test(line));
+  const actualProxyNames = lines.slice(proxyStart + 1, proxyEnd > proxyStart ? proxyEnd : groupStart)
+    .map((line) => {
+      const separator = line.indexOf("=");
+      return separator > 0 ? line.slice(0, separator).trim() : "";
+    })
+    .filter(Boolean);
+  const aliases = createPolicyAliases(groupNames.map((name) => ({ name, kind: "select", items: [] })), groupNames.find((name) => name.toLowerCase() === "proxies") || "PROXY");
+  actualProxyNames.forEach((name) => aliases.set(name.toLowerCase(), name));
+  proxyNames.forEach((name) => aliases.set(name.toLowerCase(), name));
+
+  return lines.map((raw, index) => {
+    if (index > groupStart && index < ruleStart) {
+      const separator = raw.indexOf("=");
+      if (separator < 1) return raw;
+      const left = raw.slice(0, separator).trim();
+      const values = splitRuleLine(raw.slice(separator + 1));
+      if (!values.length) return raw;
+      const items = values.slice(1).map((item) => {
+        const trimmed = item.trim();
+        if (!trimmed || trimmed.includes("=") || /^(Traffic|Expire|流量|到期|剩余)\b/i.test(trimmed)) return trimmed;
+        return aliases.get(trimmed.toLowerCase()) || trimmed;
+      });
+      return `${left} = ${[values[0], ...items].join(",")}`;
+    }
+    if (index > ruleStart) {
+      const trimmed = raw.trim();
+      if (!trimmed || trimmed.startsWith("#")) return raw;
+      const parts = splitRuleLine(raw);
+      if (parts[0].toUpperCase() === "FINAL" && parts[1]) {
+        parts[1] = aliases.get(parts[1].toLowerCase()) || parts[1];
+        return parts.join(",");
+      }
+      if (parts.length >= 3) {
+        parts[2] = aliases.get(parts[2].toLowerCase()) || parts[2];
+        return parts.join(",");
+      }
+    }
+    return raw;
+  }).join("\n");
+}
+
 export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[]) {
   const sources = Array.isArray(airportContent) ? airportContent : [airportContent];
   const airportProxies = sources.flatMap((source) => parseAirportProxies(source));
@@ -469,20 +544,25 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   const nextSection = lines.findIndex((line, index) => index > proxyStart && /^\s*\[.+\]\s*$/.test(line));
   const existing = proxyStart >= 0 ? lines.slice(proxyStart + 1, nextSection > proxyStart ? nextSection : undefined).filter((line) => line.trim() && !line.trim().startsWith("#")) : [];
   const names = new Set(existing.map((line) => line.slice(0, line.indexOf("=")).trim()));
+  const nameKeys = new Set([...names].map((name) => name.toLowerCase()));
   const generated = airportProxies.map(shadowrocketProxyLine).filter(Boolean).filter((line) => {
     const name = line.slice(0, line.indexOf("=")).trim();
-    if (names.has(name)) return false;
+    const nameKey = name.toLowerCase();
+    if (nameKeys.has(nameKey)) return false;
     names.add(name);
+    nameKeys.add(nameKey);
     return true;
   });
   const proxySection = ["[Proxy]", ...existing, ...generated];
   if (proxyStart < 0) {
     const config = `${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`;
-    return normalizeShadowrocketConfig(expandShadowrocketIncludeAllGroups(config, [...names]));
+    const expanded = expandShadowrocketIncludeAllGroups(config, [...names]);
+    return normalizeShadowrocketConfig(normalizeShadowrocketPolicyReferences(expanded, [...names]));
   }
   const end = nextSection > proxyStart ? nextSection : lines.length;
   const config = [...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n");
   const expandedConfig = expandShadowrocketIncludeAllGroups(config, [...names]);
+  const normalizedConfig = normalizeShadowrocketPolicyReferences(expandedConfig, [...names]);
   // Shadowrocket does not understand geosite rule references; omit them only from its output.
-  return normalizeShadowrocketConfig(expandedConfig.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n"));
+  return normalizeShadowrocketConfig(normalizedConfig.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n"));
 }

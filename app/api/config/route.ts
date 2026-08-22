@@ -6,7 +6,7 @@ const REPO = "MWshadowrocket-rules";
 const BRANCH = "rules/initial-region-module";
 const FILE_PATH = "MW-Shadowrocket-Config.conf";
 const API_URL = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`;
-const BUILTIN_POLICIES = new Set(["DIRECT", "PROXY", "REJECT", "REJECT-DROP", "REJECT-NO-DROP"]);
+const BUILTIN_POLICIES = new Set(["direct", "proxy", "proxies", "reject", "reject-drop", "reject-no-drop"]);
 
 type GitHubFile = { content: string; encoding: string; sha: string; html_url: string };
 
@@ -50,10 +50,18 @@ function validateConfig(content: string) {
   const groupStart = lines.findIndex((line) => line.trim() === "[Proxy Group]");
   const ruleStart = lines.findIndex((line) => line.trim() === "[Rule]");
   const groups = new Set<string>();
+  const groupKeys = new Set<string>();
+  let finalCount = 0;
   if (groupStart >= 0 && ruleStart > groupStart) {
     for (const line of lines.slice(groupStart + 1, ruleStart)) {
       const match = line.match(/^\s*([^#=]+?)\s*=\s*(.+)$/);
-      if (match) groups.add(match[1].trim());
+      if (match) {
+        const name = match[1].trim();
+        const key = name.toLowerCase();
+        if (groupKeys.has(key)) errors.push(`代理分组名称重复（忽略大小写）：${name}`);
+        groupKeys.add(key);
+        groups.add(name);
+      }
     }
   }
 
@@ -64,13 +72,14 @@ function validateConfig(content: string) {
       if (!line || line.startsWith("#")) return;
       lastRule = line;
       const parts = splitRuleLine(line);
-      if (parts[0] === "FINAL") {
+      if (parts[0].toUpperCase() === "FINAL") {
+        finalCount += 1;
         if (parts.length < 2 || !parts[1]) {
           errors.push(`第 ${ruleStart + offset + 2} 行 FINAL 缺少执行策略`);
           return;
         }
         const finalPolicy = parts[1];
-        if (!BUILTIN_POLICIES.has(finalPolicy) && !groups.has(finalPolicy)) {
+        if (!BUILTIN_POLICIES.has(finalPolicy.toLowerCase()) && ![...groups].some((group) => group.toLowerCase() === finalPolicy.toLowerCase())) {
           errors.push(`第 ${ruleStart + offset + 2} 行引用不存在的策略：${finalPolicy}`);
         }
         return;
@@ -80,12 +89,13 @@ function validateConfig(content: string) {
         return;
       }
       const policy = parts[2];
-      if (!BUILTIN_POLICIES.has(policy) && !groups.has(policy)) {
+      if (!BUILTIN_POLICIES.has(policy.toLowerCase()) && ![...groups].some((group) => group.toLowerCase() === policy.toLowerCase())) {
         errors.push(`第 ${ruleStart + offset + 2} 行引用不存在的策略：${policy}`);
       }
     });
   }
-  if (!lastRule.startsWith("FINAL,")) errors.push("最后一条有效规则必须是 FINAL");
+  if (finalCount > 1) errors.push("配置中存在多个 FINAL 兜底规则，请只保留最后一条");
+  if (!/^FINAL\s*,/i.test(lastRule)) errors.push("最后一条有效规则必须是 FINAL");
   return Array.from(new Set(errors)).slice(0, 20);
 }
 

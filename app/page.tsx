@@ -24,7 +24,7 @@ const RULE_TYPE_META: Record<string, { label: string; hint: string }> = {
   "IP-CIDR6": { label: "IPv6 地址段", hint: "匹配一段 IPv6 地址，通常由规则维护者提供。" },
   GEOIP: { label: "国家或地区 IP", hint: "按照 IP 所属国家或地区匹配，例如 CN。" },
 };
-const BUILTINS = ["DIRECT", "PROXY", "REJECT"];
+const BUILTINS = ["DIRECT", "PROXY", "PROXIES", "REJECT", "REJECT-DROP", "REJECT-NO-DROP"];
 // 机场配置里的国家组通常使用代码名，不能只识别中文名称。
 // 这些组也会被 Final 等策略组用来指定最终流量走向。
 const COUNTRY_GROUP_NAMES = new Set([
@@ -52,6 +52,15 @@ function splitRuleLine(line: string) {
   parts.push(current.trim());
   return parts;
 }
+
+function policyKey(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function policyExists(policy: string, groups: Group[]) {
+  const key = policyKey(policy);
+  return BUILTINS.some((item) => policyKey(item) === key) || groups.some((group) => policyKey(group.name) === key);
+}
 const nav: { id: View; label: string }[] = [
   { id: "overview", label: "总览" },
   { id: "groups", label: "分组" },
@@ -69,6 +78,7 @@ function parseConfig(content: string) {
   const groups: Group[] = [];
   const rules: Rule[] = [];
   let finalRule: Rule | null = null;
+  let finalRuleCount = 0;
   lines.forEach((raw, index) => {
     if (index > groupStart && index < ruleStart) {
       const match = raw.match(/^\s*([^#=]+?)\s*=\s*(.+)$/);
@@ -79,22 +89,28 @@ function parseConfig(content: string) {
     }
     if (index > ruleStart && raw.trim() && !raw.trim().startsWith("#")) {
       const parts = splitRuleLine(raw);
-      if (parts[0] === "FINAL" && parts[1]) {
+      if (parts[0].toUpperCase() === "FINAL" && parts[1]) {
+        finalRuleCount += 1;
         finalRule = { index, type: "FINAL", value: "", policy: parts[1], options: parts.slice(2) };
         return;
       }
       if (parts.length >= 3) rules.push({ index, type: parts[0], value: parts[1], policy: parts[2], options: parts.slice(3) });
     }
   });
-  return { lines, groups, rules, finalRule, groupStart, ruleStart };
+  return { lines, groups, rules, finalRule, finalRuleCount, groupStart, ruleStart };
 }
 
 function getConflicts(groups: Group[], rules: Rule[]) {
-  const groupNames = new Set(groups.map((group) => group.name));
   const conflicts: string[] = [];
+  const groupKeys = new Set<string>();
+  groups.forEach((group) => {
+    const key = policyKey(group.name);
+    if (groupKeys.has(key)) conflicts.push(`代理分组名称重复（忽略大小写）：${group.name}`);
+    groupKeys.add(key);
+  });
   rules.forEach((rule) => {
     const key = `${rule.type},${rule.value}`;
-    if (![...BUILTINS, "REJECT-DROP", "REJECT-NO-DROP"].includes(rule.policy) && !groupNames.has(rule.policy)) {
+    if (!policyExists(rule.policy, groups)) {
       conflicts.push(`${key} 引用了不存在的策略「${rule.policy}」`);
     }
   });
@@ -178,21 +194,22 @@ export default function Home() {
   const parsed = useMemo(() => parseConfig(content), [content]);
   const conflicts = useMemo(() => {
     const issues = getConflicts(parsed.groups, parsed.rules);
-    if (parsed.finalRule && !BUILTINS.includes(parsed.finalRule.policy) && !parsed.groups.some((group) => group.name === parsed.finalRule?.policy)) {
+    if (parsed.finalRuleCount > 1) issues.push("配置中存在多个 FINAL 兜底规则，请只保留最后一条");
+    if (parsed.finalRule && !policyExists(parsed.finalRule.policy, parsed.groups)) {
       issues.push(`FINAL 引用了不存在的策略「${parsed.finalRule.policy}」`);
     }
     return Array.from(new Set(issues));
-  }, [parsed.groups, parsed.rules, parsed.finalRule]);
+  }, [parsed.groups, parsed.rules, parsed.finalRule, parsed.finalRuleCount]);
   const duplicateRuleCount = useMemo(() => getDuplicateRuleCount(parsed.rules), [parsed.rules]);
   const ruleSets = useMemo(() => parsed.rules.filter((rule) => rule.type === "RULE-SET"), [parsed.rules]);
   const domainRules = useMemo(() => parsed.rules.filter((rule) => rule.type !== "RULE-SET" && rule.type !== "FINAL"), [parsed.rules]);
   const policies = useMemo(() => [...parsed.groups.map((group) => group.name), ...BUILTINS], [parsed.groups]);
-  const ruleCountForPolicy = (policy: string) => parsed.rules.filter((rule) => rule.policy === policy).length + (parsed.finalRule?.policy === policy ? 1 : 0);
+  const ruleCountForPolicy = (policy: string) => parsed.rules.filter((rule) => policyKey(rule.policy) === policyKey(policy)).length + (parsed.finalRule && policyKey(parsed.finalRule.policy) === policyKey(policy) ? 1 : 0);
   const filteredGroups = parsed.groups.filter((group) => `${group.name} ${group.items.join(" ")}`.toLowerCase().includes(query.toLowerCase()));
   const viewingGroup = view === "rules" && parsed.groups.some((group) => group.name === query) ? query : "";
   const activeRules = viewingGroup ? parsed.rules.filter((rule) => rule.policy === viewingGroup) : view === "sets" ? ruleSets : domainRules;
   const filteredRules = activeRules.filter((rule) => viewingGroup || `${rule.type} ${rule.value} ${rule.policy}`.toLowerCase().includes(query.toLowerCase()));
-  const viewingFinal = Boolean(viewingGroup && parsed.finalRule?.policy === viewingGroup);
+  const viewingFinal = Boolean(viewingGroup && parsed.finalRule && policyKey(parsed.finalRule.policy) === policyKey(viewingGroup));
   const visibleRuleCount = filteredRules.length + (viewingFinal ? 1 : 0);
   const filteredRuleKey = filteredRules.map((rule) => rule.index).join(",");
   const effectiveSelectedRuleIndexes = selectionKey === filteredRuleKey ? selectedRuleIndexes : filteredRules.map((rule) => rule.index);
