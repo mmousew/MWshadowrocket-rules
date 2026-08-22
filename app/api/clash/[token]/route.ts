@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildClashConfig, buildShadowrocketConfig } from "../../../lib/clash-config";
+import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig } from "../../../lib/clash-config";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
@@ -89,12 +89,18 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     const airportContent = liveAirportContent.length ? liveAirportContent : (encryptedSource ? [] : [getAirportSnapshot()]);
     if (!airportContent.length || !airportContent[0]) throw new Error("机场在线地址暂时不可用，且没有安全节点快照");
     const userAgent = request.headers.get("user-agent") || "";
-    const shadowrocket = request.nextUrl.searchParams.get("format") === "shadowrocket" || /shadowrocket/i.test(userAgent);
-    const config = shadowrocket ? buildShadowrocketConfig(ruleContent, airportContent) : buildClashConfig(ruleContent, airportContent);
+    const requestedFormat = request.nextUrl.searchParams.get("format");
+    const shadowrocketRules = requestedFormat === "shadowrocket-rules";
+    const shadowrocket = shadowrocketRules || requestedFormat === "shadowrocket" || /shadowrocket/i.test(userAgent);
+    const config = shadowrocketRules
+      ? buildShadowrocketRulesConfig(ruleContent, airportContent)
+      : shadowrocket
+        ? buildShadowrocketConfig(ruleContent, airportContent)
+        : buildClashConfig(ruleContent, airportContent);
     return new NextResponse(config, {
       headers: {
         "Content-Type": shadowrocket ? "text/plain; charset=utf-8" : "text/yaml; charset=utf-8",
-        "Content-Disposition": `inline; filename=${shadowrocket ? "MW-Shadowrocket.conf" : "MW-ClashX-Meta.yaml"}`,
+        "Content-Disposition": `inline; filename=${shadowrocketRules ? "MW-Shadowrocket-Rules.conf" : shadowrocket ? "MW-Shadowrocket.conf" : "MW-ClashX-Meta.yaml"}`,
         // Always return the newest airport/rules merge after a client update.
         // Caching the generated profile can make one airport appear broken after
         // another source has just been fixed.

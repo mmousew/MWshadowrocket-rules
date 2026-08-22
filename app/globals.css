@@ -274,6 +274,8 @@ button,input,select,textarea { max-width:100%; }
 .inlineCopy:hover { background:#e8f5eb; }
 .inlineQr { flex:0 0 auto; min-height:35px; padding:8px 10px; border:1px solid #cfe0d5; border-radius:9px; color:#276f53; background:#f3faf5; font-size:10px; cursor:pointer; }
 .inlineQr:hover { background:#e8f5eb; }
+.inlineImport { display:inline-flex; flex:0 0 auto; min-height:35px; align-items:center; justify-content:center; padding:8px 12px; border:1px solid #276f53; border-radius:9px; color:#fff; background:#276f53; font-size:10px; font-weight:750; text-decoration:none; }
+.inlineImport:hover { border-color:#1d5d44; color:#fff; background:#1d5d44; }
 .clashLinkCard .clashActions { flex-wrap:wrap; margin:10px 0 0; }
 .clashLinkCard .clashActions button,.clashLinkCard .clashActions a { min-height:34px; padding:8px 11px; font-size:11px; }
 .clashLinkCard .danger { border:1px solid #edc7c0; color:#9a4434; background:#fff7f5; }
@@ -323,6 +325,7 @@ button,input,select,textarea { max-width:100%; }
   .clashLinkCard .clientLinkRow { flex-wrap:wrap; }
   .clashLinkCard .clientLinkRow input { flex:1 1 100%; }
   .clashLinkCard .clientLinkRow button { flex:1; }
+  .clashLinkCard .clientLinkRow .inlineImport { flex:1; }
   .sourceActionRow { grid-template-columns:1fr 1fr; gap:8px; }
   .sourceActionRow button { padding-left:8px; padding-right:8px; font-size:11px; }
 }

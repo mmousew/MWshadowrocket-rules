@@ -566,3 +566,16 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   // Shadowrocket does not understand geosite rule references; omit them only from its output.
   return normalizeShadowrocketConfig(normalizedConfig.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n"));
 }
+
+export function buildShadowrocketRulesConfig(ruleContent: string, airportContent: string | string[]) {
+  const fullConfig = buildShadowrocketConfig(ruleContent, airportContent);
+  const lines = fullConfig.split(/\r?\n/);
+  const proxyStart = lines.findIndex((line) => line.trim().toLowerCase() === "[proxy]");
+  if (proxyStart < 0) return fullConfig;
+  const proxyEnd = lines.findIndex((line, index) => index > proxyStart && /^\s*\[[^\]]+\]\s*$/.test(line));
+  const end = proxyEnd > proxyStart ? proxyEnd : lines.length;
+  return [...lines.slice(0, proxyStart), ...lines.slice(end)]
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd() + "\n";
+}

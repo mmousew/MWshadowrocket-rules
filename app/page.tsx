@@ -846,6 +846,19 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
     return token ? `https://656577.xyz/mw-shadowrocket.php?token=${encodeURIComponent(token)}` : value.replace("/api/clash/", "/api/shadowrocket/");
   }
 
+  function shadowrocketImportUrl(value: string) {
+    return `shadowrocket://config/add/${encodeURIComponent(shadowrocketConfigUrl(value))}`;
+  }
+
+  function shadowrocketAddUrl(value: string) {
+    return `shadowrocket://add/${encodeURIComponent(shadowrocketUrl(value))}`;
+  }
+
+  function shadowrocketConfigUrl(value: string) {
+    const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
+    return token ? `https://656577.xyz/mw-shadowrocket-config.php?token=${encodeURIComponent(token)}` : value.replace("/api/clash/", "/api/shadowrocket-config/");
+  }
+
   function clashRelayUrl(value: string) {
     const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
     return token ? `https://656577.xyz/mw-clash.php?token=${encodeURIComponent(token)}&compat=clashxmeta` : value;
@@ -862,14 +875,15 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
     <div className="clashCardActions">{link.status === "active" && <button type="button" className="ghost" onClick={() => setPendingLinkAction({ id: link.id, action: "revoke" })}>失效</button>}<button type="button" className="danger" onClick={() => setPendingLinkAction({ id: link.id, action: "delete" })}>删除</button></div>
     <div className="clashLinkMeta"><input className="clashNameInput" value={link.name} onChange={(event) => setLinks((current) => current.map((item) => item.id === link.id ? { ...item, name: event.target.value } : item))} onBlur={() => void renameLink(link.id, link.name).catch((cause) => setError(cause instanceof Error ? cause.message : "保存链接备注失败"))} aria-label="订阅链接备注" /><span>{link.status === "active" ? "已启用" : "已失效"} · {link.createdAt ? new Date(link.createdAt).toLocaleString("zh-CN") : "历史链接"}</span></div>
     <label className="clientLinkLabel">CLASH 地址<div className="clientLinkRow"><input readOnly value={clashRelayUrl(link.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(clashRelayUrl(link.url))}>复制</button>{link.status === "active" && <button type="button" className="inlineQr" onClick={() => void showQr(clashRelayUrl(link.url), "CLASH")}>二维码</button>}</div></label>
-    <label className="clientLinkLabel">小火箭地址<div className="clientLinkRow"><input readOnly value={shadowrocketUrl(link.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(shadowrocketUrl(link.url))}>复制</button>{link.status === "active" && <button type="button" className="inlineQr" onClick={() => void showQr(shadowrocketUrl(link.url), "小火箭")}>二维码</button>}</div></label>
+    <label className="clientLinkLabel">小火箭订阅地址<div className="clientLinkRow"><input readOnly value={shadowrocketUrl(link.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(shadowrocketUrl(link.url))}>复制订阅</button>{link.status === "active" && <a className="inlineImport" href={shadowrocketAddUrl(link.url)}>添加订阅</a>}{link.status === "active" && <button type="button" className="inlineQr" onClick={() => void showQr(shadowrocketAddUrl(link.url), "小火箭订阅")}>二维码</button>}</div></label>
+    <label className="clientLinkLabel">小火箭配置地址（仅规则与分组）<div className="clientLinkRow"><input readOnly value={shadowrocketConfigUrl(link.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(shadowrocketConfigUrl(link.url))}>复制配置</button>{link.status === "active" && <a className="inlineImport" href={shadowrocketImportUrl(link.url)}>导入配置</a>}{link.status === "active" && <button type="button" className="inlineQr" onClick={() => void showQr(shadowrocketImportUrl(link.url), "小火箭配置")}>二维码</button>}</div></label>
   </article>;
 
   const availableAirports = (sources: SourceRecord[]) => airportSources.filter((source) => !source.hidden && !sources.some((entry) => entry.sourceId === source.id || (entry.kind === source.kind && source.kind === "url" && entry.value === source.sourceUrl)));
 
   return <section className="clashPanel">
     {mode === "private" && <div className="subscriptionHead"><h2>私有订阅</h2><button type="button" className="primary" onClick={() => { setNewProfileOpen((value) => !value); setError(""); }}>＋ 新增订阅配置</button></div>}
-    {mode === "private" && <div className="moduleConflictNotice"><strong>小火箭请只使用这里生成的完整订阅</strong><span>旧版“MW 地区分流”模块会优先覆盖 KR、Final 等分组选择，请在小火箭的模块页面将它更新后关闭或删除。</span></div>}
+    {mode === "private" && <div className="moduleConflictNotice"><strong>小火箭订阅与配置已经分开</strong><span>订阅地址负责首页节点；配置地址只包含规则和分组，不包含节点，可在配置列表单独更新。</span></div>}
     {error && <div className="clashError">{error}</div>}
     {mode === "airports" ? <AirportList sources={airportSources} onSourcesChange={setAirportSources} onError={setError} /> : <>
       {newProfileOpen && <form className="profileCreateForm" onSubmit={addProfile}><label>配置备注名称<input value={newProfileName} onChange={(event) => setNewProfileName(event.target.value)} placeholder="例如：我的备用机场" /></label><p className="formHint">新增后在编辑来源里从“机场列表”选择要加入的订阅。</p><div className="profileEditorActions"><button className="primary" type="submit" disabled={busy}>{busy ? "处理中…" : "保存并新增配置"}</button><button className="ghost" type="button" onClick={() => setNewProfileOpen(false)}>取消</button></div></form>}
@@ -885,7 +899,7 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
           {profileLinks.length ? profileLinks.map(profileLinkCard) : <p className="clashLoading">还没有链接，请先添加来源后生成新链接。</p>}
         </article>;
       }) : <p className="clashLoading">还没有订阅配置，请先新增一个配置。</p>}</section>
-      <ul><li>机场列表是总表，私有订阅这里只管理关联关系。</li><li>移除来源不会删除机场列表中的订阅；机场列表删除才会同步清理所有关联。</li><li>每条链接都支持修改备注、复制、二维码、失效和删除。</li></ul>
+      <ul><li>机场列表是总表，私有订阅这里只管理关联关系。</li><li>移除来源不会删除机场列表中的订阅；机场列表删除才会同步清理所有关联。</li><li>小火箭先添加订阅，再导入规则配置；配置文件没有节点定义，不会重复生成节点。</li></ul>
     </>}
     {pendingLinkAction && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭订阅操作确认" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingLinkAction(null); }} onKeyDown={(event) => { if (event.key === "Escape") setPendingLinkAction(null); }}><section className="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="link-action-title"><span className="confirmMark">!</span><h2 id="link-action-title">确认{pendingLinkAction.action === "delete" ? "删除" : "使链接失效"}？</h2><p>{pendingLinkAction.action === "delete" ? "删除后将无法恢复这条订阅链接。" : "失效后这条订阅链接将无法继续获取配置。"}</p><footer><button className="ghost" type="button" onClick={() => setPendingLinkAction(null)}>取消</button><button className="deleteConfirm" type="button" onClick={() => { const action = pendingLinkAction; setPendingLinkAction(null); void changeLink(action.id, action.action).catch((cause) => setError(cause instanceof Error ? cause.message : "操作链接失败")); }}>确认</button></footer></section></div>}
     {qrCode && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭二维码" onMouseDown={(event) => { if (event.target === event.currentTarget) { setQrCode(""); setQrLink(""); setQrLabel(""); } }} onKeyDown={(event) => { if (event.key === "Escape") { setQrCode(""); setQrLink(""); setQrLabel(""); } }}><section className="qrModal" role="dialog" aria-modal="true" aria-labelledby="qr-title"><header><div><h2 id="qr-title">{qrLabel} 订阅二维码</h2><p>使用对应客户端扫描</p></div><button type="button" onClick={() => { setQrCode(""); setQrLink(""); setQrLabel(""); }}>×</button></header><img src={qrCode} alt={`${qrLabel} 私有订阅二维码`} /><button type="button" className="ghost qrCopy" onClick={() => void copyLink(qrLink)}>{copied ? "已复制订阅链接" : "复制订阅链接"}</button></section></div>}
