@@ -114,7 +114,7 @@ export async function getSourceSnapshot(sourceUrl: string, client: SnapshotClien
   // Existing Clash snapshots used the pre-client-specific key. Keep them
   // available after the cache split so a temporary airport outage does not
   // blank an otherwise working Clash subscription.
-  if (snapshot || client === "clash") return snapshot;
+  if (snapshot) return snapshot;
   // Shadowrocket can consume a Clash snapshot after the source has been
   // converted by the server. This is important for converter URLs that
   // reject a Shadowrocket User-Agent while their Clash response remains
