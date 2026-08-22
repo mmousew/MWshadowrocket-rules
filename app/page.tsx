@@ -12,7 +12,7 @@ type Editor =
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
 type DeleteTarget = { kind: "group"; group: Group } | { kind: "rule"; rule: Rule };
 type AirportSourceRecord = { id: string; name: string; kind: "url" | "content"; sourceUrl: string; hidden: boolean; nodeCount: number | null; createdAt: number; updatedAt: number };
-type AirportNodeRecord = { id: string; name: string; type: string; server: string; port: number | null; status: "valid" | "invalid"; reason: string; latency?: number };
+type AirportNodeRecord = { id: string; name: string; type: string; server: string; port: number | null; status: "valid" | "invalid" | "unloaded"; reason: string; latency?: number };
 
 const RULE_TYPES = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "RULE-SET", "GEOSITE", "IP-CIDR", "IP-CIDR6", "GEOIP"];
 const RULE_TYPE_META: Record<string, { label: string; hint: string }> = {
@@ -985,18 +985,29 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
       const proxiesData = await proxiesResponse.json().catch(() => ({}));
       if (!proxiesResponse.ok) throw new Error(`ClashX Meta 接口返回 ${proxiesResponse.status}`);
       const proxyMap = proxiesData && typeof proxiesData.proxies === "object" && proxiesData.proxies ? proxiesData.proxies as Record<string, unknown> : {};
-      const proxyNames = new Set<string>();
-      Object.entries(proxyMap).forEach(([key, value]) => {
-        proxyNames.add(key.trim().toLowerCase());
-        if (value && typeof value === "object" && typeof (value as Record<string, unknown>).name === "string") proxyNames.add(String((value as Record<string, unknown>).name).trim().toLowerCase());
+      const normalizeNodeName = (value: string) => value.toLowerCase().normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, "");
+      const controllerNodes = Object.entries(proxyMap).map(([key, value]) => {
+        const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+        const name = typeof record.name === "string" ? record.name : key;
+        return { key, name, aliases: [normalizeNodeName(key), normalizeNodeName(name)], server: typeof record.server === "string" ? record.server : "", port: Number(record.port) };
       });
+      const findControllerNode = (node: AirportNodeRecord) => {
+        const normalized = normalizeNodeName(node.name);
+        const exact = controllerNodes.find((item) => item.aliases.includes(normalized));
+        if (exact) return exact;
+        const nameMatches = controllerNodes.filter((item) => item.aliases.some((alias) => alias.includes(normalized) || normalized.includes(alias)));
+        if (nameMatches.length === 1) return nameMatches[0];
+        const addressMatch = controllerNodes.find((item) => item.server && item.server.toLowerCase() === node.server.toLowerCase() && Number.isInteger(item.port) && item.port === node.port);
+        return addressMatch;
+      };
       const targetUrl = encodeURIComponent("https://www.gstatic.com/generate_204");
       const tested: AirportNodeRecord[] = [];
       for (let index = 0; index < nodes.length; index += 6) {
         const batch = await Promise.all(nodes.slice(index, index + 6).map(async (node) => {
-          if (!proxyNames.has(node.name.trim().toLowerCase())) return { ...node, status: "invalid" as const, latency: undefined, reason: "ClashX Meta 中找不到此节点" };
+          const controllerNode = findControllerNode(node);
+          if (!controllerNode) return { ...node, status: "unloaded" as const, latency: undefined, reason: "当前 ClashX Meta 配置未加载此节点" };
           try {
-            const response = await fetch(`${baseUrl}/proxies/${encodeURIComponent(node.name)}/delay?timeout=8000&url=${targetUrl}`, { headers, cache: "no-store" });
+            const response = await fetch(`${baseUrl}/proxies/${encodeURIComponent(controllerNode.key)}/delay?timeout=8000&url=${targetUrl}`, { headers, cache: "no-store" });
             const data = await response.json().catch(() => ({}));
             const latency = Number(data?.delay);
             if (!response.ok || !Number.isFinite(latency) || latency <= 0) return { ...node, status: "invalid" as const, latency: undefined, reason: "节点测速失败" };
@@ -1009,7 +1020,8 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
       }
       setNodesBySource((current) => ({ ...current, [source.id]: tested }));
       const successCount = tested.filter((node) => node.status === "valid").length;
-      setTestNote(`${source.name} 测速完成：${successCount}/${tested.length} 个节点有响应。`);
+      const unloadedCount = tested.filter((node) => node.status === "unloaded").length;
+      setTestNote(`${source.name} 测速完成：${successCount}/${tested.length} 个节点有响应${unloadedCount ? `，${unloadedCount} 个未加载到当前 ClashX Meta 配置` : ""}。`);
     } catch (cause) {
       setNodesError((current) => ({ ...current, [source.id]: cause instanceof Error ? `${cause.message}。请检查 ClashX Meta 的 external-controller、端口、Secret 和跨域设置` : "无法连接 ClashX Meta，请检查本机测速设置" }));
     } finally {
@@ -1107,7 +1119,7 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
         <div className="airportListActions"><button type="button" className="ghost" disabled={busy} onClick={() => void toggleHidden(source)}>{source.hidden ? "取消隐藏" : "隐藏"}</button><button type="button" className="ghost" disabled={busy} onClick={() => { setEditingId(source.id); setEditingName(source.name); setEditingUrl(source.sourceUrl); setEditingFile(null); }}>编辑</button><button type="button" className="ghost" disabled={busy} onClick={() => void updateSource(source)}>更新</button><button type="button" className="danger" disabled={busy} onClick={() => void deleteSource(source)}>删除</button></div>
         <div className="airportNodeSection">
           <div className="airportNodeToolbar"><button type="button" className="airportNodeToggle" aria-expanded={expanded} onClick={() => void openNodes(source)}>{expanded ? "收起全部节点" : `查看全部节点${source.nodeCount == null ? "" : `（${source.nodeCount}）`}`}<span>{expanded ? "⌃" : "⌄"}</span></button><button type="button" className="airportNodeTest" disabled={testingSourceId === source.id || nodesLoading[source.id] || busy} onClick={() => void testNodes(source)}>{testingSourceId === source.id ? "测速中…" : "测速"}</button></div>
-          {expanded && <div className="airportNodePanel"><p className="airportNodeHint">测速后绿色显示“有效 · 延迟”，红色显示“失效”；未测速时的绿色只代表配置字段完整。</p>{nodesLoading[source.id] ? <p className="clashLoading">正在读取节点…</p> : nodesError[source.id] ? <p className="airportNodeError">{nodesError[source.id]}</p> : nodes.length ? <div className="airportNodeList">{nodes.map((node) => <div className={`airportNodeRow ${node.status === "valid" ? "nodeValid" : "nodeInvalid"}`} key={node.id}><div><strong>{node.name}</strong><small>{node.type} · {node.server}{node.port ? `:${node.port}` : ""}{node.status === "invalid" ? ` · ${node.reason}` : ""}</small></div><span className="nodeStatus">{node.status === "valid" ? `有效${node.latency ? ` · ${node.latency} ms` : ""}` : "失效"}</span></div>)}</div> : <p className="clashLoading">没有读取到节点，请先更新这个机场来源。</p>}</div>}
+          {expanded && <div className="airportNodePanel"><p className="airportNodeHint">测速后绿色显示“有效 · 延迟”，红色显示“失效”，黄色表示当前 ClashX Meta 没有加载这个节点；未测速时的绿色只代表配置字段完整。</p>{nodesLoading[source.id] ? <p className="clashLoading">正在读取节点…</p> : nodesError[source.id] ? <p className="airportNodeError">{nodesError[source.id]}</p> : nodes.length ? <div className="airportNodeList">{nodes.map((node) => <div className={`airportNodeRow ${node.status === "valid" ? "nodeValid" : node.status === "unloaded" ? "nodeUnloaded" : "nodeInvalid"}`} key={node.id}><div><strong>{node.name}</strong><small>{node.type} · {node.server}{node.port ? `:${node.port}` : ""}{node.status !== "valid" ? ` · ${node.reason}` : ""}</small></div><span className="nodeStatus">{node.status === "valid" ? `有效${node.latency ? ` · ${node.latency} ms` : ""}` : node.status === "unloaded" ? "未加载" : "失效"}</span></div>)}</div> : <p className="clashLoading">没有读取到节点，请先更新这个机场来源。</p>}</div>}
         </div>
       </div>;
     }) : <p className="clashLoading">机场列表还没有来源，请先添加机场订阅或上传 YAML 文件。</p>}</div>

@@ -249,6 +249,7 @@ button,input,select,textarea { max-width:100%; }
 .nodeStatus { flex:0 0 auto; padding:4px 8px; border-radius:999px; font-size:9px; font-weight:750; }
 .nodeValid .nodeStatus { color:#176b4e; background:#e7f6ed; }
 .nodeInvalid .nodeStatus { color:#a34535; background:#fff0ed; }
+.nodeUnloaded .nodeStatus { color:#8a6500; background:#fff7d9; }
 .airportEditRow { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:9px; }
 .airportEditRow input { flex:1 1 220px; min-width:0; margin-top:0; }
 .airportEditRow .filePicker { flex:1 1 220px; min-width:0; margin:0; padding:9px; }
