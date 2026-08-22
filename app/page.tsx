@@ -12,7 +12,7 @@ type Editor =
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
 type DeleteTarget = { kind: "group"; group: Group } | { kind: "rule"; rule: Rule };
 type AirportSourceRecord = { id: string; name: string; kind: "url" | "content"; sourceUrl: string; hidden: boolean; nodeCount: number | null; createdAt: number; updatedAt: number };
-type AirportNodeRecord = { id: string; name: string; type: string; server: string; port: number | null; status: "valid" | "invalid"; reason: string };
+type AirportNodeRecord = { id: string; name: string; type: string; server: string; port: number | null; status: "valid" | "invalid"; reason: string; latency?: number };
 
 const RULE_TYPES = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "RULE-SET", "GEOSITE", "IP-CIDR", "IP-CIDR6", "GEOIP"];
 const RULE_TYPE_META: Record<string, { label: string; hint: string }> = {
@@ -921,11 +921,39 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
   const [nodesBySource, setNodesBySource] = useState<Record<string, AirportNodeRecord[]>>({});
   const [nodesLoading, setNodesLoading] = useState<Record<string, boolean>>({});
   const [nodesError, setNodesError] = useState<Record<string, string>>({});
+  const [testingSourceId, setTestingSourceId] = useState<string | null>(null);
+  const [controllerUrl, setControllerUrl] = useState("http://127.0.0.1:9090");
+  const [controllerSecret, setControllerSecret] = useState("");
+  const [testNote, setTestNote] = useState("");
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("mw_clash_controller_url");
+    if (saved) setControllerUrl(saved);
+  }, []);
 
   function replaceSource(source: AirportSourceRecord) {
     onSourcesChange(sources.map((item) => item.id === source.id ? source : item));
     setNodesBySource((current) => { const next = { ...current }; delete next[source.id]; return next; });
     setNodesError((current) => { const next = { ...current }; delete next[source.id]; return next; });
+  }
+
+  async function loadNodes(source: AirportSourceRecord) {
+    if (nodesBySource[source.id] || nodesLoading[source.id]) return;
+    setNodesLoading((current) => ({ ...current, [source.id]: true }));
+    setNodesError((current) => ({ ...current, [source.id]: "" }));
+    try {
+      const response = await fetch(`/api/clash/airport/nodes?id=${encodeURIComponent(source.id)}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "读取节点失败");
+      const nodes = Array.isArray(data.nodes) ? data.nodes as AirportNodeRecord[] : [];
+      setNodesBySource((current) => ({ ...current, [source.id]: nodes }));
+      return nodes;
+    } catch (cause) {
+      setNodesError((current) => ({ ...current, [source.id]: cause instanceof Error ? cause.message : "读取节点失败" }));
+      return null;
+    } finally {
+      setNodesLoading((current) => ({ ...current, [source.id]: false }));
+    }
   }
 
   async function openNodes(source: AirportSourceRecord) {
@@ -934,18 +962,58 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
       return;
     }
     setExpandedSourceId(source.id);
-    if (nodesBySource[source.id] || nodesLoading[source.id]) return;
-    setNodesLoading((current) => ({ ...current, [source.id]: true }));
+    await loadNodes(source);
+  }
+
+  async function testNodes(source: AirportSourceRecord) {
+    const nodes = nodesBySource[source.id] || await loadNodes(source);
+    if (!nodes?.length) {
+      setNodesError((current) => ({ ...current, [source.id]: "没有可测速的节点，请先更新这个机场来源" }));
+      return;
+    }
+    const baseUrl = controllerUrl.trim().replace(/\/+$/, "");
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      setNodesError((current) => ({ ...current, [source.id]: "ClashX Meta 地址格式不正确" }));
+      return;
+    }
+    setTestingSourceId(source.id);
     setNodesError((current) => ({ ...current, [source.id]: "" }));
+    setTestNote("");
     try {
-      const response = await fetch(`/api/clash/airport/nodes?id=${encodeURIComponent(source.id)}`, { cache: "no-store" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "读取节点失败");
-      setNodesBySource((current) => ({ ...current, [source.id]: Array.isArray(data.nodes) ? data.nodes : [] }));
+      const headers: HeadersInit = controllerSecret.trim() ? { Authorization: `Bearer ${controllerSecret.trim()}` } : {};
+      const proxiesResponse = await fetch(`${baseUrl}/proxies`, { headers, cache: "no-store" });
+      const proxiesData = await proxiesResponse.json().catch(() => ({}));
+      if (!proxiesResponse.ok) throw new Error(`ClashX Meta 接口返回 ${proxiesResponse.status}`);
+      const proxyMap = proxiesData && typeof proxiesData.proxies === "object" && proxiesData.proxies ? proxiesData.proxies as Record<string, unknown> : {};
+      const proxyNames = new Set<string>();
+      Object.entries(proxyMap).forEach(([key, value]) => {
+        proxyNames.add(key.trim().toLowerCase());
+        if (value && typeof value === "object" && typeof (value as Record<string, unknown>).name === "string") proxyNames.add(String((value as Record<string, unknown>).name).trim().toLowerCase());
+      });
+      const targetUrl = encodeURIComponent("https://www.gstatic.com/generate_204");
+      const tested: AirportNodeRecord[] = [];
+      for (let index = 0; index < nodes.length; index += 6) {
+        const batch = await Promise.all(nodes.slice(index, index + 6).map(async (node) => {
+          if (!proxyNames.has(node.name.trim().toLowerCase())) return { ...node, status: "invalid" as const, latency: undefined, reason: "ClashX Meta 中找不到此节点" };
+          try {
+            const response = await fetch(`${baseUrl}/proxies/${encodeURIComponent(node.name)}/delay?timeout=8000&url=${targetUrl}`, { headers, cache: "no-store" });
+            const data = await response.json().catch(() => ({}));
+            const latency = Number(data?.delay);
+            if (!response.ok || !Number.isFinite(latency) || latency <= 0) return { ...node, status: "invalid" as const, latency: undefined, reason: "节点测速失败" };
+            return { ...node, status: "valid" as const, latency, reason: "测速成功" };
+          } catch {
+            return { ...node, status: "invalid" as const, latency: undefined, reason: "无法连接 ClashX Meta" };
+          }
+        }));
+        tested.push(...batch);
+      }
+      setNodesBySource((current) => ({ ...current, [source.id]: tested }));
+      const successCount = tested.filter((node) => node.status === "valid").length;
+      setTestNote(`${source.name} 测速完成：${successCount}/${tested.length} 个节点有响应。`);
     } catch (cause) {
-      setNodesError((current) => ({ ...current, [source.id]: cause instanceof Error ? cause.message : "读取节点失败" }));
+      setNodesError((current) => ({ ...current, [source.id]: cause instanceof Error ? `${cause.message}。请检查 ClashX Meta 的 external-controller、端口、Secret 和跨域设置` : "无法连接 ClashX Meta，请检查本机测速设置" }));
     } finally {
-      setNodesLoading((current) => ({ ...current, [source.id]: false }));
+      setTestingSourceId(null);
     }
   }
 
@@ -1029,6 +1097,8 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
   return <section className="airportListPanel">
     <div className="airportListHead"><div><h3>机场列表</h3><p>这里管理所有机场订阅来源；更新会重新读取该机场，删除会同步移除关联。</p></div><button type="button" className="primary" onClick={() => setFormOpen((value) => !value)}>＋ 添加机场</button></div>
     {formOpen && <form className="airportListForm" onSubmit={addSource}><label>机场备注名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：花云400G" /></label><label>订阅地址<input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://机场订阅地址" /></label><label className="filePicker">或者上传 YAML 文件<input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" onChange={(event) => setSourceFile(event.target.files?.[0] || null)} /></label>{sourceFile && <div className="selectedFiles">已选择：{sourceFile.name}</div>}<div className="profileEditorActions"><button className="primary" type="submit" disabled={busy}>{busy ? "保存中…" : "保存到机场列表"}</button><button type="button" className="ghost" onClick={() => setFormOpen(false)}>取消</button></div></form>}
+    <details className="airportTestSettings"><summary>本机测速设置（ClashX Meta）</summary><div className="airportTestSettingsBody"><label>external-controller 地址<input value={controllerUrl} onChange={(event) => setControllerUrl(event.target.value)} placeholder="http://127.0.0.1:9090" /></label><label>Secret（没有可留空）<input type="password" value={controllerSecret} onChange={(event) => setControllerSecret(event.target.value)} placeholder="ClashX Meta 的 secret" autoComplete="off" /></label><button type="button" className="ghost" onClick={() => { const value = controllerUrl.trim().replace(/\/+$/, ""); setControllerUrl(value); window.localStorage.setItem("mw_clash_controller_url", value); setTestNote("测速设置已保存到当前浏览器"); }}>保存测速设置</button><p>测速请求从当前浏览器发往本机 ClashX Meta；需要开启 external-controller，并允许当前网页跨域访问。</p></div></details>
+    {testNote && <p className="airportTestNote">{testNote}</p>}
     <div className="airportListRows">{sources.length ? sources.map((source) => {
       const expanded = expandedSourceId === source.id;
       const nodes = nodesBySource[source.id] || [];
@@ -1036,8 +1106,8 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
         <div className="airportListMeta"><strong>{source.name}</strong><div className="airportNodeCount">已获取节点 <strong>{source.nodeCount == null ? "—" : source.nodeCount}</strong> 个</div><small>{source.hidden ? "已隐藏 · " : ""}{source.kind === "url" ? source.sourceUrl : "本地 YAML 文件"}</small>{editingId === source.id && <form className="airportEditRow" onSubmit={(event) => void saveEdit(event, source)}>{source.kind === "url" ? <input value={editingUrl} onChange={(event) => setEditingUrl(event.target.value)} placeholder="新的订阅地址" aria-label="编辑订阅地址" /> : <label className="filePicker">替换 YAML 文件<input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" onChange={(event) => setEditingFile(event.target.files?.[0] || null)} /></label>}<input value={editingName} onChange={(event) => setEditingName(event.target.value)} placeholder="机场备注名称" aria-label="编辑机场备注名称" /><button className="primary" type="submit" disabled={busy}>保存</button><button type="button" className="ghost" disabled={busy} onClick={() => setEditingId(null)}>取消</button></form>}</div>
         <div className="airportListActions"><button type="button" className="ghost" disabled={busy} onClick={() => void toggleHidden(source)}>{source.hidden ? "取消隐藏" : "隐藏"}</button><button type="button" className="ghost" disabled={busy} onClick={() => { setEditingId(source.id); setEditingName(source.name); setEditingUrl(source.sourceUrl); setEditingFile(null); }}>编辑</button><button type="button" className="ghost" disabled={busy} onClick={() => void updateSource(source)}>更新</button><button type="button" className="danger" disabled={busy} onClick={() => void deleteSource(source)}>删除</button></div>
         <div className="airportNodeSection">
-          <button type="button" className="airportNodeToggle" aria-expanded={expanded} onClick={() => void openNodes(source)}>{expanded ? "收起全部节点" : `查看全部节点${source.nodeCount == null ? "" : `（${source.nodeCount}）`}`}<span>{expanded ? "⌃" : "⌄"}</span></button>
-          {expanded && <div className="airportNodePanel"><p className="airportNodeHint">绿色表示节点参数完整，红色表示配置缺少必要字段；这不是客户端实际测速。</p>{nodesLoading[source.id] ? <p className="clashLoading">正在读取节点…</p> : nodesError[source.id] ? <p className="airportNodeError">{nodesError[source.id]}</p> : nodes.length ? <div className="airportNodeList">{nodes.map((node) => <div className={`airportNodeRow ${node.status === "valid" ? "nodeValid" : "nodeInvalid"}`} key={node.id}><div><strong>{node.name}</strong><small>{node.type} · {node.server}{node.port ? `:${node.port}` : ""}{node.status === "invalid" ? ` · ${node.reason}` : ""}</small></div><span className="nodeStatus">{node.status === "valid" ? "有效" : "失效"}</span></div>)}</div> : <p className="clashLoading">没有读取到节点，请先更新这个机场来源。</p>}</div>}
+          <div className="airportNodeToolbar"><button type="button" className="airportNodeToggle" aria-expanded={expanded} onClick={() => void openNodes(source)}>{expanded ? "收起全部节点" : `查看全部节点${source.nodeCount == null ? "" : `（${source.nodeCount}）`}`}<span>{expanded ? "⌃" : "⌄"}</span></button><button type="button" className="airportNodeTest" disabled={testingSourceId === source.id || nodesLoading[source.id] || busy} onClick={() => void testNodes(source)}>{testingSourceId === source.id ? "测速中…" : "测速"}</button></div>
+          {expanded && <div className="airportNodePanel"><p className="airportNodeHint">测速后绿色显示“有效 · 延迟”，红色显示“失效”；未测速时的绿色只代表配置字段完整。</p>{nodesLoading[source.id] ? <p className="clashLoading">正在读取节点…</p> : nodesError[source.id] ? <p className="airportNodeError">{nodesError[source.id]}</p> : nodes.length ? <div className="airportNodeList">{nodes.map((node) => <div className={`airportNodeRow ${node.status === "valid" ? "nodeValid" : "nodeInvalid"}`} key={node.id}><div><strong>{node.name}</strong><small>{node.type} · {node.server}{node.port ? `:${node.port}` : ""}{node.status === "invalid" ? ` · ${node.reason}` : ""}</small></div><span className="nodeStatus">{node.status === "valid" ? `有效${node.latency ? ` · ${node.latency} ms` : ""}` : "失效"}</span></div>)}</div> : <p className="clashLoading">没有读取到节点，请先更新这个机场来源。</p>}</div>}
         </div>
       </div>;
     }) : <p className="clashLoading">机场列表还没有来源，请先添加机场订阅或上传 YAML 文件。</p>}</div>

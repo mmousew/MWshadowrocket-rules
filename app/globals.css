@@ -213,6 +213,13 @@ button,input,select,textarea { max-width:100%; }
 .airportListForm { display:grid; gap:11px; padding:16px; border:1px solid #b9d9c5; border-radius:13px; background:#f4fbf6; }
 .airportListForm label { margin:0; }
 .airportListForm .filePicker { margin:0; }
+.airportTestSettings { padding:10px 12px; border:1px solid #dce7e0; border-radius:10px; background:#fbfdfb; }
+.airportTestSettings summary { color:#4f7561; font-size:10px; font-weight:750; cursor:pointer; }
+.airportTestSettingsBody { display:grid; gap:9px; margin-top:10px; }
+.airportTestSettingsBody label { margin:0; }
+.airportTestSettingsBody button { justify-content:center; }
+.airportTestSettingsBody p { margin:0; color:#87938c; font-size:9px; line-height:1.5; }
+.airportTestNote { margin:0; padding:9px 10px; border:1px solid #c8e7d5; border-radius:9px; color:#276f53; background:#eaf7ef; font-size:10px; }
 .airportListRows { display:grid; gap:9px; }
 .airportListRow { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; min-width:0; padding:13px; border:1px solid #dce7e0; border-radius:12px; background:#fff; }
 .airportListRow.sourceHidden { opacity:.62; background:#f4f7f5; }
@@ -224,9 +231,13 @@ button,input,select,textarea { max-width:100%; }
 .airportListActions { display:flex; flex-wrap:wrap; gap:7px; justify-content:flex-end; }
 .airportListActions button { min-width:48px; padding:7px 9px; font-size:10px; }
 .airportNodeSection { flex:1 1 100%; min-width:0; padding-top:10px; border-top:1px solid #e5eee8; }
-.airportNodeToggle { display:flex; width:100%; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid #cfe2d5; border-radius:9px; color:#276f53; background:#f4fbf6; font-size:10px; font-weight:750; cursor:pointer; }
+.airportNodeToolbar { display:flex; align-items:stretch; gap:8px; }
+.airportNodeToggle { display:flex; flex:1; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid #cfe2d5; border-radius:9px; color:#276f53; background:#f4fbf6; font-size:10px; font-weight:750; cursor:pointer; }
 .airportNodeToggle:hover { background:#eaf7ef; }
 .airportNodeToggle span { color:#739082; font-size:14px; line-height:1; }
+.airportNodeTest { flex:0 0 auto; min-width:58px; padding:8px 11px; border:1px solid #cfe2d5; border-radius:9px; color:#276f53; background:#f4fbf6; font-size:10px; font-weight:750; cursor:pointer; }
+.airportNodeTest:hover { background:#eaf7ef; }
+.airportNodeTest:disabled { opacity:.58; cursor:wait; }
 .airportNodePanel { display:grid; gap:8px; margin-top:8px; padding:10px; border:1px solid #e2ece5; border-radius:10px; background:#fbfdfb; }
 .airportNodeHint { margin:0; color:#87938c; font-size:9px; line-height:1.5; }
 .airportNodeError { margin:0; color:#9a4434; font-size:10px; line-height:1.5; }
