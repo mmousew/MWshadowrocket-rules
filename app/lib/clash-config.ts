@@ -8,18 +8,6 @@ type RuleProvider = { name: string; url: string; format: "text" | "yaml" };
 const FINAL_GROUP_SOURCE_NAME = "final";
 const FINAL_GROUP_CLIENT_NAME = "MW-FINAL";
 
-// 快枪手的节点域名会在部分合并场景中被 Fake-IP DNS 接管，导致
-// ClashX Meta 对节点测速失败。SS 节点不依赖 TLS SNI，因此可安全使用
-// 机场专用 DNS 返回的真实 IP，避免和其他机场的 DNS 互相影响。
-const KNOWN_PROXY_HOSTS: Record<string, string> = {
-  "kqs-hk.kunlun03dns.com": "15.152.30.113",
-  "kqs-tw.kunlun03dns.com": "13.208.248.79",
-  "kqs-jp.kunlun03dns.com": "13.208.166.100",
-  "kqs-us.kunlun03dns.com": "15.152.31.226",
-  "kqs-kr.kunlun03dns.com": "15.152.31.226",
-  "kqs-sg.kunlun03dns.com": "13.208.248.79",
-};
-
 function splitRuleLine(line: string) {
   const parts: string[] = [];
   let current = "";
@@ -236,14 +224,6 @@ export function parseAirportProxies(content: string): ClashProxy[] {
   });
 }
 
-function stabilizeKnownProxyHosts(proxies: ClashProxy[]) {
-  return proxies.map((proxy) => {
-    const server = String(proxy.server || "").toLowerCase();
-    const address = KNOWN_PROXY_HOSTS[server];
-    return address ? { ...proxy, server: address } : proxy;
-  });
-}
-
 export function getAirportProxyCount(content: string) {
   return parseAirportProxies(content).length;
 }
@@ -343,7 +323,7 @@ function convertRules(rules: ShadowrocketRule[], groups: ShadowrocketGroup[]) {
 export function buildClashConfig(ruleContent: string, airportContent: string | string[]) {
   const sources = Array.isArray(airportContent) ? airportContent : [airportContent];
   const seenProxyNames = new Set<string>();
-  const proxies = sources.flatMap((source) => stabilizeKnownProxyHosts(parseAirportProxies(source))).filter((proxy) => {
+  const proxies = sources.flatMap((source) => parseAirportProxies(source)).filter((proxy) => {
     const name = String(proxy.name || "");
     const nameKey = name.trim().toLowerCase();
     if (!name || seenProxyNames.has(nameKey)) return false;

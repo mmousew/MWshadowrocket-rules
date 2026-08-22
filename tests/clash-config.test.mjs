@@ -35,6 +35,22 @@ proxies:
     password: test-kr
 `;
 
+const kqsAirport = `
+proxies:
+  - name: VIP 香港 01
+    type: ss
+    server: kqs-hk.kunlun03dns.com
+    port: 25101
+    cipher: aes-128-gcm
+    password: test-kqs
+  - name: 花云香港 IEPL 1
+    type: ss
+    server: flower.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: test-flower
+`;
+
 test("Clash FINAL uses a dedicated fallback group with PROXY as default", () => {
   const config = parseYaml(buildClashConfig(rules, airport));
   const finalGroups = config["proxy-groups"].filter((group) => group.name === "MW-FINAL");
@@ -59,4 +75,16 @@ test("Rules-only Shadowrocket output keeps the fallback group without nodes", ()
   assert.match(config, /^MW-FINAL = select,Proxies,DIRECT$/m);
   assert.match(config, /^FINAL,MW-FINAL$/m);
   assert.doesNotMatch(config, /^\[Proxy\]$/m);
+});
+
+test("Merged outputs preserve each airport's original proxy server", () => {
+  const clash = parseYaml(buildClashConfig(rules, kqsAirport));
+  const clashKqs = clash.proxies.find((proxy) => proxy.name === "VIP 香港 01");
+  const clashFlower = clash.proxies.find((proxy) => proxy.name === "花云香港 IEPL 1");
+  assert.equal(clashKqs.server, "kqs-hk.kunlun03dns.com");
+  assert.equal(clashFlower.server, "flower.example.com");
+
+  const shadowrocket = buildShadowrocketConfig(rules, kqsAirport);
+  assert.match(shadowrocket, /^VIP 香港 01=ss,kqs-hk\.kunlun03dns\.com,25101,/m);
+  assert.match(shadowrocket, /^花云香港 IEPL 1=ss,flower\.example\.com,443,/m);
 });
