@@ -5,6 +5,9 @@ type ShadowrocketRule = { type: string; value: string; policy: string; options: 
 type ClashProxy = Record<string, unknown>;
 type RuleProvider = { name: string; url: string; format: "text" | "yaml" };
 
+const FINAL_GROUP_SOURCE_NAME = "final";
+const FINAL_GROUP_CLIENT_NAME = "MW-FINAL";
+
 // 快枪手的节点域名会在部分合并场景中被 Fake-IP DNS 接管，导致
 // ClashX Meta 对节点测速失败。SS 节点不依赖 TLS SNI，因此可安全使用
 // 机场专用 DNS 返回的真实 IP，避免和其他机场的 DNS 互相影响。
@@ -298,6 +301,19 @@ function findOption(items: string[], key: string) {
   return items.find((item) => item.trim().toLowerCase().startsWith(prefix))?.trim().slice(prefix.length);
 }
 
+function normalizeFinalGroupForClash(groups: ShadowrocketGroup[], rules: ShadowrocketRule[]) {
+  const normalizedGroups = groups.map((group) => group.name.trim().toLowerCase() === FINAL_GROUP_SOURCE_NAME
+    ? { name: FINAL_GROUP_CLIENT_NAME, kind: "select", items: ["Proxies", "DIRECT"] }
+    : group);
+  const normalizedRules = rules.map((rule) => ({
+    ...rule,
+    policy: rule.type.toUpperCase() === "FINAL" || rule.policy.trim().toLowerCase() === FINAL_GROUP_SOURCE_NAME
+      ? FINAL_GROUP_CLIENT_NAME
+      : rule.policy,
+  }));
+  return { groups: normalizedGroups, rules: normalizedRules };
+}
+
 function convertRules(rules: ShadowrocketRule[], groups: ShadowrocketGroup[]) {
   const aliases = createPolicyAliases(groups, "PROXY");
   const converted: string[] = [];
@@ -335,7 +351,8 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     return true;
   });
   if (!proxies.length) throw new Error("机场配置没有可转换的节点");
-  const { groups, rules } = parseGroupsAndRules(ruleContent);
+  const parsed = parseGroupsAndRules(ruleContent);
+  const { groups, rules } = normalizeFinalGroupForClash(parsed.groups, parsed.rules);
   const proxyGroups = convertGroups(groups, proxies.map((proxy) => String(proxy.name)));
   const { converted, providers, skipped } = convertRules(rules, groups);
   const airportDns = readAirportDns(sources);
@@ -384,6 +401,47 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     ...[...new Set(["*.lan", "+.local", "localhost.ptlogin2.qq.com", ...airportDns.fakeIpFilter])].map((item) => `    - ${quote(item)}`),
   ].join("\n");
   return `# MW Rules for ClashX Meta\n# 自动合并机场节点与 GitHub 分流规则；跳过 ${skipped} 条 Clash 不支持的规则\nmixed-port: 7890\nmode: rule\nallow-lan: false\nlog-level: info\nipv6: false\n\n${dnsYaml}\n\nproxies:\n${yamlList(proxies)}\n\nproxy-groups:\n${yamlList(proxyGroups)}${providerYaml}\n\nrules:\n${converted.map((rule) => `  - ${quote(rule)}`).join("\n")}\n`;
+}
+
+function normalizeFinalGroupForShadowrocket(config: string) {
+  const lines = config.split(/\r?\n/);
+  const groupStart = lines.findIndex((line) => line.trim() === "[Proxy Group]");
+  const ruleStart = lines.findIndex((line) => line.trim() === "[Rule]");
+  if (groupStart < 0 || ruleStart < 0 || ruleStart <= groupStart) return config;
+
+  const groupNames = lines.slice(groupStart + 1, ruleStart)
+    .map((line) => {
+      const separator = line.indexOf("=");
+      return separator > 0 ? line.slice(0, separator).trim() : "";
+    })
+    .filter(Boolean);
+  const proxiesGroup = groupNames.find((name) => name.toLowerCase() === "proxies") || "PROXY";
+
+  return lines.map((raw, index) => {
+    if (index > groupStart && index < ruleStart) {
+      const separator = raw.indexOf("=");
+      if (separator < 1) return raw;
+      const name = raw.slice(0, separator).trim();
+      if (name.toLowerCase() === FINAL_GROUP_SOURCE_NAME || name.toLowerCase() === FINAL_GROUP_CLIENT_NAME.toLowerCase()) {
+        return `${FINAL_GROUP_CLIENT_NAME} = select,${proxiesGroup},DIRECT`;
+      }
+      const values = splitRuleLine(raw.slice(separator + 1));
+      if (!values.length) return raw;
+      const items = values.slice(1).map((item) => item.trim().toLowerCase() === FINAL_GROUP_SOURCE_NAME ? FINAL_GROUP_CLIENT_NAME : item);
+      return `${name} = ${[values[0], ...items].join(",")}`;
+    }
+    if (index > ruleStart) {
+      const trimmed = raw.trim();
+      if (!trimmed || trimmed.startsWith("#")) return raw;
+      const parts = splitRuleLine(raw);
+      if (parts[0].toUpperCase() === "FINAL") return `FINAL,${FINAL_GROUP_CLIENT_NAME}${parts.length > 2 ? `,${parts.slice(2).join(",")}` : ""}`;
+      if (parts.length >= 3 && parts[2].trim().toLowerCase() === FINAL_GROUP_SOURCE_NAME) {
+        parts[2] = FINAL_GROUP_CLIENT_NAME;
+        return parts.join(",");
+      }
+    }
+    return raw;
+  }).join("\n");
 }
 
 function shadowrocketProxyLine(proxy: ClashProxy) {
@@ -555,12 +613,12 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   });
   const proxySection = ["[Proxy]", ...existing, ...generated];
   if (proxyStart < 0) {
-    const config = `${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`;
+    const config = normalizeFinalGroupForShadowrocket(`${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`);
     const expanded = expandShadowrocketIncludeAllGroups(config, [...names]);
     return normalizeShadowrocketConfig(normalizeShadowrocketPolicyReferences(expanded, [...names]));
   }
   const end = nextSection > proxyStart ? nextSection : lines.length;
-  const config = [...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n");
+  const config = normalizeFinalGroupForShadowrocket([...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n"));
   const expandedConfig = expandShadowrocketIncludeAllGroups(config, [...names]);
   const normalizedConfig = normalizeShadowrocketPolicyReferences(expandedConfig, [...names]);
   // Shadowrocket does not understand geosite rule references; omit them only from its output.
