@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
-import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, getRuleConfig, listRuleConfigs, updateRuleConfig } from "../../lib/rule-configs";
+import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, updateRuleConfig } from "../../lib/rule-configs";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -35,6 +35,8 @@ async function ensureConfigs() {
   let defaultConfig = await getRuleConfig("default");
   if (!defaultConfig) defaultConfig = await ensureDefaultRuleConfig(await readGitHubRules());
   if (!defaultConfig) throw new Error("默认规则方案初始化失败");
+  await ensureRuleConfigAssignments();
+  defaultConfig = await getRuleConfig("default") || defaultConfig;
   return { configs: await listRuleConfigs(), defaultConfig };
 }
 

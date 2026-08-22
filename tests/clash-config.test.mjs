@@ -3,10 +3,31 @@ import test from "node:test";
 import { parse as parseYaml } from "yaml";
 import {
   buildClashConfig,
+  buildShadowrocketRuleConfigFromClash,
   buildShadowrocketConfig,
   buildShadowrocketRulesConfig,
   resolveAirportProxyHosts,
 } from "../app/lib/clash-config.ts";
+
+const flowerRules = `
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies: [DIRECT]
+  - name: 韩国
+    type: select
+    proxies: [PROXY]
+    filter: "韩国|Korea"
+rule-providers:
+  social:
+    type: http
+    behavior: domain
+    url: https://rules.example/social.yaml
+rules:
+  - RULE-SET,social,PROXY
+  - DOMAIN-SUFFIX,kr.example,韩国
+  - MATCH,PROXY
+`;
 
 const rules = `
 [Proxy Group]
@@ -89,6 +110,18 @@ test("Rules-only Shadowrocket output keeps the fallback group without nodes", ()
   assert.match(config, /^MW-FINAL = select,Proxies,DIRECT$/m);
   assert.match(config, /^FINAL,MW-FINAL$/m);
   assert.doesNotMatch(config, /^\[Proxy\]$/m);
+});
+
+test("Flower Clash source becomes a rules-only default scheme", () => {
+  const config = buildShadowrocketRuleConfigFromClash(flowerRules);
+  assert.match(config, /^#!name=花云默认规则$/m);
+  assert.match(config, /^Proxies = select,include-all-proxies=true,DIRECT$/m);
+  assert.match(config, /^韩国 = select,Proxies,include-all-proxies=true,policy-regex-filter=韩国\|Korea$/m);
+  assert.match(config, /^RULE-SET,https:\/\/rules\.example\/social\.yaml,Proxies$/m);
+  assert.match(config, /^DOMAIN-SUFFIX,kr\.example,韩国$/m);
+  assert.match(config, /^FINAL,Proxies$/m);
+  assert.doesNotMatch(config, /^\[Proxy\]$/m);
+  assert.doesNotMatch(config, /^proxies:/m);
 });
 
 test("Merged outputs preserve each airport's original proxy server", () => {

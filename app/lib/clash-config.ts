@@ -24,6 +24,99 @@ function splitRuleLine(line: string) {
   return parts;
 }
 
+function normalizeClashPolicy(value: string) {
+  const policy = value.trim();
+  if (/^(?:proxy|proxies)$/i.test(policy)) return "Proxies";
+  if (/^direct$/i.test(policy)) return "DIRECT";
+  if (/^reject$/i.test(policy)) return "REJECT";
+  return policy;
+}
+
+function normalizeClashGroupKind(value: string) {
+  return /^(?:url-test|fallback|load-balance|smart)$/i.test(value) ? "url-test" : "select";
+}
+
+function clashRuleProviderUrls(parsed: Record<string, unknown>) {
+  const providers = parsed["rule-providers"];
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return new Map<string, string>();
+  return new Map(Object.entries(providers as Record<string, unknown>).flatMap(([name, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const url = (value as Record<string, unknown>).url;
+    return typeof url === "string" && /^https?:\/\//i.test(url) ? [[name.trim().toLowerCase(), url.trim()] as const] : [];
+  }));
+}
+
+/**
+ * Extract only the rule/group layer from a Clash airport file.
+ * Nodes are deliberately excluded: each subscription supplies its own nodes
+ * when the final Clash or Shadowrocket file is generated.
+ */
+export function buildShadowrocketRuleConfigFromClash(content: string, name = "花云默认规则") {
+  const parsed = parseYaml(content) as Record<string, unknown> | null;
+  if (!parsed || typeof parsed !== "object") throw new Error("花云配置不是有效的 Clash YAML");
+
+  const rawGroups = Array.isArray(parsed["proxy-groups"]) ? parsed["proxy-groups"] : [];
+  const groups: string[] = [];
+  const groupKeys = new Set<string>();
+  for (const rawGroup of rawGroups) {
+    if (!rawGroup || typeof rawGroup !== "object" || Array.isArray(rawGroup)) continue;
+    const group = rawGroup as Record<string, unknown>;
+    const rawName = typeof group.name === "string" ? group.name.trim() : "";
+    if (!rawName) continue;
+    const groupName = /^(?:proxy|proxies)$/i.test(rawName) ? "Proxies" : rawName;
+    const groupKey = groupName.toLowerCase();
+    if (groupKeys.has(groupKey)) continue;
+    groupKeys.add(groupKey);
+    const type = typeof group.type === "string" ? normalizeClashGroupKind(group.type) : "select";
+    const rawProxies = Array.isArray(group.proxies) ? group.proxies.filter((item): item is string => typeof item === "string" && item.trim()).map((item) => normalizeClashPolicy(item)) : [];
+    const rawUse = Array.isArray(group.use) ? group.use.filter((item): item is string => typeof item === "string" && item.trim()) : [];
+    const filter = typeof group.filter === "string" ? group.filter.trim() : "";
+    const items = groupName === "Proxies"
+      ? ["include-all-proxies=true", "DIRECT"]
+      : [...rawProxies, ...(rawUse.length || filter ? ["include-all-proxies=true"] : [])];
+    if (filter) items.push(`policy-regex-filter=${filter}`);
+    if (!items.length) items.push("DIRECT");
+    groups.push(`${groupName} = ${type},${[...new Set(items)].join(",")}`);
+  }
+  if (!groupKeys.has("proxies")) groups.unshift("Proxies = select,include-all-proxies=true,DIRECT");
+
+  const providerUrls = clashRuleProviderUrls(parsed);
+  const rawRules = Array.isArray(parsed.rules) ? parsed.rules : [];
+  const rules = rawRules.flatMap((rawRule) => {
+    if (typeof rawRule !== "string") return [];
+    const parts = splitRuleLine(rawRule.trim());
+    if (parts.length < 2 || !parts[0]) return [];
+    const type = parts[0].trim().toUpperCase();
+    if (type === "MATCH") return [`FINAL,${normalizeClashPolicy(parts[1] || "Proxies")}`];
+    if (type === "FINAL") return [`FINAL,${normalizeClashPolicy(parts[1] || "Proxies")}`];
+    if (type === "RULE-SET" && parts[1]) {
+      const providerUrl = providerUrls.get(parts[1].trim().toLowerCase());
+      if (providerUrl) parts[1] = providerUrl;
+      else if (!/^https?:\/\//i.test(parts[1]) && !/^geosite:/i.test(parts[1])) return [];
+    }
+    if (parts.length >= 3) parts[2] = normalizeClashPolicy(parts[2]);
+    return [parts.join(",")];
+  });
+  if (!rules.some((rule) => /^FINAL,/i.test(rule))) rules.push("FINAL,Proxies");
+
+  return [
+    `#!name=${name}`,
+    "#!desc=来源：花云机场；这里只保存规则和分组，节点由当前订阅来源独立提供。",
+    "",
+    "[General]",
+    "bypass-system = true",
+    "skip-proxy = 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,localhost,*.local,captive.apple.com",
+    "dns-server = system",
+    "",
+    "[Proxy Group]",
+    ...groups,
+    "",
+    "[Rule]",
+    ...rules,
+    "",
+  ].join("\n");
+}
+
 function quote(value: unknown) {
   return JSON.stringify(String(value));
 }

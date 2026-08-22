@@ -3,7 +3,7 @@ import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
-import { getRuleConfig } from "../../../lib/rule-configs";
+import { ensureRuleConfigAssignments, getRuleConfig } from "../../../lib/rule-configs";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -39,6 +39,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
   let managedLink = false;
   let profileName = "订阅配置";
   let ruleConfigId = "default";
+  // Apply the one-time rule-scheme migration before reading the profile so a
+  // managed link immediately picks up its corrected rule assignment.
+  try { await ensureRuleConfigAssignments(); } catch { /* retain legacy output if D1 is temporarily unavailable */ }
   try {
     const record = await findClashLink(token);
     if (record) {

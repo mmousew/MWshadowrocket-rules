@@ -4,7 +4,7 @@ import { encryptSourceUrl, parseSourceEntries, type ClashSourceEntry } from "../
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { getAirportProxyCount } from "../../../lib/clash-config";
 import { createClashProfile, getClashProfile, getSourceSnapshot, listClashProfiles, renameClashProfile, updateClashProfileRuleConfig } from "../../../lib/clash-links";
-import { getRuleConfig } from "../../../lib/rule-configs";
+import { ensureRuleConfigAssignments, getRuleConfig } from "../../../lib/rule-configs";
 
 function sourceName(entry: ClashSourceEntry, index: number) {
   if (entry.name?.trim()) return entry.name.trim();
@@ -28,6 +28,7 @@ async function publicProfile(profile: { id: string; name: string; encrypted_sour
 export async function GET(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
+    await ensureRuleConfigAssignments();
     const profiles = await listClashProfiles();
     return NextResponse.json({ profiles: await Promise.all(profiles.map(publicProfile)) });
   } catch (error) {
