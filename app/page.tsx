@@ -12,6 +12,7 @@ type Editor =
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
 type DeleteTarget = { kind: "group"; group: Group } | { kind: "rule"; rule: Rule };
 type AirportSourceRecord = { id: string; name: string; kind: "url" | "content"; sourceUrl: string; hidden: boolean; nodeCount: number | null; createdAt: number; updatedAt: number };
+type AirportNodeRecord = { id: string; name: string; type: string; server: string; port: number | null; status: "valid" | "invalid"; reason: string };
 
 const RULE_TYPES = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "RULE-SET", "GEOSITE", "IP-CIDR", "IP-CIDR6", "GEOIP"];
 const RULE_TYPE_META: Record<string, { label: string; hint: string }> = {
@@ -916,9 +917,36 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
   const [editingUrl, setEditingUrl] = useState("");
   const [editingFile, setEditingFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null);
+  const [nodesBySource, setNodesBySource] = useState<Record<string, AirportNodeRecord[]>>({});
+  const [nodesLoading, setNodesLoading] = useState<Record<string, boolean>>({});
+  const [nodesError, setNodesError] = useState<Record<string, string>>({});
 
   function replaceSource(source: AirportSourceRecord) {
     onSourcesChange(sources.map((item) => item.id === source.id ? source : item));
+    setNodesBySource((current) => { const next = { ...current }; delete next[source.id]; return next; });
+    setNodesError((current) => { const next = { ...current }; delete next[source.id]; return next; });
+  }
+
+  async function openNodes(source: AirportSourceRecord) {
+    if (expandedSourceId === source.id) {
+      setExpandedSourceId(null);
+      return;
+    }
+    setExpandedSourceId(source.id);
+    if (nodesBySource[source.id] || nodesLoading[source.id]) return;
+    setNodesLoading((current) => ({ ...current, [source.id]: true }));
+    setNodesError((current) => ({ ...current, [source.id]: "" }));
+    try {
+      const response = await fetch(`/api/clash/airport/nodes?id=${encodeURIComponent(source.id)}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "读取节点失败");
+      setNodesBySource((current) => ({ ...current, [source.id]: Array.isArray(data.nodes) ? data.nodes : [] }));
+    } catch (cause) {
+      setNodesError((current) => ({ ...current, [source.id]: cause instanceof Error ? cause.message : "读取节点失败" }));
+    } finally {
+      setNodesLoading((current) => ({ ...current, [source.id]: false }));
+    }
   }
 
   async function addSource(event: FormEvent) {
@@ -972,6 +1000,9 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "删除机场失败");
       onSourcesChange(sources.filter((item) => item.id !== source.id));
+      setNodesBySource((current) => { const next = { ...current }; delete next[source.id]; return next; });
+      setNodesError((current) => { const next = { ...current }; delete next[source.id]; return next; });
+      if (expandedSourceId === source.id) setExpandedSourceId(null);
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : "删除机场失败");
     } finally { setBusy(false); }
@@ -998,7 +1029,18 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
   return <section className="airportListPanel">
     <div className="airportListHead"><div><h3>机场列表</h3><p>这里管理所有机场订阅来源；更新会重新读取该机场，删除会同步移除关联。</p></div><button type="button" className="primary" onClick={() => setFormOpen((value) => !value)}>＋ 添加机场</button></div>
     {formOpen && <form className="airportListForm" onSubmit={addSource}><label>机场备注名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：花云400G" /></label><label>订阅地址<input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://机场订阅地址" /></label><label className="filePicker">或者上传 YAML 文件<input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" onChange={(event) => setSourceFile(event.target.files?.[0] || null)} /></label>{sourceFile && <div className="selectedFiles">已选择：{sourceFile.name}</div>}<div className="profileEditorActions"><button className="primary" type="submit" disabled={busy}>{busy ? "保存中…" : "保存到机场列表"}</button><button type="button" className="ghost" onClick={() => setFormOpen(false)}>取消</button></div></form>}
-    <div className="airportListRows">{sources.length ? sources.map((source) => <div className={`airportListRow ${source.hidden ? "sourceHidden" : ""}`} key={source.id}><div className="airportListMeta"><strong>{source.name}</strong><div className="airportNodeCount">已获取节点 <strong>{source.nodeCount == null ? "—" : source.nodeCount}</strong> 个</div><small>{source.hidden ? "已隐藏 · " : ""}{source.kind === "url" ? source.sourceUrl : "本地 YAML 文件"}</small>{editingId === source.id && <form className="airportEditRow" onSubmit={(event) => void saveEdit(event, source)}>{source.kind === "url" ? <input value={editingUrl} onChange={(event) => setEditingUrl(event.target.value)} placeholder="新的订阅地址" aria-label="编辑订阅地址" /> : <label className="filePicker">替换 YAML 文件<input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" onChange={(event) => setEditingFile(event.target.files?.[0] || null)} /></label>}<input value={editingName} onChange={(event) => setEditingName(event.target.value)} placeholder="机场备注名称" aria-label="编辑机场备注名称" /><button className="primary" type="submit" disabled={busy}>保存</button><button type="button" className="ghost" disabled={busy} onClick={() => setEditingId(null)}>取消</button></form>}</div><div className="airportListActions"><button type="button" className="ghost" disabled={busy} onClick={() => void toggleHidden(source)}>{source.hidden ? "取消隐藏" : "隐藏"}</button><button type="button" className="ghost" disabled={busy} onClick={() => { setEditingId(source.id); setEditingName(source.name); setEditingUrl(source.sourceUrl); setEditingFile(null); }}>编辑</button><button type="button" className="ghost" disabled={busy} onClick={() => void updateSource(source)}>更新</button><button type="button" className="danger" disabled={busy} onClick={() => void deleteSource(source)}>删除</button></div></div>) : <p className="clashLoading">机场列表还没有来源，请先添加机场订阅或上传 YAML 文件。</p>}</div>
+    <div className="airportListRows">{sources.length ? sources.map((source) => {
+      const expanded = expandedSourceId === source.id;
+      const nodes = nodesBySource[source.id] || [];
+      return <div className={`airportListRow ${source.hidden ? "sourceHidden" : ""}`} key={source.id}>
+        <div className="airportListMeta"><strong>{source.name}</strong><div className="airportNodeCount">已获取节点 <strong>{source.nodeCount == null ? "—" : source.nodeCount}</strong> 个</div><small>{source.hidden ? "已隐藏 · " : ""}{source.kind === "url" ? source.sourceUrl : "本地 YAML 文件"}</small>{editingId === source.id && <form className="airportEditRow" onSubmit={(event) => void saveEdit(event, source)}>{source.kind === "url" ? <input value={editingUrl} onChange={(event) => setEditingUrl(event.target.value)} placeholder="新的订阅地址" aria-label="编辑订阅地址" /> : <label className="filePicker">替换 YAML 文件<input type="file" accept=".yaml,.yml,.conf,text/plain,application/yaml" onChange={(event) => setEditingFile(event.target.files?.[0] || null)} /></label>}<input value={editingName} onChange={(event) => setEditingName(event.target.value)} placeholder="机场备注名称" aria-label="编辑机场备注名称" /><button className="primary" type="submit" disabled={busy}>保存</button><button type="button" className="ghost" disabled={busy} onClick={() => setEditingId(null)}>取消</button></form>}</div>
+        <div className="airportListActions"><button type="button" className="ghost" disabled={busy} onClick={() => void toggleHidden(source)}>{source.hidden ? "取消隐藏" : "隐藏"}</button><button type="button" className="ghost" disabled={busy} onClick={() => { setEditingId(source.id); setEditingName(source.name); setEditingUrl(source.sourceUrl); setEditingFile(null); }}>编辑</button><button type="button" className="ghost" disabled={busy} onClick={() => void updateSource(source)}>更新</button><button type="button" className="danger" disabled={busy} onClick={() => void deleteSource(source)}>删除</button></div>
+        <div className="airportNodeSection">
+          <button type="button" className="airportNodeToggle" aria-expanded={expanded} onClick={() => void openNodes(source)}>{expanded ? "收起全部节点" : `查看全部节点${source.nodeCount == null ? "" : `（${source.nodeCount}）`}`}<span>{expanded ? "⌃" : "⌄"}</span></button>
+          {expanded && <div className="airportNodePanel"><p className="airportNodeHint">绿色表示节点参数完整，红色表示配置缺少必要字段；这不是客户端实际测速。</p>{nodesLoading[source.id] ? <p className="clashLoading">正在读取节点…</p> : nodesError[source.id] ? <p className="airportNodeError">{nodesError[source.id]}</p> : nodes.length ? <div className="airportNodeList">{nodes.map((node) => <div className={`airportNodeRow ${node.status === "valid" ? "nodeValid" : "nodeInvalid"}`} key={node.id}><div><strong>{node.name}</strong><small>{node.type} · {node.server}{node.port ? `:${node.port}` : ""}{node.status === "invalid" ? ` · ${node.reason}` : ""}</small></div><span className="nodeStatus">{node.status === "valid" ? "有效" : "失效"}</span></div>)}</div> : <p className="clashLoading">没有读取到节点，请先更新这个机场来源。</p>}</div>}
+        </div>
+      </div>;
+    }) : <p className="clashLoading">机场列表还没有来源，请先添加机场订阅或上传 YAML 文件。</p>}</div>
   </section>;
 }
 
