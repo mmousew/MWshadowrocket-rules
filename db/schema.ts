@@ -15,6 +15,7 @@ export const ruleConfigs = sqliteTable("rule_configs", {
   name: text("name").notNull().default("默认规则"),
   content: text("content").notNull().default(""),
   status: text("status").notNull().default("active"),
+  isTemplateDefault: integer("is_template_default", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 }, (table) => ({ statusIdx: index("rule_configs_status_idx").on(table.status) }));

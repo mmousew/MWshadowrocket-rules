@@ -7,7 +7,7 @@ type View = "overview" | "groups" | "rules" | "sets" | "configs" | "clash" | "ai
 type Group = { index: number; name: string; kind: string; items: string[] };
 type Rule = { index: number; type: string; value: string; policy: string; options: string[] };
 type CatalogResult = { name: string; file: string; url: string; source: string };
-type RuleConfigRecord = { id: string; name: string; content: string; status: "active" | "deleted"; created_at: number; updated_at: number; profile_count?: number };
+type RuleConfigRecord = { id: string; name: string; content: string; status: "active" | "deleted"; is_template_default?: number; created_at: number; updated_at: number; profile_count?: number };
 type Editor =
   | { mode: "group"; index: number | null; name: string; items: string }
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
@@ -260,7 +260,7 @@ export default function Home() {
     if (!safeName) return setError("请输入规则方案名称");
     setRuleConfigBusy(true); setError("");
     try {
-      const response = await fetch("/api/rule-config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: safeName, sourceId: selectedRuleConfigId }) });
+      const response = await fetch("/api/rule-config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: safeName }) });
       const data = await response.json();
       if (!response.ok || !data.config) throw new Error(data.error || "新增规则方案失败");
       setRuleConfigs((current) => [...current, data.config]);
@@ -287,6 +287,21 @@ export default function Home() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存方案名称失败");
     }
+  }
+
+  async function setRuleConfigDefault(id: string) {
+    const config = ruleConfigs.find((item) => item.id === id);
+    if (!config || config.is_template_default) return;
+    setRuleConfigBusy(true); setError("");
+    try {
+      const response = await fetch("/api/rule-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, setDefault: true }) });
+      const data = await response.json();
+      if (!response.ok || !data.config) throw new Error(data.error || "设置默认方案失败");
+      setRuleConfigs((data.configs || []) as RuleConfigRecord[]);
+      setToast(`已将「${config.name}」设为复制默认方案`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "设置默认方案失败");
+    } finally { setRuleConfigBusy(false); }
   }
 
   async function deleteRuleConfig(id: string) {
@@ -601,7 +616,7 @@ export default function Home() {
           : <>{viewingFinal && <div className="listNote finalRuleNote">这是系统兜底规则：未匹配到其它规则的流量会进入「{viewingGroup}」分组。它不是重复的代理分组，可通过“节点筛选”配置这个分组使用的节点。</div>}<div className="listPanel">{filteredRules.map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><input className="ruleSelect" type="checkbox" checked={effectiveSelectedRuleIndexes.includes(rule.index)} onChange={() => toggleRuleSelection(rule.index)} aria-label={`选择规则 ${rule.value}`} /><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}</div></>}
         </>}
 
-        {view === "configs" && <RuleConfigManager configs={ruleConfigs} selectedId={selectedRuleConfigId} busy={ruleConfigBusy} onEdit={(id) => selectRuleConfig(id, true)} onCreate={(name) => void createRuleConfig(name)} onRename={(id, name) => void renameRuleConfig(id, name)} onDelete={(id) => void deleteRuleConfig(id)} />}
+        {view === "configs" && <RuleConfigManager configs={ruleConfigs} selectedId={selectedRuleConfigId} busy={ruleConfigBusy} onEdit={(id) => selectRuleConfig(id, true)} onCreate={(name) => void createRuleConfig(name)} onRename={(id, name) => void renameRuleConfig(id, name)} onSetDefault={(id) => void setRuleConfigDefault(id)} onDelete={(id) => void deleteRuleConfig(id)} />}
 
         {view === "clash" && <ClashSubscription />}
         {view === "airports" && <ClashSubscription mode="airports" />}
@@ -792,13 +807,14 @@ function LegacyClashSubscription() {
 
 void LegacyClashSubscription;
 
-function RuleConfigManager({ configs, selectedId, busy, onEdit, onCreate, onRename, onDelete }: {
+function RuleConfigManager({ configs, selectedId, busy, onEdit, onCreate, onRename, onSetDefault, onDelete }: {
   configs: RuleConfigRecord[];
   selectedId: string;
   busy: boolean;
   onEdit: (id: string) => void;
   onCreate: (name: string) => void;
   onRename: (id: string, name: string) => void;
+  onSetDefault: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const [newName, setNewName] = useState("");
@@ -806,12 +822,12 @@ function RuleConfigManager({ configs, selectedId, busy, onEdit, onCreate, onRena
 
   return <section className="panel ruleConfigPanel">
     <div className="panelHead"><div><h2>规则方案列表</h2><p>每个方案都是独立的一整套分组、域名和规则。进入方案后再编辑，不会互相覆盖。</p></div><span className="configCount">{configs.length} 个方案</span></div>
-    <div className="ruleConfigHint"><strong>当前方案：{configs.find((config) => config.id === selectedId)?.name || "默认规则"}</strong><span>点击“编辑方案”后，在方案内部切换分组、域名、规则；保存只影响当前方案。</span></div>
+    <div className="ruleConfigHint"><strong>当前方案：{configs.find((config) => config.id === selectedId)?.name || "默认规则"}</strong><span>点击“编辑方案”后，在方案内部切换分组、域名、规则；新增方案会复制标记为默认的方案。</span></div>
     <div className="ruleConfigList">{configs.map((config) => <article className={`ruleConfigCard ${config.id === selectedId ? "selected" : ""}`} key={config.id}>
       <div className="ruleConfigMain"><input value={drafts[config.id] ?? config.name} onChange={(event) => setDrafts((current) => ({ ...current, [config.id]: event.target.value }))} onBlur={() => { const name = (drafts[config.id] ?? config.name).trim(); if (name && name !== config.name) onRename(config.id, name); }} aria-label={`${config.name}方案名称`} /><p>{config.id === "default" ? "默认方案" : "独立方案"} · {config.profile_count || 0} 个订阅使用 · {new Date(config.updated_at).toLocaleString("zh-CN")}</p></div>
-      <div className="ruleConfigActions">{config.id === selectedId && <span className="configCurrentBadge">当前编辑</span>}<button type="button" className="ghost" disabled={busy} onClick={() => onEdit(config.id)}>编辑方案</button>{config.id !== "default" && <button type="button" className="danger" disabled={busy} onClick={() => onDelete(config.id)}>删除</button>}</div>
+      <div className="ruleConfigActions">{config.id === selectedId && <span className="configCurrentBadge">当前编辑</span>}{config.is_template_default ? <span className="configTemplateBadge">复制默认</span> : <button type="button" className="ghost" disabled={busy} onClick={() => onSetDefault(config.id)}>设为默认</button>}<button type="button" className="ghost" disabled={busy} onClick={() => onEdit(config.id)}>编辑方案</button>{config.id !== "default" && <button type="button" className="danger" disabled={busy} onClick={() => onDelete(config.id)}>删除</button>}</div>
     </article>)}</div>
-    <form className="ruleConfigCreate" onSubmit={(event) => { event.preventDefault(); const name = newName.trim(); if (!name) return; onCreate(name); setNewName(""); }}><label>新增方案名称<input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：工作、备用、家庭" /></label><button type="submit" className="primary" disabled={busy || !newName.trim()}>复制当前方案并新增</button></form>
+    <form className="ruleConfigCreate" onSubmit={(event) => { event.preventDefault(); const name = newName.trim(); if (!name) return; onCreate(name); setNewName(""); }}><label>新增方案名称<input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：工作、备用、家庭" /></label><button type="submit" className="primary" disabled={busy || !newName.trim()}>复制默认方案并新增</button></form>
   </section>;
 }
 

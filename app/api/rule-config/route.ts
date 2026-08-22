@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
-import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, updateRuleConfig } from "../../lib/rule-configs";
+import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -55,9 +55,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { name?: string; sourceId?: string };
+    const body = await request.json() as { name?: string };
     const { configs } = await ensureConfigs();
-    const source = configs.find((config) => config.id === body.sourceId) || configs.find((config) => config.id === "default") || configs[0];
+    const source = configs.find((config) => Boolean(config.is_template_default)) || configs.find((config) => config.id === "default") || configs[0];
     if (!source) throw new Error("没有可复制的规则方案");
     const config = await createRuleConfig(String(body.name || "规则方案"), source.content);
     return NextResponse.json({ config });
@@ -69,12 +69,13 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { id?: string; name?: string; content?: string };
+    const body = await request.json() as { id?: string; name?: string; content?: string; setDefault?: boolean };
     const id = String(body.id || "").trim();
     if (!id) throw new Error("规则方案不存在");
     if (typeof body.content === "string") validateRuleContent(body.content);
+    if (body.setDefault) await setRuleConfigTemplateDefault(id);
     const config = await updateRuleConfig(id, { name: body.name, content: body.content });
-    return NextResponse.json({ config });
+    return NextResponse.json({ config, configs: await listRuleConfigs() });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "保存规则方案失败" }, { status: 422 });
   }

@@ -11,6 +11,7 @@ export type RuleConfigRow = {
   name: string;
   content: string;
   status: "active" | "deleted";
+  is_template_default: number;
   created_at: number;
   updated_at: number;
   profile_count?: number;
@@ -18,13 +19,13 @@ export type RuleConfigRow = {
 
 export async function getRuleConfig(id = DEFAULT_RULE_CONFIG_ID) {
   return (await getReadyRawDb()).prepare(
-    "SELECT id, name, content, status, created_at, updated_at FROM rule_configs WHERE id = ? AND status <> 'deleted' LIMIT 1"
+    "SELECT id, name, content, status, is_template_default, created_at, updated_at FROM rule_configs WHERE id = ? AND status <> 'deleted' LIMIT 1"
   ).bind(id).first<RuleConfigRow>();
 }
 
 export async function listRuleConfigs() {
   const result = await (await getReadyRawDb()).prepare(
-    "SELECT rc.id, rc.name, rc.content, rc.status, rc.created_at, rc.updated_at, COUNT(cp.id) AS profile_count FROM rule_configs rc LEFT JOIN clash_profiles cp ON cp.rule_config_id = rc.id AND cp.status <> 'deleted' WHERE rc.status <> 'deleted' GROUP BY rc.id ORDER BY CASE WHEN rc.id = 'default' THEN 0 ELSE 1 END, rc.created_at ASC"
+    "SELECT rc.id, rc.name, rc.content, rc.status, rc.is_template_default, rc.created_at, rc.updated_at, COUNT(cp.id) AS profile_count FROM rule_configs rc LEFT JOIN clash_profiles cp ON cp.rule_config_id = rc.id AND cp.status <> 'deleted' WHERE rc.status <> 'deleted' GROUP BY rc.id ORDER BY CASE WHEN rc.id = 'default' THEN 0 ELSE 1 END, rc.created_at ASC"
   ).all<RuleConfigRow>();
   return result.results;
 }
@@ -34,7 +35,7 @@ export async function ensureDefaultRuleConfig(content: string) {
   if (existing) return existing;
   const now = Date.now();
   await (await getReadyRawDb()).prepare(
-    "INSERT INTO rule_configs (id, name, content, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)"
+    "INSERT INTO rule_configs (id, name, content, status, is_template_default, created_at, updated_at) VALUES (?, ?, ?, 'active', 1, ?, ?)"
   ).bind(DEFAULT_RULE_CONFIG_ID, "默认规则", content, now, now).run();
   return getRuleConfig(DEFAULT_RULE_CONFIG_ID);
 }
@@ -50,7 +51,7 @@ export async function ensureRuleConfigAssignments() {
   if (!currentDefault) return null;
 
   const haozi = await db.prepare(
-    "SELECT id, name, content, status, created_at, updated_at FROM rule_configs WHERE name = ? AND status <> 'deleted' LIMIT 1"
+    "SELECT id, name, content, status, is_template_default, created_at, updated_at FROM rule_configs WHERE name = ? AND status <> 'deleted' LIMIT 1"
   ).bind(HAOZI_RULE_CONFIG_NAME).first<RuleConfigRow>();
 
   if (haozi) {
@@ -91,7 +92,7 @@ export async function ensureRuleConfigAssignments() {
     ).bind(HAOZI_RULE_CONFIG_NAME, currentDefault.content, now, haoziId).run();
   } else {
     await db.prepare(
-      "INSERT INTO rule_configs (id, name, content, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)"
+      "INSERT INTO rule_configs (id, name, content, status, is_template_default, created_at, updated_at) VALUES (?, ?, ?, 'active', 0, ?, ?)"
     ).bind(haoziId, HAOZI_RULE_CONFIG_NAME, currentDefault.content, now, now).run();
   }
 
@@ -108,7 +109,7 @@ export async function createRuleConfig(name: string, content: string) {
   const now = Date.now();
   const safeName = name.trim().slice(0, 80) || "规则方案";
   await (await getReadyRawDb()).prepare(
-    "INSERT INTO rule_configs (id, name, content, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)"
+    "INSERT INTO rule_configs (id, name, content, status, is_template_default, created_at, updated_at) VALUES (?, ?, ?, 'active', 0, ?, ?)"
   ).bind(id, safeName, content, now, now).run();
   return getRuleConfig(id);
 }
@@ -124,6 +125,18 @@ export async function updateRuleConfig(id: string, changes: { name?: string; con
   return getRuleConfig(id);
 }
 
+export async function setRuleConfigTemplateDefault(id: string) {
+  const current = await getRuleConfig(id);
+  if (!current) throw new Error("规则方案不存在");
+  const db = await getReadyRawDb();
+  const now = Date.now();
+  await db.batch([
+    db.prepare("UPDATE rule_configs SET is_template_default = 0, updated_at = ? WHERE status <> 'deleted'").bind(now),
+    db.prepare("UPDATE rule_configs SET is_template_default = 1, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(now, id),
+  ]);
+  return getRuleConfig(id);
+}
+
 export async function deleteRuleConfig(id: string) {
   if (id === DEFAULT_RULE_CONFIG_ID) throw new Error("默认规则不能删除，请先新增并切换方案");
   const current = await getRuleConfig(id);
@@ -133,4 +146,10 @@ export async function deleteRuleConfig(id: string) {
     db.prepare("UPDATE clash_profiles SET rule_config_id = 'default', updated_at = ? WHERE rule_config_id = ? AND status <> 'deleted'").bind(Date.now(), id),
     db.prepare("UPDATE rule_configs SET status = 'deleted', updated_at = ? WHERE id = ?").bind(Date.now(), id),
   ]);
+  if (current.is_template_default) {
+    const fallback = await db.prepare(
+      "SELECT id FROM rule_configs WHERE status <> 'deleted' ORDER BY CASE WHEN id = 'default' THEN 0 ELSE 1 END, created_at ASC LIMIT 1"
+    ).first<{ id: string }>();
+    if (fallback) await db.prepare("UPDATE rule_configs SET is_template_default = 1, updated_at = ? WHERE id = ?").bind(Date.now(), fallback.id).run();
+  }
 }
