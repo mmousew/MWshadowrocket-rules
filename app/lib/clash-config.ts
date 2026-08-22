@@ -258,17 +258,36 @@ function parseDnsARecords(bytes: Uint8Array) {
 
 async function resolveHostWithDoH(host: string, resolver: string) {
   if (!/^https?:\/\//i.test(resolver)) return [];
+  const query = createDnsQuery(host);
+  if (!query) return [];
   try {
-    const url = new URL(resolver);
-    const query = createDnsQuery(host);
-    if (!query) return [];
-    url.searchParams.set("dns", query);
-    const response = await fetch(url, { headers: { Accept: "application/dns-message" }, cache: "no-store" });
-    if (!response.ok) return [];
-    return parseDnsARecords(new Uint8Array(await response.arrayBuffer())).filter(isUsableResolvedAddress);
+    const original = new URL(resolver);
+    const candidates = [original];
+    // Some airports publish DoH on an HTTPS URL whose host is a literal IP.
+    // Cloudflare Workers cannot complete that request when the certificate is
+    // issued for a hostname, but the same resolver also serves the wire-format
+    // query over HTTP. Use that server-side fallback only to obtain the node IP;
+    // the resolver URL itself is never emitted into the generated config here.
+    if (original.protocol === "https:" && /^\d{1,3}(?:\.\d{1,3}){3}$/.test(original.hostname)) {
+      const httpFallback = new URL(original.toString());
+      httpFallback.protocol = "http:";
+      candidates.push(httpFallback);
+    }
+    for (const url of candidates) {
+      try {
+        url.searchParams.set("dns", query);
+        const response = await fetch(url, { headers: { Accept: "application/dns-message" }, cache: "no-store" });
+        if (!response.ok) continue;
+        const addresses = parseDnsARecords(new Uint8Array(await response.arrayBuffer())).filter(isUsableResolvedAddress);
+        if (addresses.length) return addresses;
+      } catch {
+        // Try the next compatible transport for this resolver.
+      }
+    }
   } catch {
     return [];
   }
+  return [];
 }
 
 function isUsableResolvedAddress(value: string) {
