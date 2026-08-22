@@ -188,20 +188,39 @@ function isLocalResolver(value: string) {
 }
 
 function readAirportDnsPolicies(sources: string[]) {
-  const policies = new Map<string, string[]>();
+  const proxyPolicies = new Map<string, string[]>();
+  const nameserverPolicies = new Map<string, string[]>();
   for (const source of sources) {
-    const resolvers = readSourceProxyDnsResolvers(source).filter((item) => !isLocalResolver(item));
-    if (!resolvers.length) continue;
-    for (const proxy of parseAirportProxies(source)) {
-      const host = String(proxy.server || "").trim().toLowerCase();
-      if (!host || /^[0-9a-f:.]+$/i.test(host)) continue;
-      const labels = host.split(".").filter(Boolean);
-      if (labels.length < 2) continue;
-      const suffix = labels.slice(-2).join(".");
-      if (!policies.has(suffix)) policies.set(suffix, resolvers);
+    try {
+      const parsed = parseYaml(source) as { dns?: unknown } | null;
+      if (!parsed?.dns || typeof parsed.dns !== "object") continue;
+      const dns = parsed.dns as Record<string, unknown>;
+      const readPolicyMap = (value: unknown) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [] as Array<[string, string[]]>;
+        return Object.entries(value as Record<string, unknown>).flatMap(([suffix, resolvers]) => {
+          if (!Array.isArray(resolvers)) return [];
+          const normalizedSuffix = suffix.replace(/^\+\./, "").trim().toLowerCase();
+          const normalizedResolvers = resolvers
+            .filter((item): item is string => typeof item === "string")
+            .map((item) => item.trim())
+            .filter((item) => item && !isLocalResolver(item));
+          return normalizedSuffix && normalizedResolvers.length ? [[normalizedSuffix, normalizedResolvers] as [string, string[]]] : [];
+        });
+      };
+      for (const [suffix, resolvers] of readPolicyMap(dns["proxy-server-nameserver-policy"])) {
+        if (!proxyPolicies.has(suffix)) proxyPolicies.set(suffix, resolvers);
+      }
+      for (const [suffix, resolvers] of readPolicyMap(dns["nameserver-policy"])) {
+        if (!nameserverPolicies.has(suffix)) nameserverPolicies.set(suffix, resolvers);
+      }
+    } catch {
+      // Ignore malformed or non-YAML sources and keep the portable defaults.
     }
   }
-  return [...policies.entries()];
+  return {
+    proxy: [...proxyPolicies.entries()],
+    nameserver: [...nameserverPolicies.entries()],
+  };
 }
 
 function createDnsQuery(host: string) {
@@ -505,11 +524,12 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
   // Use only portable resolvers in the merged file. A source-local resolver
   // such as 127.0.0.1:7874 can self-reference the generated config and break
   // every airport when multiple sources are combined.
-  const proxyServerNameserver = [...new Set([...airportDns.proxyServerNameserver, ...defaultNameserver])]
+  const sourceProxyServerNameserver = airportDns.proxyServerNameserver.length ? airportDns.proxyServerNameserver : defaultNameserver;
+  const proxyServerNameserver = [...new Set(sourceProxyServerNameserver)]
     .filter((item) => !/^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(item));
   const nameserver = airportDns.nameserver.length ? airportDns.nameserver : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"];
   const fallback = airportDns.fallback.length ? airportDns.fallback : ["https://223.5.5.5/dns-query", "https://223.6.6.6/dns-query"];
-  const nameserverPolicies = readAirportDnsPolicies(sources);
+  const dnsPolicies = readAirportDnsPolicies(sources);
   const providerYaml = providers.length ? `\nrule-providers:\n${providers.map((provider) => `  ${provider.name}:\n    type: http\n    behavior: classical\n    format: ${provider.format}\n    url: ${quote(provider.url)}\n    path: ./ruleset/${provider.name}.${provider.format === "yaml" ? "yaml" : "list"}\n    interval: 86400`).join("\n")}` : "";
 
   const dnsYaml = [
@@ -527,8 +547,8 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     ...nameserver.map((item) => `    - ${quote(item)}`),
     "  fallback:",
     ...fallback.map((item) => `    - ${quote(item)}`),
-    ...(nameserverPolicies.length ? ["  proxy-server-nameserver-policy:", ...nameserverPolicies.flatMap(([suffix, resolvers]) => [`    ${quote(`+.${suffix}`)}:`, ...resolvers.map((item) => `      - ${quote(item)}`)])] : []),
-    ...(nameserverPolicies.length ? ["  nameserver-policy:", ...nameserverPolicies.flatMap(([suffix, resolvers]) => [`    ${quote(`+.${suffix}`)}:`, ...resolvers.map((item) => `      - ${quote(item)}`)])] : []),
+    ...(dnsPolicies.proxy.length ? ["  proxy-server-nameserver-policy:", ...dnsPolicies.proxy.flatMap(([suffix, resolvers]) => [`    ${quote(`+.${suffix}`)}:`, ...resolvers.map((item) => `      - ${quote(item)}`)])] : []),
+    ...(dnsPolicies.nameserver.length ? ["  nameserver-policy:", ...dnsPolicies.nameserver.flatMap(([suffix, resolvers]) => [`    ${quote(`+.${suffix}`)}:`, ...resolvers.map((item) => `      - ${quote(item)}`)])] : []),
     "  fake-ip-filter:",
     ...[...new Set(["*.lan", "+.local", "localhost.ptlogin2.qq.com", ...airportDns.fakeIpFilter])].map((item) => `    - ${quote(item)}`),
   ].join("\n");
