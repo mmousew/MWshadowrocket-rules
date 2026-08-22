@@ -65,7 +65,10 @@ async function findByEntry(entry: ClashSourceEntry) {
   const query = entry.kind === "url"
     ? "SELECT id, name, kind, source_url, content, hidden, status, node_count, created_at, updated_at FROM clash_airport_sources WHERE kind = 'url' AND source_url = ? AND status <> 'deleted' LIMIT 1"
     : "SELECT id, name, kind, source_url, content, hidden, status, node_count, created_at, updated_at FROM clash_airport_sources WHERE kind = 'content' AND content = ? AND status <> 'deleted' LIMIT 1";
-  const row = await getRawDb().prepare(query).bind(sourceValue({ ...entry, kind: entry.kind })).first<{
+  // `entry.value` is the source value from the encrypted profile payload.
+  // Do not pass it through `sourceValue`, which expects a normalized DB row
+  // with `source_url`/`content` fields and would otherwise return undefined.
+  const row = await getRawDb().prepare(query).bind(entry.value).first<{
     id: string; name: string; kind: string; source_url: string; content: string; hidden: number; status: string; node_count: number | null; created_at: number; updated_at: number;
   }>();
   return row ? normalize(row) : null;
@@ -80,9 +83,12 @@ async function insertSource(entry: ClashSourceEntry, name = sourceName(entry), n
   const id = crypto.randomUUID();
   const now = Date.now();
   const count = nodeCount === undefined ? await entryNodeCount(entry) : nodeCount;
+  const sourceUrl = entry.kind === "url" ? String(entry.value || "") : "";
+  const content = entry.kind === "content" ? String(entry.value || "") : "";
+  const safeNodeCount = typeof count === "number" ? count : null;
   await getRawDb().prepare(
     "INSERT INTO clash_airport_sources (id, name, kind, source_url, content, hidden, status, node_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, 'active', ?, ?, ?)"
-  ).bind(id, name.trim().slice(0, 80) || "机场订阅", entry.kind, entry.kind === "url" ? entry.value : "", entry.kind === "content" ? entry.value : "", count, now, now).run();
+  ).bind(id, name.trim().slice(0, 80) || "机场订阅", entry.kind, sourceUrl, content, safeNodeCount, now, now).run();
   return getById(id);
 }
 
@@ -197,7 +203,11 @@ export async function updateClashAirportSource(id: string, patch: { name?: strin
     if (!count) throw new Error("文件没有识别到节点");
     next.content = patch.content; next.nodeCount = patch.nodeCount ?? count;
   }
-  await getRawDb().prepare("UPDATE clash_airport_sources SET name = ?, source_url = ?, content = ?, node_count = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(next.name, next.sourceUrl, next.content, next.nodeCount, Date.now(), id).run();
+  const safeName = String(next.name || "机场订阅");
+  const safeSourceUrl = String(next.sourceUrl || "");
+  const safeContent = String(next.content || "");
+  const safeNodeCount = typeof next.nodeCount === "number" ? next.nodeCount : null;
+  await getRawDb().prepare("UPDATE clash_airport_sources SET name = ?, source_url = ?, content = ?, node_count = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(safeName, safeSourceUrl, safeContent, safeNodeCount, Date.now(), id).run();
   const updated = await getClashAirportSource(id);
   if (!updated) throw new Error("更新机场失败");
   if (oldSource.name !== updated.name || sourceValue(oldSource) !== sourceValue(updated)) await rewriteProfiles(oldSource, updated);
