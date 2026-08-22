@@ -96,7 +96,9 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   const clashFlower = clash.proxies.find((proxy) => proxy.name === "花云香港 IEPL 1");
   assert.equal(clashKqs.server, "kqs-hk.kunlun03dns.com");
   assert.equal(clashFlower.server, "flower.example.com");
-  assert.equal(clash.dns["nameserver-policy"], undefined);
+  assert.deepEqual(clash.dns["nameserver-policy"]["+.kunlun03dns.com"], [
+    "https://kqs-resolver.example/dns-query",
+  ]);
   assert.deepEqual(clash.dns["proxy-server-nameserver"], [
     "https://kqs-resolver.example/dns-query",
     "223.5.5.5",
@@ -105,7 +107,9 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   assert.ok(clash.dns["fake-ip-filter"].includes("+.lan"));
   assert.ok(clash.dns["fake-ip-filter"].includes("+.local"));
 
-  const shadowrocket = buildShadowrocketConfig(rules, kqsAirport);
+  const shadowrocket = buildShadowrocketConfig(rules, kqsAirport, { "kqs-hk.kunlun03dns.com": "54.95.1.133" });
   assert.match(shadowrocket, /^VIP 香港 01=ss,kqs-hk\.kunlun03dns\.com,25101,/m);
   assert.match(shadowrocket, /^花云香港 IEPL 1=ss,flower\.example\.com,443,/m);
+  assert.match(shadowrocket, /^use-local-host-item-for-proxy = true$/m);
+  assert.match(shadowrocket, /^kqs-hk\.kunlun03dns\.com = 54\.95\.1\.133$/m);
 });

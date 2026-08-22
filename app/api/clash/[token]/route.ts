@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig } from "../../../lib/clash-config";
+import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig, resolveAirportProxyHosts } from "../../../lib/clash-config";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
@@ -92,10 +92,11 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     const requestedFormat = request.nextUrl.searchParams.get("format");
     const shadowrocketRules = requestedFormat === "shadowrocket-rules";
     const shadowrocket = shadowrocketRules || requestedFormat === "shadowrocket" || /shadowrocket/i.test(userAgent);
+    const hostMappings = shadowrocket && !shadowrocketRules ? await resolveAirportProxyHosts(airportContent) : {};
     const config = shadowrocketRules
-      ? buildShadowrocketRulesConfig(ruleContent, airportContent)
+      ? buildShadowrocketRulesConfig(ruleContent, airportContent, hostMappings)
       : shadowrocket
-        ? buildShadowrocketConfig(ruleContent, airportContent)
+        ? buildShadowrocketConfig(ruleContent, airportContent, hostMappings)
         : buildClashConfig(ruleContent, airportContent);
     return new NextResponse(config, {
       headers: {

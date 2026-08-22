@@ -165,6 +165,133 @@ function readAirportDns(sources: string[]) {
   };
 }
 
+function readSourceProxyDnsResolvers(source: string) {
+  try {
+    const parsed = parseYaml(source) as { dns?: unknown } | null;
+    if (parsed?.dns && typeof parsed.dns === "object") {
+      const dns = parsed.dns as Record<string, unknown>;
+      const list = (key: string) => Array.isArray(dns[key]) ? dns[key].filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean) : [];
+      const proxyResolvers = list("proxy-server-nameserver");
+      if (proxyResolvers.length) return proxyResolvers;
+      const defaultResolvers = list("default-nameserver");
+      if (defaultResolvers.length) return defaultResolvers;
+    }
+    const general = source.match(/^\[General\]([\s\S]*?)(?=^\[|$)/m)?.[1] || "";
+    return general.match(/^dns-server\s*=\s*(.+)$/mi)?.[1]?.split(",").map((item) => item.trim()).filter((item) => item && !/^system$/i.test(item)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function isLocalResolver(value: string) {
+  return /^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(value) || /^(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(value);
+}
+
+function readAirportDnsPolicies(sources: string[]) {
+  const policies = new Map<string, string[]>();
+  for (const source of sources) {
+    const resolvers = readSourceProxyDnsResolvers(source).filter((item) => !isLocalResolver(item));
+    if (!resolvers.length) continue;
+    for (const proxy of parseAirportProxies(source)) {
+      const host = String(proxy.server || "").trim().toLowerCase();
+      if (!host || /^[0-9a-f:.]+$/i.test(host)) continue;
+      const labels = host.split(".").filter(Boolean);
+      if (labels.length < 2) continue;
+      const suffix = labels.slice(-2).join(".");
+      if (!policies.has(suffix)) policies.set(suffix, resolvers);
+    }
+  }
+  return [...policies.entries()];
+}
+
+function createDnsQuery(host: string) {
+  const labels = host.split(".").filter(Boolean);
+  const parts: Uint8Array[] = [Buffer.from([0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])];
+  for (const label of labels) {
+    const bytes = Buffer.from(label);
+    if (!bytes.length || bytes.length > 63) return "";
+    parts.push(Buffer.from([bytes.length]), bytes);
+  }
+  parts.push(Buffer.from([0x00, 0x00, 0x01, 0x00, 0x01]));
+  return Buffer.concat(parts).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function skipDnsName(bytes: Uint8Array, start: number) {
+  let offset = start;
+  while (offset < bytes.length) {
+    const length = bytes[offset];
+    if (length === 0) return offset + 1;
+    if ((length & 0xc0) === 0xc0) return offset + 2;
+    if (length > 63) return -1;
+    offset += length + 1;
+  }
+  return -1;
+}
+
+function parseDnsARecords(bytes: Uint8Array) {
+  if (bytes.length < 12) return [];
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const questions = view.getUint16(4);
+  const answers = view.getUint16(6);
+  let offset = 12;
+  for (let index = 0; index < questions; index += 1) {
+    offset = skipDnsName(bytes, offset);
+    if (offset < 0 || offset + 4 > bytes.length) return [];
+    offset += 4;
+  }
+  const records: string[] = [];
+  for (let index = 0; index < answers; index += 1) {
+    offset = skipDnsName(bytes, offset);
+    if (offset < 0 || offset + 10 > bytes.length) break;
+    const type = view.getUint16(offset);
+    const classCode = view.getUint16(offset + 2);
+    const length = view.getUint16(offset + 8);
+    offset += 10;
+    if (offset + length > bytes.length) break;
+    if (type === 1 && classCode === 1 && length === 4) {
+      records.push(`${bytes[offset]}.${bytes[offset + 1]}.${bytes[offset + 2]}.${bytes[offset + 3]}`);
+    }
+    offset += length;
+  }
+  return records;
+}
+
+async function resolveHostWithDoH(host: string, resolver: string) {
+  if (!/^https?:\/\//i.test(resolver)) return [];
+  try {
+    const url = new URL(resolver);
+    const query = createDnsQuery(host);
+    if (!query) return [];
+    url.searchParams.set("dns", query);
+    const response = await fetch(url, { headers: { Accept: "application/dns-message" }, cache: "no-store" });
+    if (!response.ok) return [];
+    return parseDnsARecords(new Uint8Array(await response.arrayBuffer()));
+  } catch {
+    return [];
+  }
+}
+
+export async function resolveAirportProxyHosts(sources: string[]) {
+  const hostResolvers = new Map<string, string[]>();
+  for (const source of sources) {
+    const resolvers = readSourceProxyDnsResolvers(source).filter((item) => !isLocalResolver(item));
+    if (!resolvers.length) continue;
+    for (const proxy of parseAirportProxies(source)) {
+      const host = String(proxy.server || "").trim().toLowerCase();
+      if (!host || /^[0-9a-f:.]+$/i.test(host)) continue;
+      hostResolvers.set(host, [...new Set([...(hostResolvers.get(host) || []), ...resolvers])]);
+    }
+  }
+  const resolved = await Promise.all([...hostResolvers.entries()].map(async ([host, resolvers]) => {
+    for (const resolver of resolvers) {
+      const addresses = await resolveHostWithDoH(host, resolver);
+      if (addresses.length) return [host, addresses[0]] as const;
+    }
+    return null;
+  }));
+  return Object.fromEntries(resolved.filter((item): item is readonly [string, string] => Boolean(item)));
+}
+
 function decodeLooseBase64(value: string) {
   try { return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"); } catch { return ""; }
 }
@@ -349,6 +476,7 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     .filter((item) => !/^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(item));
   const nameserver = airportDns.nameserver.length ? airportDns.nameserver : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"];
   const fallback = airportDns.fallback.length ? airportDns.fallback : ["https://223.5.5.5/dns-query", "https://223.6.6.6/dns-query"];
+  const nameserverPolicies = readAirportDnsPolicies(sources);
   const providerYaml = providers.length ? `\nrule-providers:\n${providers.map((provider) => `  ${provider.name}:\n    type: http\n    behavior: classical\n    format: ${provider.format}\n    url: ${quote(provider.url)}\n    path: ./ruleset/${provider.name}.${provider.format === "yaml" ? "yaml" : "list"}\n    interval: 86400`).join("\n")}` : "";
 
   const dnsYaml = [
@@ -366,6 +494,7 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     ...nameserver.map((item) => `    - ${quote(item)}`),
     "  fallback:",
     ...fallback.map((item) => `    - ${quote(item)}`),
+    ...(nameserverPolicies.length ? ["  nameserver-policy:", ...nameserverPolicies.flatMap(([suffix, resolvers]) => [`    ${quote(`+.${suffix}`)}:`, ...resolvers.map((item) => `      - ${quote(item)}`)])] : []),
     "  fake-ip-filter:",
     ...[...new Set(["*.lan", "+.local", "localhost.ptlogin2.qq.com", ...airportDns.fakeIpFilter])].map((item) => `    - ${quote(item)}`),
   ].join("\n");
@@ -453,6 +582,38 @@ function normalizeShadowrocketConfig(config: string) {
   const ordered = preferredOrder.filter((name) => blocks.has(name)).map((name) => blocks.get(name) || []);
   const remaining = [...blocks.entries()].filter(([name]) => !preferredOrder.includes(name)).map(([, block]) => block);
   return [...metadata, ...ordered.flatMap((block) => ["", ...block]), ...remaining.flatMap((block) => ["", ...block])].join("\n").trim() + "\n";
+}
+
+function addShadowrocketHostMappings(config: string, hostMappings: Record<string, string>) {
+  const entries = Object.entries(hostMappings).filter(([host, address]) => host && address);
+  if (!entries.length) return config;
+  const lines = config.split(/\r?\n/);
+  const generalStart = lines.findIndex((line) => line.trim() === "[General]");
+  if (generalStart >= 0) {
+    const generalEnd = lines.findIndex((line, index) => index > generalStart && /^\s*\[.+\]\s*$/.test(line));
+    const end = generalEnd >= 0 ? generalEnd : lines.length;
+    const general = lines.slice(generalStart + 1, end);
+    const settingIndex = general.findIndex((line) => /^\s*use-local-host-item-for-proxy\s*=/i.test(line));
+    if (settingIndex >= 0) general[settingIndex] = "use-local-host-item-for-proxy = true";
+    else general.push("use-local-host-item-for-proxy = true");
+    lines.splice(generalStart + 1, end - generalStart - 1, ...general);
+  } else {
+    lines.unshift("[General]", "use-local-host-item-for-proxy = true", "");
+  }
+
+  const hostStart = lines.findIndex((line) => line.trim().toLowerCase() === "[host]");
+  const mappingKeys = new Set(entries.map(([host]) => host.toLowerCase()));
+  const mappingLines = entries.map(([host, address]) => `${host} = ${address}`);
+  if (hostStart < 0) return `${lines.join("\n").trimEnd()}\n\n[Host]\n${mappingLines.join("\n")}\n`;
+
+  const hostEnd = lines.findIndex((line, index) => index > hostStart && /^\s*\[.+\]\s*$/.test(line));
+  const end = hostEnd >= 0 ? hostEnd : lines.length;
+  const existing = lines.slice(hostStart + 1, end).filter((line) => {
+    const separator = line.indexOf("=");
+    return separator < 1 || !mappingKeys.has(line.slice(0, separator).trim().toLowerCase());
+  });
+  lines.splice(hostStart + 1, end - hostStart - 1, ...existing, ...mappingLines);
+  return lines.join("\n");
 }
 
 function expandShadowrocketIncludeAllGroups(config: string, proxyNames: string[]) {
@@ -562,7 +723,7 @@ function normalizeShadowrocketPolicyReferences(config: string, proxyNames: strin
   }).join("\n");
 }
 
-export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[]) {
+export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}) {
   const sources = Array.isArray(airportContent) ? airportContent : [airportContent];
   const airportProxies = sources.flatMap((source) => parseAirportProxies(source));
   if (!airportProxies.length) throw new Error("机场配置没有可转换的小火箭节点");
@@ -584,18 +745,19 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   if (proxyStart < 0) {
     const config = normalizeFinalGroupForShadowrocket(`${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`);
     const expanded = expandShadowrocketIncludeAllGroups(config, [...names]);
-    return normalizeShadowrocketConfig(normalizeShadowrocketPolicyReferences(expanded, [...names]));
+    return normalizeShadowrocketConfig(addShadowrocketHostMappings(normalizeShadowrocketPolicyReferences(expanded, [...names]), hostMappings));
   }
   const end = nextSection > proxyStart ? nextSection : lines.length;
   const config = normalizeFinalGroupForShadowrocket([...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n"));
   const expandedConfig = expandShadowrocketIncludeAllGroups(config, [...names]);
   const normalizedConfig = normalizeShadowrocketPolicyReferences(expandedConfig, [...names]);
   // Shadowrocket does not understand geosite rule references; omit them only from its output.
-  return normalizeShadowrocketConfig(normalizedConfig.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n"));
+  const withoutGeosite = normalizedConfig.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n");
+  return normalizeShadowrocketConfig(addShadowrocketHostMappings(withoutGeosite, hostMappings));
 }
 
-export function buildShadowrocketRulesConfig(ruleContent: string, airportContent: string | string[]) {
-  const fullConfig = buildShadowrocketConfig(ruleContent, airportContent);
+export function buildShadowrocketRulesConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}) {
+  const fullConfig = buildShadowrocketConfig(ruleContent, airportContent, hostMappings);
   const lines = fullConfig.split(/\r?\n/);
   const proxyStart = lines.findIndex((line) => line.trim().toLowerCase() === "[proxy]");
   if (proxyStart < 0) return fullConfig;
