@@ -92,12 +92,15 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     const requestedFormat = request.nextUrl.searchParams.get("format");
     const shadowrocketRules = requestedFormat === "shadowrocket-rules";
     const shadowrocket = shadowrocketRules || requestedFormat === "shadowrocket" || /shadowrocket/i.test(userAgent);
-    const hostMappings = shadowrocket && !shadowrocketRules ? await resolveAirportProxyHosts(airportContent) : {};
+    // Resolve airport proxy hostnames with each source's own resolver for all
+    // generated client formats. Clash Meta may otherwise use a merged public
+    // DNS list and receive fake/incorrect addresses for hostname-based nodes.
+    const hostMappings = !shadowrocketRules ? await resolveAirportProxyHosts(airportContent) : {};
     const config = shadowrocketRules
       ? buildShadowrocketRulesConfig(ruleContent, airportContent, hostMappings)
       : shadowrocket
         ? buildShadowrocketConfig(ruleContent, airportContent, hostMappings)
-        : buildClashConfig(ruleContent, airportContent);
+        : buildClashConfig(ruleContent, airportContent, hostMappings);
     return new NextResponse(config, {
       headers: {
         "Content-Type": shadowrocket ? "text/plain; charset=utf-8" : "text/yaml; charset=utf-8",

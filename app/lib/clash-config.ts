@@ -460,10 +460,16 @@ function convertRules(rules: ShadowrocketRule[], groups: ShadowrocketGroup[]) {
   return { converted, providers, skipped };
 }
 
-export function buildClashConfig(ruleContent: string, airportContent: string | string[]) {
+export function buildClashConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}) {
   const sources = Array.isArray(airportContent) ? airportContent : [airportContent];
   const seenProxyNames = new Set<string>();
-  const proxies = sources.flatMap((source) => parseAirportProxies(source)).filter((proxy) => {
+  const proxies = sources.flatMap((source) => parseAirportProxies(source)).map((proxy) => {
+    const host = String(proxy.server || "").trim().toLowerCase();
+    const resolvedAddress = hostMappings[host];
+    return resolvedAddress && isUsableResolvedAddress(resolvedAddress)
+      ? { ...proxy, server: resolvedAddress }
+      : proxy;
+  }).filter((proxy) => {
     const name = String(proxy.name || "");
     const nameKey = name.trim().toLowerCase();
     if (!name || seenProxyNames.has(nameKey)) return false;
