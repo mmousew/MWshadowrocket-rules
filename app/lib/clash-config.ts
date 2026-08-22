@@ -406,6 +406,10 @@ function isNativeShadowrocketSource(content: string) {
   return /(?:^|\r?\n)\s*ss:\/\//i.test(decoded);
 }
 
+function isKqsSource(content: string) {
+  return /kunlun03dns\.com|site=kuaiqiangshou/i.test(content);
+}
+
 export function parseAirportProxies(content: string): ClashProxy[] {
   const shadowrocket = parseShadowrocketProxies(content);
   const clash = shadowrocket.length ? [] : parseClashProxies(content);
@@ -622,7 +626,11 @@ function shadowrocketProxyLine(proxy: ClashProxy) {
   const password = String(proxy.password || "").replace(/[\r\n,]/g, " ");
   if (!name || !server || !port || !password) return "";
   const options = [`encrypt-method=${cipher}`, `password=${password}`];
-  if (proxy.udp === true) options.push("udp-relay=true");
+  // A Clash YAML fallback may mark every KQS proxy as `udp: true`, but that
+  // is not equivalent to Shadowrocket's udp-relay option. The native KQS
+  // source does not require it and the translated flag makes those nodes
+  // fail in Shadowrocket. Keep UDP for other sources unchanged.
+  if (proxy.udp === true && !/kunlun03dns\.com$/i.test(server)) options.push("udp-relay=true");
   const pluginOptions = proxy["plugin-opts"] as Record<string, unknown> | undefined;
   if (proxy.plugin === "obfs" && pluginOptions?.mode) {
     options.push(`obfs=${String(pluginOptions.mode)}`);
@@ -833,7 +841,7 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   // replacing a working Shadowrocket node.
   const nativeSources = rawSources.filter(isNativeShadowrocketSource);
   const sources = [...rawSources].sort((left, right) => Number(isNativeShadowrocketSource(right)) - Number(isNativeShadowrocketSource(left)));
-  const dnsSources = nativeSources.length ? nativeSources : sources;
+  const dnsSources = (nativeSources.length ? nativeSources : sources).filter((source) => !isKqsSource(source));
   const airportProxies = sources.flatMap((source) => parseAirportProxies(source));
   if (!airportProxies.length) throw new Error("机场配置没有可转换的小火箭节点");
   const lines = ruleContent.split(/\r?\n/);

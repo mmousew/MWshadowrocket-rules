@@ -114,7 +114,7 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   assert.match(shadowrocket, /^花云香港 IEPL 1=ss,flower\.example\.com,443,/m);
   assert.match(shadowrocket, /^use-local-host-item-for-proxy = true$/m);
   assert.match(shadowrocket, /^kqs-hk\.kunlun03dns\.com = 54\.95\.1\.133$/m);
-  assert.match(shadowrocket, /^dns-server = https:\/\/kqs-resolver\.example\/dns-query,223\.5\.5\.5$/m);
+  assert.doesNotMatch(shadowrocket, /^dns-server = .*kqs-resolver\.example/m);
 });
 
 test("Shadowrocket prefers a native source when duplicate airport nodes exist", () => {
@@ -144,6 +144,26 @@ ss://YWVzLTI1Ni1nY206dGVzdC1rcXM=@kqs-hk.kunlun03dns.com:25101#VIP%20%E9%A6%99%E
   const config = buildShadowrocketConfig(rules, directKqs);
   assert.match(config, /^VIP 香港 01=ss,kqs-hk\.kunlun03dns\.com,25101,encrypt-method=aes-256-gcm,password=test-kqs$/m);
   assert.doesNotMatch(config, /^VIP 香港 01=.*udp-relay=true$/m);
+});
+
+test("Shadowrocket strips Clash-only KQS UDP and DNS fallback flags", () => {
+  const kqsClash = `
+dns:
+  proxy-server-nameserver:
+    - https://20.247.42.211:36290/dns-query/clash?site=kuaiqiangshou
+proxies:
+  - name: VIP 香港 01
+    type: ss
+    server: kqs-hk.kunlun03dns.com
+    port: 25101
+    cipher: aes-256-gcm
+    password: test-kqs
+    udp: true
+`;
+  const config = buildShadowrocketConfig(rules, kqsClash);
+  assert.match(config, /^VIP 香港 01=ss,kqs-hk\.kunlun03dns\.com,25101,/m);
+  assert.doesNotMatch(config, /^VIP 香港 01=.*udp-relay=true$/m);
+  assert.doesNotMatch(config, /^dns-server = .*20\.247\.42\.211/m);
 });
 
 test("Shadowrocket does not force a public DNS address when the airport resolver is unavailable", async () => {
