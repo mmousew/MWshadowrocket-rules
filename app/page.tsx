@@ -25,7 +25,12 @@ const RULE_TYPE_META: Record<string, { label: string; hint: string }> = {
   GEOIP: { label: "国家或地区 IP", hint: "按照 IP 所属国家或地区匹配，例如 CN。" },
 };
 const BUILTINS = ["DIRECT", "PROXY", "REJECT"];
-const COUNTRY_GROUP_NAMES = new Set(["日本", "加拿大", "英国", "香港", "韩国", "德国", "法国", "新加坡", "美国"]);
+// 机场配置里的国家组通常使用代码名，不能只识别中文名称。
+// 这些组也会被 Final 等策略组用来指定最终流量走向。
+const COUNTRY_GROUP_NAMES = new Set([
+  "日本", "加拿大", "英国", "香港", "韩国", "德国", "法国", "新加坡", "美国",
+  "JP", "CA", "UK", "HK", "KR", "DE", "FR", "SG", "US", "TW", "CN",
+]);
 function catalogFileHint(file: string) {
   if (file.includes("_Resolve")) return "解析版（通常不需要优先选）";
   if (file.includes("_Domain")) return "纯域名补充版（大型规则可能需要一并添加）";
