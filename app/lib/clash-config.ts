@@ -429,7 +429,7 @@ function expandShadowrocketIncludeAllGroups(config: string, proxyNames: string[]
     // the actual node names into the group so they are visible in every
     // client, while preserving helper policies such as PROXIES and DIRECT.
     const extras = values.slice(1).filter((item) => item !== "include-all-proxies=true" && !item.startsWith("policy-regex-filter="));
-    const items = [...extras, ...matched.filter((name) => !extras.includes(name))];
+    const items = [...new Set([...extras, ...matched])];
     return `${left} = ${[kind, ...items].join(",")}`;
   }).join("\n");
 }
