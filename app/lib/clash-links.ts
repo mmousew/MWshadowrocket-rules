@@ -114,7 +114,16 @@ export async function getSourceSnapshot(sourceUrl: string, client: SnapshotClien
   // Existing Clash snapshots used the pre-client-specific key. Keep them
   // available after the cache split so a temporary airport outage does not
   // blank an otherwise working Clash subscription.
-  if (snapshot || client !== "clash") return snapshot;
+  if (snapshot || client === "clash") return snapshot;
+  // Shadowrocket can consume a Clash snapshot after the source has been
+  // converted by the server. This is important for converter URLs that
+  // reject a Shadowrocket User-Agent while their Clash response remains
+  // available. The output builder will translate it into native format.
+  const clashSourceKey = await getSourceKey(sourceUrl, "clash");
+  const clashSnapshot = await db.prepare("SELECT source_url, content, node_count, updated_at FROM clash_source_snapshots WHERE source_key = ? LIMIT 1")
+    .bind(clashSourceKey)
+    .first<{ source_url: string; content: string; node_count: number; updated_at: number }>();
+  if (clashSnapshot) return clashSnapshot;
   const legacySourceKey = await getLegacySourceKey(sourceUrl);
   return db.prepare("SELECT source_url, content, node_count, updated_at FROM clash_source_snapshots WHERE source_key = ? LIMIT 1")
     .bind(legacySourceKey)

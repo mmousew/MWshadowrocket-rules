@@ -47,12 +47,14 @@ async function downloadSubscription(url: string, client: SubscriptionClient = "c
     : { "User-Agent": "clash.meta", Accept: "text/yaml,text/plain,application/yaml,*/*" };
   const requestHeaders = [
     clientHeaders,
+    ...(client === "shadowrocket" ? [{ "User-Agent": "clash.meta", Accept: "text/yaml,text/plain,application/yaml,*/*" }] : []),
     { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36", Accept: "*/*" },
   ];
   let response: Response | undefined;
   for (const headers of requestHeaders) {
     response = await fetch(url, { headers, cache: "no-store", redirect: "follow" });
-    if (response.ok || response.status !== 403) break;
+    const retryWithNextHeader = client === "shadowrocket" && response.status === 400;
+    if (response.ok || (response.status !== 403 && !retryWithNextHeader)) break;
   }
   if (response && !response.ok && relayUrl && relaySecret && [401, 403, 408, 429, 500, 502, 503, 504].includes(response.status)) {
     try { return await fetchViaRelay(); } catch { /* report original status below */ }
