@@ -319,6 +319,7 @@ function parseSsLink(link: string, position: number): ClashProxy | null {
     const separator = credentials.indexOf(":");
     if (separator < 1) return null;
     const address = new URL(`http://${expanded.slice(at + 1)}`);
+    const udpOption = query.get("udp-relay") || query.get("udp");
     const proxy: ClashProxy = {
       name,
       type: "ss",
@@ -326,7 +327,7 @@ function parseSsLink(link: string, position: number): ClashProxy | null {
       port: Number(address.port),
       cipher: decodeURIComponent(credentials.slice(0, separator)),
       password: decodeURIComponent(credentials.slice(separator + 1)),
-      udp: true,
+      udp: udpOption ? /^(?:1|true|yes)$/i.test(udpOption) : false,
     };
     const plugin = query.get("plugin");
     if (plugin) {
@@ -556,7 +557,8 @@ function shadowrocketProxyLine(proxy: ClashProxy) {
   const cipher = String(proxy.cipher || "aes-128-gcm");
   const password = String(proxy.password || "").replace(/[\r\n,]/g, " ");
   if (!name || !server || !port || !password) return "";
-  const options = [`encrypt-method=${cipher}`, `password=${password}`, "udp-relay=true"];
+  const options = [`encrypt-method=${cipher}`, `password=${password}`];
+  if (proxy.udp === true) options.push("udp-relay=true");
   const pluginOptions = proxy["plugin-opts"] as Record<string, unknown> | undefined;
   if (proxy.plugin === "obfs" && pluginOptions?.mode) {
     options.push(`obfs=${String(pluginOptions.mode)}`);

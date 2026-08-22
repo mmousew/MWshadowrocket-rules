@@ -115,6 +115,15 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   assert.match(shadowrocket, /^kqs-hk\.kunlun03dns\.com = 54\.95\.1\.133$/m);
 });
 
+test("Shadowrocket preserves an airport's UDP relay setting", () => {
+  const directKqs = `
+ss://YWVzLTI1Ni1nY206dGVzdC1rcXM=@kqs-hk.kunlun03dns.com:25101#VIP%20%E9%A6%99%E6%B8%AF%2001
+`;
+  const config = buildShadowrocketConfig(rules, directKqs);
+  assert.match(config, /^VIP 香港 01=ss,kqs-hk\.kunlun03dns\.com,25101,encrypt-method=aes-256-gcm,password=test-kqs$/m);
+  assert.doesNotMatch(config, /^VIP 香港 01=.*udp-relay=true$/m);
+});
+
 test("Shadowrocket does not force a public DNS address when the airport resolver is unavailable", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response("", { status: 503 });
