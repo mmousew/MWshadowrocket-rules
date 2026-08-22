@@ -144,6 +144,8 @@ button,input,select,textarea { max-width:100%; }
 .privateSubscriptionHead h2 { margin:0; }
 .privateSubscriptionHead button { flex:0 0 auto; }
 .subscriptionHead { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
+.moduleConflictNotice { display:flex; flex-direction:column; gap:4px; margin:0 0 18px; padding:13px 15px; border:1px solid #ead99f; border-radius:12px; color:#635426; background:#fff9e8; font-size:11px; line-height:1.55; }
+.moduleConflictNotice strong { color:#3c351d; font-size:12px; }
 .subscriptionTitleTabs { display:flex; align-items:center; gap:14px; min-width:0; }
 .subscriptionTitleTabs h2 { margin:0; }
 .tabButton { min-height:34px; padding:7px 12px; border:1px solid #cfe0d5; border-radius:9px; color:#276f53; background:#f3faf5; font-size:11px; font-weight:750; cursor:pointer; }

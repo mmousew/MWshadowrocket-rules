@@ -869,6 +869,7 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
 
   return <section className="clashPanel">
     {mode === "private" && <div className="subscriptionHead"><h2>私有订阅</h2><button type="button" className="primary" onClick={() => { setNewProfileOpen((value) => !value); setError(""); }}>＋ 新增订阅配置</button></div>}
+    {mode === "private" && <div className="moduleConflictNotice"><strong>小火箭请只使用这里生成的完整订阅</strong><span>旧版“MW 地区分流”模块会优先覆盖 KR、Final 等分组选择，请在小火箭的模块页面将它更新后关闭或删除。</span></div>}
     {error && <div className="clashError">{error}</div>}
     {mode === "airports" ? <AirportList sources={airportSources} onSourcesChange={setAirportSources} onError={setError} /> : <>
       {newProfileOpen && <form className="profileCreateForm" onSubmit={addProfile}><label>配置备注名称<input value={newProfileName} onChange={(event) => setNewProfileName(event.target.value)} placeholder="例如：我的备用机场" /></label><p className="formHint">新增后在编辑来源里从“机场列表”选择要加入的订阅。</p><div className="profileEditorActions"><button className="primary" type="submit" disabled={busy}>{busy ? "处理中…" : "保存并新增配置"}</button><button className="ghost" type="button" onClick={() => setNewProfileOpen(false)}>取消</button></div></form>}
