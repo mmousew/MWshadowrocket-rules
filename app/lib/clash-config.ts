@@ -344,21 +344,6 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     .filter((item) => !/^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(item));
   const nameserver = airportDns.nameserver.length ? airportDns.nameserver : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"];
   const fallback = airportDns.fallback.length ? airportDns.fallback : ["https://223.5.5.5/dns-query", "https://223.6.6.6/dns-query"];
-  const nameserverPolicies = new Map<string, string[]>();
-  for (const source of sources) {
-    const sourceDns = readAirportDns([source]);
-    const resolvers = (sourceDns.proxyServerNameserver.length ? sourceDns.proxyServerNameserver : sourceDns.defaultNameserver)
-      .filter((item) => !/^(?:udp|tcp|tls|https?):\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(item));
-    if (!resolvers.length) continue;
-    for (const proxy of parseAirportProxies(source)) {
-      const host = String(proxy.server || "").toLowerCase();
-      if (!host || /^[0-9a-f:.]+$/i.test(host)) continue;
-      const labels = host.split(".").filter(Boolean);
-      if (labels.length < 2) continue;
-      const suffix = labels.slice(-2).join(".");
-      if (!nameserverPolicies.has(suffix)) nameserverPolicies.set(suffix, resolvers);
-    }
-  }
   const providerYaml = providers.length ? `\nrule-providers:\n${providers.map((provider) => `  ${provider.name}:\n    type: http\n    behavior: classical\n    format: ${provider.format}\n    url: ${quote(provider.url)}\n    path: ./ruleset/${provider.name}.${provider.format === "yaml" ? "yaml" : "list"}\n    interval: 86400`).join("\n")}` : "";
 
   const dnsYaml = [
@@ -376,7 +361,6 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     ...nameserver.map((item) => `    - ${quote(item)}`),
     "  fallback:",
     ...fallback.map((item) => `    - ${quote(item)}`),
-    ...(nameserverPolicies.size ? ["  nameserver-policy:", ...[...nameserverPolicies.entries()].flatMap(([suffix, resolvers]) => [`    ${quote(`+.${suffix}`)}:`, ...resolvers.map((item) => `      - ${quote(item)}`)])] : []),
     "  fake-ip-filter:",
     ...[...new Set(["*.lan", "+.local", "localhost.ptlogin2.qq.com", ...airportDns.fakeIpFilter])].map((item) => `    - ${quote(item)}`),
   ].join("\n");

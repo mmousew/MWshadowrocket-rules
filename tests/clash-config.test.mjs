@@ -36,6 +36,15 @@ proxies:
 `;
 
 const kqsAirport = `
+dns:
+  default-nameserver:
+    - 223.5.5.5
+  proxy-server-nameserver:
+    - https://kqs-resolver.example/dns-query
+  nameserver:
+    - https://doh.example/dns-query
+  fallback:
+    - https://fallback.example/dns-query
 proxies:
   - name: VIP 香港 01
     type: ss
@@ -83,6 +92,11 @@ test("Merged outputs preserve each airport's original proxy server", () => {
   const clashFlower = clash.proxies.find((proxy) => proxy.name === "花云香港 IEPL 1");
   assert.equal(clashKqs.server, "kqs-hk.kunlun03dns.com");
   assert.equal(clashFlower.server, "flower.example.com");
+  assert.equal(clash.dns["nameserver-policy"], undefined);
+  assert.deepEqual(clash.dns["proxy-server-nameserver"], [
+    "https://kqs-resolver.example/dns-query",
+    "223.5.5.5",
+  ]);
 
   const shadowrocket = buildShadowrocketConfig(rules, kqsAirport);
   assert.match(shadowrocket, /^VIP 香港 01=ss,kqs-hk\.kunlun03dns\.com,25101,/m);
