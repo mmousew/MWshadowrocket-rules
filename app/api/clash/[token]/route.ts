@@ -54,6 +54,11 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     }
     airportUrls = airportUrls.map((url) => url.trim()).filter(Boolean);
     if (!airportUrls.length && !inlineContent.length) return new NextResponse("尚未配置机场来源", { status: 503 });
+    const userAgent = request.headers.get("user-agent") || "";
+    const requestedFormat = request.nextUrl.searchParams.get("format");
+    const shadowrocketRules = requestedFormat === "shadowrocket-rules";
+    const shadowrocket = shadowrocketRules || requestedFormat === "shadowrocket" || /shadowrocket/i.test(userAgent);
+    const subscriptionClient = shadowrocket ? "shadowrocket" as const : "clash" as const;
     const [ruleResponse, airportResult] = await Promise.all([
       fetch(`${API_URL}?ref=${encodeURIComponent(BRANCH)}`, {
         headers: {
@@ -66,12 +71,12 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       }),
       Promise.allSettled(airportUrls.map(async (url) => {
         try {
-          const fetched = await fetchAirportSubscription(url);
-          try { await saveSourceSnapshot(url, fetched.content, fetched.nodeCount); } catch { /* 快照写入失败不影响本次在线更新 */ }
+          const fetched = await fetchAirportSubscription(url, subscriptionClient);
+          try { await saveSourceSnapshot(url, fetched.content, fetched.nodeCount, subscriptionClient); } catch { /* 快照写入失败不影响本次在线更新 */ }
           return { kind: "live" as const, content: fetched.content };
         } catch (error) {
           let snapshot = null;
-          try { snapshot = await getSourceSnapshot(url); } catch { /* 没有可用快照时继续记录失败 */ }
+          try { snapshot = await getSourceSnapshot(url, subscriptionClient); } catch { /* 没有可用快照时继续记录失败 */ }
           if (snapshot?.content) return { kind: "snapshot" as const, content: snapshot.content };
           throw error;
         }
@@ -88,14 +93,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     const liveAirportContent = airportResult.content;
     const airportContent = liveAirportContent.length ? liveAirportContent : (encryptedSource ? [] : [getAirportSnapshot()]);
     if (!airportContent.length || !airportContent[0]) throw new Error("机场在线地址暂时不可用，且没有安全节点快照");
-    const userAgent = request.headers.get("user-agent") || "";
-    const requestedFormat = request.nextUrl.searchParams.get("format");
-    const shadowrocketRules = requestedFormat === "shadowrocket-rules";
-    const shadowrocket = shadowrocketRules || requestedFormat === "shadowrocket" || /shadowrocket/i.test(userAgent);
-    // Resolve airport proxy hostnames with each source's own resolver for all
-    // generated client formats. Clash Meta may otherwise use a merged public
-    // DNS list and receive fake/incorrect addresses for hostname-based nodes.
-    const hostMappings = !shadowrocketRules ? await resolveAirportProxyHosts(airportContent) : {};
+    // Clash needs source-specific hostname resolution. Shadowrocket must keep
+    // the airport's original hostname and DNS behavior instead of receiving a
+    // Clash-only fixed-IP mapping.
+    const hostMappings = shadowrocket ? {} : await resolveAirportProxyHosts(airportContent);
     const config = shadowrocketRules
       ? buildShadowrocketRulesConfig(ruleContent, airportContent, hostMappings)
       : shadowrocket

@@ -86,22 +86,37 @@ export async function updateClashLink(id: string, status: "revoked" | "deleted")
 }
 
 const snapshotEncoder = new TextEncoder();
+type SnapshotClient = "clash" | "shadowrocket";
 
-export async function getSourceKey(sourceUrl: string) {
+async function getLegacySourceKey(sourceUrl: string) {
   const digest = await crypto.subtle.digest("SHA-256", snapshotEncoder.encode(sourceUrl));
   return Buffer.from(digest).toString("hex");
 }
 
-export async function saveSourceSnapshot(sourceUrl: string, content: string, nodeCount: number) {
-  const sourceKey = await getSourceKey(sourceUrl);
+export async function getSourceKey(sourceUrl: string, client: SnapshotClient = "clash") {
+  const digest = await crypto.subtle.digest("SHA-256", snapshotEncoder.encode(`${client}\n${sourceUrl}`));
+  return Buffer.from(digest).toString("hex");
+}
+
+export async function saveSourceSnapshot(sourceUrl: string, content: string, nodeCount: number, client: SnapshotClient = "clash") {
+  const sourceKey = await getSourceKey(sourceUrl, client);
   await (await getReadyRawDb()).prepare(
     "INSERT INTO clash_source_snapshots (source_key, source_url, content, node_count, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(source_key) DO UPDATE SET source_url = excluded.source_url, content = excluded.content, node_count = excluded.node_count, updated_at = excluded.updated_at"
   ).bind(sourceKey, sourceUrl, content, nodeCount, Date.now()).run();
 }
 
-export async function getSourceSnapshot(sourceUrl: string) {
-  const sourceKey = await getSourceKey(sourceUrl);
-  return (await getReadyRawDb()).prepare("SELECT source_url, content, node_count, updated_at FROM clash_source_snapshots WHERE source_key = ? LIMIT 1")
+export async function getSourceSnapshot(sourceUrl: string, client: SnapshotClient = "clash") {
+  const sourceKey = await getSourceKey(sourceUrl, client);
+  const db = await getReadyRawDb();
+  const snapshot = await db.prepare("SELECT source_url, content, node_count, updated_at FROM clash_source_snapshots WHERE source_key = ? LIMIT 1")
     .bind(sourceKey)
+    .first<{ source_url: string; content: string; node_count: number; updated_at: number }>();
+  // Existing Clash snapshots used the pre-client-specific key. Keep them
+  // available after the cache split so a temporary airport outage does not
+  // blank an otherwise working Clash subscription.
+  if (snapshot || client !== "clash") return snapshot;
+  const legacySourceKey = await getLegacySourceKey(sourceUrl);
+  return db.prepare("SELECT source_url, content, node_count, updated_at FROM clash_source_snapshots WHERE source_key = ? LIMIT 1")
+    .bind(legacySourceKey)
     .first<{ source_url: string; content: string; node_count: number; updated_at: number }>();
 }

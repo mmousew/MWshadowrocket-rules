@@ -20,7 +20,9 @@ export function validateAirportUrl(value: string) {
   return url.toString();
 }
 
-async function downloadSubscription(url: string) {
+export type SubscriptionClient = "clash" | "shadowrocket";
+
+async function downloadSubscription(url: string, client: SubscriptionClient = "clash") {
   const relayUrl = process.env.AIRPORT_RELAY_URL;
   const relaySecret = process.env.AIRPORT_RELAY_SECRET;
   async function fetchViaRelay() {
@@ -34,9 +36,11 @@ async function downloadSubscription(url: string) {
     return relayResponse.text();
   }
   if (relayUrl && relaySecret && new URL(url).protocol === "http:") return fetchViaRelay();
+  const clientHeaders = client === "shadowrocket"
+    ? { "User-Agent": "Shadowrocket", Accept: "text/plain,text/yaml,application/yaml,*/*" }
+    : { "User-Agent": "clash.meta", Accept: "text/yaml,text/plain,application/yaml,*/*" };
   const requestHeaders = [
-    { "User-Agent": "clash.meta", Accept: "text/yaml,text/plain,application/yaml,*/*" },
-    { "User-Agent": "Shadowrocket", Accept: "text/plain,text/yaml,application/yaml,*/*" },
+    clientHeaders,
     { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36", Accept: "*/*" },
   ];
   let response: Response | undefined;
@@ -54,7 +58,7 @@ async function downloadSubscription(url: string) {
   return response.text();
 }
 
-async function expandProxyProviders(content: string) {
+async function expandProxyProviders(content: string, client: SubscriptionClient = "clash") {
   let parsed: Record<string, unknown> | null = null;
   try { parsed = parseYaml(content) as Record<string, unknown> | null; } catch { return content; }
   const providers = parsed?.["proxy-providers"];
@@ -63,17 +67,17 @@ async function expandProxyProviders(content: string) {
     .map((provider) => provider && typeof provider === "object" ? (provider as Record<string, unknown>).url : null)
     .filter((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url));
   if (!providerUrls.length) return content;
-  const providerContents = await Promise.all(providerUrls.map(async (url) => downloadSubscription(validateAirportUrl(url))));
+  const providerContents = await Promise.all(providerUrls.map(async (url) => downloadSubscription(validateAirportUrl(url), client)));
   const proxies = providerContents.flatMap((providerContent) => parseAirportProxies(providerContent));
   if (!proxies.length) return content;
   return stringifyYaml({ ...parsed, proxies });
 }
 
-export async function fetchAirportSubscription(sourceUrl: string) {
+export async function fetchAirportSubscription(sourceUrl: string, client: SubscriptionClient = "clash") {
   const safeUrl = validateAirportUrl(sourceUrl);
-  const content = await downloadSubscription(safeUrl);
+  const content = await downloadSubscription(safeUrl, client);
   if (content.length > 2_000_000) throw new Error("机场订阅内容过大");
-  const expandedContent = await expandProxyProviders(content);
+  const expandedContent = await expandProxyProviders(content, client);
   const nodeCount = getAirportProxyCount(expandedContent);
   if (!nodeCount) throw new Error("没有识别到节点，请确认该地址支持 Clash 或 Shadowrocket 格式");
   return { content: expandedContent, nodeCount };
