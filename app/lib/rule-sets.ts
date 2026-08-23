@@ -214,7 +214,8 @@ function ensureProxyGroup(content: string, line: string) {
 }
 
 async function ensureChinaDirectRuleSet(db: ReadyDb) {
-  const active = await db.prepare("SELECT id, name, entries, source FROM rule_sets WHERE lower(trim(name)) IN (lower(trim(?)), lower(trim(?))) AND status <> 'deleted' ORDER BY CASE WHEN lower(trim(name)) = lower(trim(?)) THEN 0 ELSE 1 END, updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[0], CHINA_DIRECT_RULE_SET_ALIASES[1], CHINA_DIRECT_RULE_SET_ALIASES[0]).first<{ id: string; name: string; entries: string; source: string }>();
+  let active = await db.prepare("SELECT id, name, entries, source FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND status <> 'deleted' ORDER BY updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[0]).first<{ id: string; name: string; entries: string; source: string }>();
+  if (!active) active = await db.prepare("SELECT id, name, entries, source FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND status <> 'deleted' ORDER BY updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[1]).first<{ id: string; name: string; entries: string; source: string }>();
   if (active) {
     let existingEntries: RuleSetEntry[] = [];
     try { existingEntries = parseRuleSetEntries(JSON.parse(active.entries || "[]")); } catch { existingEntries = parseRuleSetEntries(active.entries || ""); }
@@ -225,7 +226,8 @@ async function ensureChinaDirectRuleSet(db: ReadyDb) {
 
   // This is the one explicit built-in exception: the user asked for the
   // domestic-direct set to be restored as a protected default.
-  const deleted = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) IN (lower(trim(?)), lower(trim(?))) ORDER BY CASE WHEN lower(trim(name)) = lower(trim(?)) THEN 0 ELSE 1 END, updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[0], CHINA_DIRECT_RULE_SET_ALIASES[1], CHINA_DIRECT_RULE_SET_ALIASES[0]).first<{ id: string }>();
+  let deleted = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) ORDER BY updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[0]).first<{ id: string }>();
+  if (!deleted) deleted = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) ORDER BY updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[1]).first<{ id: string }>();
   if (deleted) {
     await db.prepare("UPDATE rule_sets SET kind = 'builtin', entries = ?, source = ?, status = 'active', visible = 1, enabled = 1, updated_at = ? WHERE id = ?").bind(JSON.stringify(CHINA_DIRECT_ENTRIES), CHINA_MAX_NO_IP_URL, Date.now(), deleted.id).run();
     return deleted.id;
