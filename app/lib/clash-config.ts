@@ -657,6 +657,9 @@ function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
     const options = clashGroupOptions(group, kind);
     const regex = findOption(group.items, "policy-regex-filter");
     const includeAll = findOption(group.items, "include-all-proxies")?.toLowerCase() === "true";
+    if (regex) {
+      try { new RegExp(regex, "i"); } catch { throw new Error(`分组「${groupName}」的关键词筛选不是有效表达式：${regex}`); }
+    }
     const proxies = groupProxyItems(group, proxyNames, available, includeAll, regex);
     converted.push({ name: groupName, type: kind, proxies: proxies.length ? proxies : ["DIRECT"], ...options });
   }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
 import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, restoreHaoziRuleConfig, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
+import { validateRuleConfiguration } from "../../lib/rule-validation";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -29,6 +30,8 @@ function validateRuleContent(content: string) {
   if (!content.trim()) throw new Error("规则配置不能为空");
   if (content.length > 1_500_000) throw new Error("规则配置超过允许大小");
   if (!content.includes("[Proxy Group]") || !content.includes("[Rule]")) throw new Error("规则配置缺少必要配置段");
+  const errors = validateRuleConfiguration(content);
+  if (errors.length) throw new Error(errors.join("\n"));
 }
 
 async function ensureConfigs() {
