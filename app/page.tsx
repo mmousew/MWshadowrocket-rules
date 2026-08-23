@@ -79,7 +79,10 @@ function policyExists(policy: string, groups: Group[]) {
 }
 
 function defaultGroupItems(kind: string) {
-  return [kind, "include-all-proxies=true", "DIRECT", ...(kind === "select" ? [] : DEFAULT_GROUP_HEALTH_OPTIONS)].join("\n");
+  // DIRECT is useful in a manual selector, but it must not be a member of a
+  // health-check group: it is always available and has effectively zero
+  // latency, so url-test/fallback would select it instead of an airport node.
+  return [kind, "include-all-proxies=true", ...(kind === "select" ? ["DIRECT"] : []), ...(kind === "select" ? [] : DEFAULT_GROUP_HEALTH_OPTIONS)].join("\n");
 }
 
 function readGroupFilter(raw: string, countryGroups: string[], existingGroups: string[] = []) {
@@ -111,7 +114,9 @@ function updateGroupItems(raw: string, countryGroups: string[], existingGroups: 
     else groups.add(changes.group);
   }
   let extras = current.values.slice(1).filter((item) => !countryGroups.some((value) => policyKey(value) === policyKey(item)) && !existingGroups.some((value) => policyKey(value) === policyKey(item)) && !/^policy-regex-filter=/i.test(item) && policyKey(item) !== "include-all-proxies=true");
-  if (changes.kind && ["url-test", "fallback", "load-balance"].includes(kind) && !extras.some((item) => /^url=/i.test(item))) {
+  const healthCheckGroup = ["url-test", "fallback", "load-balance"].includes(kind);
+  if (healthCheckGroup) extras = extras.filter((item) => policyKey(item) !== "direct");
+  if (changes.kind && healthCheckGroup && !extras.some((item) => /^url=/i.test(item))) {
     extras = [...DEFAULT_GROUP_HEALTH_OPTIONS, ...(kind === "load-balance" ? ["strategy=consistent-hashing"] : [])];
   }
   if (changes.kind === "select") extras = extras.filter((item) => !GROUP_HEALTH_OPTION_KEYS.test(item));
