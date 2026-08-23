@@ -181,7 +181,7 @@ async function dedupeRuleSetLibrary(db: ReadyDb) {
 
   await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS rule_sets_active_name_unique_idx ON rule_sets (name COLLATE NOCASE) WHERE status <> 'deleted'").run();
   await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS rule_set_bindings_config_group_unique_idx ON rule_set_bindings (rule_config_id, group_name COLLATE NOCASE)").run();
-  await db.prepare("INSERT INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(DEDUPE_MIGRATION_ID, Date.now()).run();
+  await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(DEDUPE_MIGRATION_ID, Date.now()).run();
 }
 
 export async function ensureRuleSetLibrary() {
@@ -208,7 +208,7 @@ export async function ensureRuleSetLibrary() {
       if (existing.length) continue;
       await replaceRuleSetBindings(configId, Array.from(bindings.entries()).map(([groupName, ruleSetId]) => ({ groupName, ruleSetId })));
     }
-    await db.prepare("INSERT INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(MIGRATION_ID, Date.now()).run();
+    await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(MIGRATION_ID, Date.now()).run();
   }
   return listRuleSets();
 }
