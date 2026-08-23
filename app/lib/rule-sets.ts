@@ -220,7 +220,10 @@ async function ensureChinaDirectRuleSet(db: ReadyDb) {
     let existingEntries: RuleSetEntry[] = [];
     try { existingEntries = parseRuleSetEntries(JSON.parse(active.entries || "[]")); } catch { existingEntries = parseRuleSetEntries(active.entries || ""); }
     const mergedEntries = dedupeEntries([...CHINA_DIRECT_ENTRIES, ...existingEntries]);
-    await db.prepare("UPDATE rule_sets SET kind = 'builtin', entries = ?, source = ?, visible = 1, enabled = 1, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(JSON.stringify(mergedEntries), active.source?.trim() || CHINA_MAX_NO_IP_URL, Date.now(), active.id).run();
+    // Preserve the user's visibility/enabled switches on an existing set. The
+    // built-in protection is about deletion, not about forcing it back on
+    // every time a subscription is generated.
+    await db.prepare("UPDATE rule_sets SET kind = 'builtin', entries = ?, source = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(JSON.stringify(mergedEntries), active.source?.trim() || CHINA_MAX_NO_IP_URL, Date.now(), active.id).run();
     return active.id;
   }
 
@@ -246,6 +249,10 @@ async function ensureChinaDirectDefaultBinding(db: ReadyDb, chinaRuleSetId: stri
 
   const existingBinding = await db.prepare("SELECT id, rule_set_id FROM rule_set_bindings WHERE rule_config_id = 'default' AND lower(trim(group_name)) = 'cn' LIMIT 1").first<{ id: string; rule_set_id: string }>();
   if (existingBinding && existingBinding.rule_set_id !== chinaRuleSetId) {
+    // Repair the binding first. Merging an old rule set is best-effort and
+    // must never prevent the default CN route from pointing at the protected
+    // built-in set.
+    await db.prepare("UPDATE rule_set_bindings SET rule_set_id = ?, updated_at = ? WHERE id = ?").bind(chinaRuleSetId, Date.now(), existingBinding.id).run();
     const oldSet = await db.prepare("SELECT entries FROM rule_sets WHERE id = ? AND status <> 'deleted' LIMIT 1").bind(existingBinding.rule_set_id).first<{ entries: string }>();
     let oldEntries: RuleSetEntry[] = [];
     if (oldSet) {
@@ -253,10 +260,9 @@ async function ensureChinaDirectDefaultBinding(db: ReadyDb, chinaRuleSetId: stri
     }
     const mergedEntries = dedupeEntries([...CHINA_DIRECT_ENTRIES, ...oldEntries]);
     await db.prepare("UPDATE rule_sets SET entries = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(JSON.stringify(mergedEntries), Date.now(), chinaRuleSetId).run();
-    await db.prepare("UPDATE rule_set_bindings SET rule_set_id = ?, updated_at = ? WHERE id = ?").bind(chinaRuleSetId, Date.now(), existingBinding.id).run();
   } else if (!existingBinding) {
     const now = Date.now();
-    await db.prepare("INSERT INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, created_at, updated_at) VALUES (?, 'default', 'CN', ?, ?, ?)").bind(crypto.randomUUID(), chinaRuleSetId, now, now).run();
+    await db.prepare("INSERT OR IGNORE INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, created_at, updated_at) VALUES (?, 'default', 'CN', ?, ?, ?)").bind(crypto.randomUUID(), chinaRuleSetId, now, now).run();
   }
   if (!marker) {
     await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(CHINA_DEFAULT_MIGRATION_ID, Date.now()).run();
@@ -265,7 +271,22 @@ async function ensureChinaDirectDefaultBinding(db: ReadyDb, chinaRuleSetId: stri
 
 export async function ensureRuleSetLibrary() {
   const db = await getReadyRawDb();
-  await dedupeRuleSetLibrary(db);
+  // Keep the default CN repair independent from the larger library migration.
+  // A legacy duplicate, an old index, or malformed historical rule content
+  // must not make the repair disappear behind the route's compatibility
+  // fallback.
+  let chinaRuleSetId = "";
+  try {
+    chinaRuleSetId = await ensureChinaDirectRuleSet(db);
+    await ensureChinaDirectDefaultBinding(db, chinaRuleSetId);
+  } catch (error) {
+    console.error("[rule-sets] default CN repair failed", error);
+  }
+  try {
+    await dedupeRuleSetLibrary(db);
+  } catch (error) {
+    console.error("[rule-sets] dedupe migration skipped", error);
+  }
   const marker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(MIGRATION_ID).first<{ id: string }>();
   if (!marker) {
     // The initial library is a one-time migration. Do not run these seed
@@ -292,8 +313,14 @@ export async function ensureRuleSetLibrary() {
     }
     await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(MIGRATION_ID, Date.now()).run();
   }
-  const chinaRuleSetId = await ensureChinaDirectRuleSet(db);
-  await ensureChinaDirectDefaultBinding(db, chinaRuleSetId);
+  if (!chinaRuleSetId) {
+    try {
+      chinaRuleSetId = await ensureChinaDirectRuleSet(db);
+      await ensureChinaDirectDefaultBinding(db, chinaRuleSetId);
+    } catch (error) {
+      console.error("[rule-sets] default CN repair retry failed", error);
+    }
+  }
   return listRuleSets();
 }
 

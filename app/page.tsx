@@ -1613,7 +1613,7 @@ function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { rul
     finally { setSaving(false); }
   }
 
-  async function toggleBuiltinFlag(ruleSet: RuleSetRecord, field: "visible" | "enabled", value: boolean) {
+  async function toggleRuleSetFlag(ruleSet: RuleSetRecord, field: "visible" | "enabled", value: boolean) {
     setSaving(true); onError("");
     try {
       const response = await fetch("/api/rule-set", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: ruleSet.id, [field]: value }) });
@@ -1637,7 +1637,7 @@ function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { rul
           {usedBy.length ? <div className="ruleSetUsage"><strong>正在被调用</strong><div className="ruleSetUsageList">{usedBy.map((usage) => <span className="ruleSetUsageItem" key={usage.configId}><b>{usage.configName}</b><small>{usage.groupNames.length ? `分组：${usage.groupNames.join("、")}` : "已绑定"}</small></span>)}</div></div> : <div className="ruleSetUnused">暂未被方案调用</div>}
           {ruleSet.source && <small className="ruleSetSource">来源：{ruleSet.source}</small>}
         </div>
-        <div className="ruleLibraryActions">{ruleSet.isBuiltin && <div className="ruleSetSwitches"><label><input type="checkbox" checked={ruleSet.visible !== false} disabled={saving} onChange={(event) => void toggleBuiltinFlag(ruleSet, "visible", event.target.checked)} />显示</label><label><input type="checkbox" checked={ruleSet.enabled !== false} disabled={saving} onChange={(event) => void toggleBuiltinFlag(ruleSet, "enabled", event.target.checked)} />启用</label></div>}<button type="button" className="ghost" onClick={() => startEdit(ruleSet)}>编辑</button><button type="button" className="danger" disabled={saving || ruleSet.isBuiltin} onClick={() => void removeRuleSet(ruleSet)}>{ruleSet.isBuiltin ? "内置" : "删除"}</button></div>
+        <div className="ruleLibraryActions"><div className="ruleSetSwitches"><label><input type="checkbox" checked={ruleSet.visible !== false} disabled={saving} onChange={(event) => void toggleRuleSetFlag(ruleSet, "visible", event.target.checked)} />显示</label><label><input type="checkbox" checked={ruleSet.enabled !== false} disabled={saving} onChange={(event) => void toggleRuleSetFlag(ruleSet, "enabled", event.target.checked)} />启用</label></div><button type="button" className="ghost" onClick={() => startEdit(ruleSet)}>编辑</button><button type="button" className="danger" disabled={saving || ruleSet.isBuiltin} onClick={() => void removeRuleSet(ruleSet)}>{ruleSet.isBuiltin ? "内置" : "删除"}</button></div>
       </article>;
     })}</div>
     {modalOpen && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭规则集编辑" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor(); }} onKeyDown={(event) => { if (event.key === "Escape") closeEditor(); }}>

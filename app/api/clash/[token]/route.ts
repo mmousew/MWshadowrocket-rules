@@ -105,7 +105,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       const ruleSets = await ensureRuleSetLibrary();
       const bindings = await listRuleSetBindings(ruleConfigId);
       ruleContent = composeBoundRuleSets(ruleContent, ruleSets, bindings.map((item) => ({ groupName: item.group_name, ruleSetId: item.rule_set_id })));
-    } catch {
+    } catch (error) {
+      console.error("[clash] shared rule-set composition failed", error);
       // The legacy content remains a safe fallback if the shared ruleset library is unavailable.
     }
     const airportResult = await Promise.allSettled(airportUrls.map(async (url) => {
