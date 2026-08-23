@@ -41,6 +41,16 @@ DOMAIN-SUFFIX,bybdc6.com,KR
 FINAL,Final
 `;
 
+const strategyRules = `
+[Proxy Group]
+Auto = url-test,include-all-proxies=true,url=https://www.gstatic.com/generate_204,interval=300,tolerance=50
+Failover = fallback,include-all-proxies=true,url=https://www.gstatic.com/generate_204,interval=300
+Balance = load-balance,include-all-proxies=true,strategy=consistent-hashing,url=https://www.gstatic.com/generate_204,interval=300
+
+[Rule]
+FINAL,Auto
+`;
+
 const airport = `
 proxies:
   - name: 美国节点 1
@@ -103,6 +113,25 @@ test("Shadowrocket FINAL uses MW-FINAL with Proxies first and DIRECT second", ()
   assert.match(config, /^DOMAIN-SUFFIX,bybdc6\.com,KR$/m);
   assert.doesNotMatch(config, /^Final\s*=/mi);
   assert.equal((config.match(/^FINAL,/gm) || []).length, 1);
+});
+
+test("Clash preserves automatic, failover and load-balance groups", () => {
+  const config = parseYaml(buildClashConfig(strategyRules, airport));
+  const groups = Object.fromEntries(config["proxy-groups"].map((group) => [group.name, group]));
+  assert.equal(groups.Auto.type, "url-test");
+  assert.equal(groups.Auto.url, "https://www.gstatic.com/generate_204");
+  assert.equal(groups.Auto.interval, 300);
+  assert.equal(groups.Auto.tolerance, 50);
+  assert.equal(groups.Failover.type, "fallback");
+  assert.equal(groups.Balance.type, "load-balance");
+  assert.equal(groups.Balance.strategy, "consistent-hashing");
+});
+
+test("Shadowrocket preserves automatic and failover group types", () => {
+  const config = buildShadowrocketConfig(strategyRules, airport);
+  assert.match(config, /^Auto = url-test,/m);
+  assert.match(config, /^Failover = fallback,/m);
+  assert.match(config, /^Balance = load-balance,/m);
 });
 
 test("scheme names isolate generated Clash and Shadowrocket group names", () => {

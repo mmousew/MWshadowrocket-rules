@@ -33,7 +33,25 @@ function normalizeClashPolicy(value: string) {
 }
 
 function normalizeClashGroupKind(value: string) {
-  return /^(?:url-test|fallback|load-balance|smart)$/i.test(value) ? "url-test" : "select";
+  if (/^url-test$/i.test(value)) return "url-test";
+  if (/^fallback$/i.test(value)) return "fallback";
+  if (/^load-balance$/i.test(value)) return "load-balance";
+  if (/^random$/i.test(value)) return "random";
+  if (/^smart$/i.test(value)) return "url-test";
+  return "select";
+}
+
+const GROUP_OPTION_KEYS = ["url", "interval", "tolerance", "timeout", "lazy", "strategy", "max-failed-times"];
+
+function readGroupOptions(group: Record<string, unknown>) {
+  const options: string[] = [];
+  GROUP_OPTION_KEYS.forEach((key) => {
+    const value = group[key];
+    if (typeof value === "string" && value.trim()) options.push(`${key}=${value.trim()}`);
+    else if (typeof value === "number" && Number.isFinite(value)) options.push(`${key}=${value}`);
+    else if (typeof value === "boolean" && value) options.push(`${key}=true`);
+  });
+  return options;
 }
 
 function clashRuleProviderUrls(parsed: Record<string, unknown>) {
@@ -71,10 +89,14 @@ export function buildShadowrocketRuleConfigFromClash(content: string, name = "�
     const rawProxies = Array.isArray(group.proxies) ? group.proxies.filter((item): item is string => typeof item === "string" && item.trim()).map((item) => normalizeClashPolicy(item)) : [];
     const rawUse = Array.isArray(group.use) ? group.use.filter((item): item is string => typeof item === "string" && item.trim()) : [];
     const filter = typeof group.filter === "string" ? group.filter.trim() : "";
+    const includeAll = groupName === "Proxies"
+      || rawUse.length > 0
+      || Boolean(group["include-all"]);
     const items = groupName === "Proxies"
       ? ["include-all-proxies=true", "DIRECT"]
-      : [...rawProxies, ...(rawUse.length || filter ? ["include-all-proxies=true"] : [])];
+      : [...rawProxies, ...(includeAll || filter ? ["include-all-proxies=true"] : [])];
     if (filter) items.push(`policy-regex-filter=${filter}`);
+    items.push(...readGroupOptions(group));
     if (!items.length) items.push("DIRECT");
     groups.push(`${groupName} = ${type},${[...new Set(items)].join(",")}`);
   }
@@ -599,6 +621,8 @@ function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
   const converted: Record<string, unknown>[] = [{ name: "PROXY", type: "select", proxies: proxyNames.length ? proxyNames : ["DIRECT"] }];
   for (const group of groups) {
     if (group.name.trim().toLowerCase() === "proxies") continue;
+    const kind = normalizeClashGroupKind(group.kind);
+    const options = clashGroupOptions(group, kind);
     const regex = findOption(group.items, "policy-regex-filter");
     const includeAll = findOption(group.items, "include-all-proxies")?.toLowerCase() === "true";
     if (includeAll || regex) {
@@ -611,14 +635,14 @@ function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
           matched = proxyNames;
         }
       }
-      converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", proxies: matched.length ? matched : ["DIRECT"] });
+      converted.push({ name: group.name, type: kind, proxies: matched.length ? matched : ["DIRECT"], ...options });
       continue;
     }
     const proxies = group.items
       .filter((item) => !item.includes("=") && !/^(Traffic|Expire|流量|到期|剩余)\b/i.test(item))
       .map((item) => available.get(item.trim().toLowerCase()) || "")
       .filter(Boolean);
-    converted.push({ name: group.name, type: group.kind === "url-test" ? "url-test" : "select", proxies: proxies.length ? proxies : ["DIRECT"] });
+    converted.push({ name: group.name, type: kind, proxies: proxies.length ? proxies : ["DIRECT"], ...options });
   }
   return converted;
 }
@@ -641,6 +665,30 @@ function createPolicyAliases(groups: ShadowrocketGroup[], proxiesAlias: string) 
 function findOption(items: string[], key: string) {
   const prefix = `${key.toLowerCase()}=`;
   return items.find((item) => item.trim().toLowerCase().startsWith(prefix))?.trim().slice(prefix.length);
+}
+
+function clashGroupOptions(group: ShadowrocketGroup, kind: string) {
+  const options: Record<string, unknown> = {};
+  const url = findOption(group.items, "url");
+  if (url && /^https?:\/\//i.test(url)) options.url = url;
+  const numericKeys = ["interval", "tolerance", "timeout", "max-failed-times"];
+  numericKeys.forEach((key) => {
+    const value = Number(findOption(group.items, key));
+    if (Number.isFinite(value) && value > 0) options[key] = value;
+  });
+  if (findOption(group.items, "lazy")?.toLowerCase() === "true") options.lazy = true;
+  const strategy = findOption(group.items, "strategy");
+  if (strategy && kind === "load-balance") options.strategy = strategy;
+
+  // Give health-check groups safe defaults so a newly created group works in
+  // Clash even when the user leaves the advanced section untouched.
+  if (["url-test", "fallback", "load-balance"].includes(kind)) {
+    if (!options.url) options.url = "https://www.gstatic.com/generate_204";
+    if (!options.interval) options.interval = 300;
+  }
+  if (kind === "url-test" && !options.tolerance) options.tolerance = 50;
+  if (kind === "load-balance" && !options.strategy) options.strategy = "consistent-hashing";
+  return options;
 }
 
 function normalizeFinalGroupForClash(groups: ShadowrocketGroup[], rules: ShadowrocketRule[]) {
