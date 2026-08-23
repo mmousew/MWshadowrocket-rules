@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
-import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
+import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, restoreHaoziRuleConfig, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -69,9 +69,14 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { id?: string; name?: string; content?: string; setDefault?: boolean };
+    const body = await request.json() as { id?: string; name?: string; content?: string; setDefault?: boolean; recoverHaozi?: boolean };
     const id = String(body.id || "").trim();
     if (!id) throw new Error("规则方案不存在");
+    if (body.recoverHaozi) {
+      if (id !== "haozi-custom") throw new Error("只能恢复 MWPRO 方案");
+      const config = await restoreHaoziRuleConfig();
+      return NextResponse.json({ config, configs: await listRuleConfigs() });
+    }
     if (typeof body.content === "string") validateRuleContent(body.content);
     if (body.setDefault) await setRuleConfigTemplateDefault(id);
     const config = await updateRuleConfig(id, { name: body.name, content: body.content });

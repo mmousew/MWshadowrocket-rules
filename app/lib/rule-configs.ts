@@ -1,10 +1,13 @@
 import { getReadyRawDb } from "../../db";
 import { buildShadowrocketRuleConfigFromClash } from "./clash-config";
 import { getSourceSnapshot } from "./clash-links";
+// @ts-expect-error Vite imports this bundled recovery asset as plain text.
+import recoveryContent from "./haozi-recovery.conf?raw";
 
 export const DEFAULT_RULE_CONFIG_ID = "default";
 const HAOZI_RULE_CONFIG_ID = "haozi-custom";
-const HAOZI_RULE_CONFIG_NAME = "耗子专属";
+const HAOZI_RULE_CONFIG_NAME = "MWPRO";
+const HAOZI_LEGACY_RULE_CONFIG_NAME = "耗子专属";
 const HAOZI_PROFILE_NAME = "耗子专用";
 
 export type RuleConfigRow = {
@@ -61,7 +64,7 @@ export async function ensureRuleConfigAssignments() {
     // once adopted, all later requests use the stable ID above.
     haozi = await db.prepare(
       "SELECT id, name, content, status, is_template_default, created_at, updated_at FROM rule_configs WHERE name = ? AND status <> 'deleted' LIMIT 1"
-    ).bind(HAOZI_RULE_CONFIG_NAME).first<RuleConfigRow>();
+    ).bind(HAOZI_LEGACY_RULE_CONFIG_NAME).first<RuleConfigRow>();
   }
 
   if (haozi) {
@@ -110,6 +113,29 @@ export async function ensureRuleConfigAssignments() {
     db.prepare("UPDATE clash_profiles SET rule_config_id = ?, updated_at = ? WHERE name <> ? AND status <> 'deleted'").bind(DEFAULT_RULE_CONFIG_ID, now, HAOZI_PROFILE_NAME),
   ]);
   return getRuleConfig(DEFAULT_RULE_CONFIG_ID);
+}
+
+/**
+ * Restore the user's original private scheme from the local backup captured
+ * before the old migration overwrote it. This is intentionally explicit and
+ * separate from the normal startup path so a future page load can never
+ * replace later user edits again.
+ */
+export async function restoreHaoziRuleConfig() {
+  const db = await getReadyRawDb();
+  const current = await getRuleConfig(HAOZI_RULE_CONFIG_ID);
+  if (!current) throw new Error("找不到 MWPRO 方案");
+  const content = String(recoveryContent || "").trim();
+  if (!content.includes("[Proxy Group]") || !content.includes("[Rule]")) {
+    throw new Error("本地恢复文件缺少必要配置段");
+  }
+  const now = Date.now();
+  await db.batch([
+    db.prepare("UPDATE rule_configs SET name = ?, content = ?, status = 'active', updated_at = ? WHERE id = ?").bind("MWPRO", content, now, HAOZI_RULE_CONFIG_ID),
+    db.prepare("UPDATE clash_profiles SET rule_config_id = ?, updated_at = ? WHERE name = ? AND status <> 'deleted'").bind(HAOZI_RULE_CONFIG_ID, now, HAOZI_PROFILE_NAME),
+    db.prepare("UPDATE clash_profiles SET rule_config_id = ?, updated_at = ? WHERE name <> ? AND status <> 'deleted'").bind(DEFAULT_RULE_CONFIG_ID, now, HAOZI_PROFILE_NAME),
+  ]);
+  return getRuleConfig(HAOZI_RULE_CONFIG_ID);
 }
 
 export async function createRuleConfig(name: string, content: string) {
