@@ -3,9 +3,10 @@ import { parseRuleSetEntries, type RuleSetEntry } from "./rule-set-core";
 
 export type RuleSetRow = { id: string; name: string; description: string; kind: string; entries: RuleSetEntry[]; source: string; status: string; sort_order: number; created_at: number; updated_at: number };
 export type RuleSetBindingRow = { id: string; rule_config_id: string; group_name: string; rule_set_id: string; created_at: number; updated_at: number };
-export type RuleSetUsageRow = { rule_set_id: string; rule_config_id: string; config_name: string; group_name: string };
+export type RuleSetUsageRow = { rule_set_id: string; rule_config_id: string; config_name: string; group_names: string[] };
 
 const MIGRATION_ID = "rule-set-library-v1";
+const DEDUPE_MIGRATION_ID = "rule-set-library-dedupe-v1";
 const SEED_NAMES = ["YouTube", "Disney", "Hbomax", "Netflix", "Bahamut", "Bilibili", "Spotify", "Steam", "Telegram", "Google", "Microsoft", "OpenAI", "PayPal", "TIKTOK", "Apple", "UK", "CA", "KR", "CN", "DE", "JP", "SG", "TW", "US", "HK"];
 const CHINA_MAX_NO_IP_URL = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Shadowrocket/ChinaMaxNoIP/ChinaMaxNoIP.list";
 const CHINA_DIRECT_ENTRIES: RuleSetEntry[] = [
@@ -34,8 +35,15 @@ export async function listRuleSetBindings(configId: string) {
 }
 
 export async function listRuleSetUsages() {
-  const result = await (await getReadyRawDb()).prepare("SELECT b.rule_set_id, b.rule_config_id, c.name AS config_name, b.group_name FROM rule_set_bindings b INNER JOIN rule_configs c ON c.id = b.rule_config_id AND c.status <> 'deleted' ORDER BY c.name COLLATE NOCASE, b.group_name COLLATE NOCASE").all<RuleSetUsageRow>();
-  return result.results;
+  const result = await (await getReadyRawDb()).prepare("SELECT b.rule_set_id, b.rule_config_id, c.name AS config_name, b.group_name FROM rule_set_bindings b INNER JOIN rule_configs c ON c.id = b.rule_config_id AND c.status <> 'deleted' ORDER BY c.name COLLATE NOCASE, b.group_name COLLATE NOCASE").all<{ rule_set_id: string; rule_config_id: string; config_name: string; group_name: string }>();
+  const usages = new Map<string, RuleSetUsageRow>();
+  for (const item of result.results) {
+    const key = `${item.rule_set_id}\u0000${item.rule_config_id}`;
+    const current = usages.get(key) || { rule_set_id: item.rule_set_id, rule_config_id: item.rule_config_id, config_name: item.config_name, group_names: [] };
+    if (!current.group_names.some((name) => name.toLowerCase() === item.group_name.toLowerCase())) current.group_names.push(item.group_name);
+    usages.set(key, current);
+  }
+  return Array.from(usages.values());
 }
 
 export async function replaceRuleSetBindings(configId: string, bindings: Array<{ groupName: string; ruleSetId: string }>) {
@@ -62,7 +70,10 @@ export async function createRuleSet(input: { name: string; description?: string;
   const now = Date.now();
   const entries = parseRuleSetEntries(input.entries);
   const count = await db.prepare("SELECT COALESCE(MAX(sort_order), -1) AS value FROM rule_sets WHERE status <> 'deleted'").first<{ value: number }>();
-  const row = { id: crypto.randomUUID(), name: input.name.trim().slice(0, 100) || "规则集", description: String(input.description || "").trim().slice(0, 300), kind: "managed", entries, source: String(input.source || "").trim().slice(0, 500), status: "active", sortOrder: Number(count?.value || -1) + 1, createdAt: now, updatedAt: now };
+  const name = input.name.trim().slice(0, 100) || "规则集";
+  const duplicate = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND status <> 'deleted' LIMIT 1").bind(name).first<{ id: string }>();
+  if (duplicate) throw new Error("规则集名称已存在，请直接编辑现有规则集");
+  const row = { id: crypto.randomUUID(), name, description: String(input.description || "").trim().slice(0, 300), kind: "managed", entries, source: String(input.source || "").trim().slice(0, 500), status: "active", sortOrder: Number(count?.value || -1) + 1, createdAt: now, updatedAt: now };
   await db.prepare("INSERT INTO rule_sets (id, name, description, kind, entries, source, status, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(row.id, row.name, row.description, row.kind, JSON.stringify(row.entries), row.source, row.status, row.sortOrder, now, now).run();
   return row;
 }
@@ -71,8 +82,12 @@ export async function updateRuleSet(id: string, input: { name?: string; descript
   const current = (await listRuleSets()).find((row) => row.id === id);
   if (!current) throw new Error("规则集不存在");
   const entries = input.entries === undefined ? current.entries : parseRuleSetEntries(input.entries);
-  const row = { ...current, name: input.name === undefined ? current.name : input.name.trim().slice(0, 100) || current.name, description: input.description === undefined ? current.description : String(input.description).trim().slice(0, 300), source: input.source === undefined ? current.source : String(input.source).trim().slice(0, 500), entries, updatedAt: Date.now() };
-  await (await getReadyRawDb()).prepare("UPDATE rule_sets SET name = ?, description = ?, entries = ?, source = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(row.name, row.description, JSON.stringify(row.entries), row.source, row.updatedAt, id).run();
+  const db = await getReadyRawDb();
+  const name = input.name === undefined ? current.name : input.name.trim().slice(0, 100) || current.name;
+  const duplicate = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND id <> ? AND status <> 'deleted' LIMIT 1").bind(name, id).first<{ id: string }>();
+  if (duplicate) throw new Error("规则集名称已存在，请直接编辑现有规则集");
+  const row = { ...current, name, description: input.description === undefined ? current.description : String(input.description).trim().slice(0, 300), source: input.source === undefined ? current.source : String(input.source).trim().slice(0, 500), entries, updatedAt: Date.now() };
+  await db.prepare("UPDATE rule_sets SET name = ?, description = ?, entries = ?, source = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(row.name, row.description, JSON.stringify(row.entries), row.source, row.updatedAt, id).run();
   return row;
 }
 
@@ -123,12 +138,55 @@ async function insertSeedRuleSet(db: ReadyDb, name: string, entries: RuleSetEntr
   const now = Date.now();
   const max = await db.prepare("SELECT COALESCE(MAX(sort_order), -1) AS value FROM rule_sets WHERE status <> 'deleted'").first<{ value: number }>();
   const id = crypto.randomUUID();
-  await db.prepare("INSERT INTO rule_sets (id, name, description, kind, entries, source, status, sort_order, created_at, updated_at) VALUES (?, ?, ?, 'managed', ?, ?, 'active', ?, ?, ?)").bind(id, name, description, JSON.stringify(entries), source, Number(max?.value || -1) + 1, now, now).run();
-  return id;
+  await db.prepare("INSERT OR IGNORE INTO rule_sets (id, name, description, kind, entries, source, status, sort_order, created_at, updated_at) VALUES (?, ?, ?, 'managed', ?, ?, 'active', ?, ?, ?)").bind(id, name, description, JSON.stringify(entries), source, Number(max?.value || -1) + 1, now, now).run();
+  const inserted = await db.prepare("SELECT id FROM rule_sets WHERE lower(name) = lower(?) AND status <> 'deleted' LIMIT 1").bind(name).first<{ id: string }>();
+  return inserted?.id || id;
+}
+
+async function dedupeRuleSetLibrary(db: ReadyDb) {
+  const marker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(DEDUPE_MIGRATION_ID).first<{ id: string }>();
+  if (marker) return;
+
+  const sets = (await db.prepare("SELECT id, name, description, entries, source, updated_at, created_at FROM rule_sets WHERE status <> 'deleted' ORDER BY lower(name), updated_at DESC, created_at DESC, id ASC").all<{ id: string; name: string; description: string; entries: string; source: string; updated_at: number; created_at: number }>()).results;
+  const byName = new Map<string, typeof sets>();
+  for (const set of sets) {
+    const key = set.name.trim().toLowerCase();
+    byName.set(key, [...(byName.get(key) || []), set]);
+  }
+
+  for (const sameNameSets of byName.values()) {
+    if (sameNameSets.length < 2) continue;
+    const canonical = sameNameSets[0];
+    const mergedEntries = dedupeEntries(sameNameSets.flatMap((set) => {
+      try { return parseRuleSetEntries(JSON.parse(set.entries || "[]")); } catch { return parseRuleSetEntries(set.entries || ""); }
+    }));
+    const description = sameNameSets.map((set) => set.description.trim()).find(Boolean) || "";
+    const source = sameNameSets.map((set) => set.source.trim()).find(Boolean) || "";
+    await db.prepare("UPDATE rule_sets SET entries = ?, description = ?, source = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(JSON.stringify(mergedEntries), description, source, Date.now(), canonical.id).run();
+    for (const duplicate of sameNameSets.slice(1)) {
+      await db.prepare("UPDATE rule_set_bindings SET rule_set_id = ? WHERE rule_set_id = ?").bind(canonical.id, duplicate.id).run();
+      await db.prepare("UPDATE rule_sets SET status = 'deleted', updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(Date.now(), duplicate.id).run();
+    }
+  }
+
+  const bindings = (await db.prepare("SELECT id, rule_config_id, group_name, updated_at, created_at FROM rule_set_bindings ORDER BY rule_config_id, lower(group_name), updated_at DESC, created_at DESC, id ASC").all<{ id: string; rule_config_id: string; group_name: string; updated_at: number; created_at: number }>()).results;
+  const seenBindings = new Set<string>();
+  const duplicateBindingIds: string[] = [];
+  for (const binding of bindings) {
+    const key = `${binding.rule_config_id}\u0000${binding.group_name.trim().toLowerCase()}`;
+    if (seenBindings.has(key)) duplicateBindingIds.push(binding.id);
+    else seenBindings.add(key);
+  }
+  if (duplicateBindingIds.length) await db.batch(duplicateBindingIds.map((id) => db.prepare("DELETE FROM rule_set_bindings WHERE id = ?").bind(id)));
+
+  await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS rule_sets_active_name_unique_idx ON rule_sets (name COLLATE NOCASE) WHERE status <> 'deleted'").run();
+  await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS rule_set_bindings_config_group_unique_idx ON rule_set_bindings (rule_config_id, group_name COLLATE NOCASE)").run();
+  await db.prepare("INSERT INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(DEDUPE_MIGRATION_ID, Date.now()).run();
 }
 
 export async function ensureRuleSetLibrary() {
   const db = await getReadyRawDb();
+  await dedupeRuleSetLibrary(db);
   const marker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(MIGRATION_ID).first<{ id: string }>();
   const configs = (await db.prepare("SELECT id, name, content FROM rule_configs WHERE status <> 'deleted' ORDER BY created_at ASC").all<{ id: string; name: string; content: string }>()).results;
   const schemeSets = new Map<string, Map<string, string>>();

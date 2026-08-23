@@ -8,7 +8,7 @@ function clientRows(rows: Awaited<ReturnType<typeof listRuleSets>>, usages: Rule
   for (const usage of usages) usageMap.set(usage.rule_set_id, [...(usageMap.get(usage.rule_set_id) || []), usage]);
   return rows.map((row) => ({
     ...toClient(row),
-    usedBy: (usageMap.get(row.id) || []).map((usage) => ({ configId: usage.rule_config_id, configName: usage.config_name, groupName: usage.group_name })),
+    usedBy: (usageMap.get(row.id) || []).map((usage) => ({ configId: usage.rule_config_id, configName: usage.config_name, groupNames: usage.group_names })),
   }));
 }
 

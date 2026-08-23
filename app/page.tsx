@@ -9,7 +9,7 @@ type Group = { index: number; name: string; kind: string; items: string[] };
 type Rule = { index: number; type: string; value: string; policy: string; options: string[] };
 type CatalogResult = { name: string; file: string; url: string; source: string };
 type RuleConfigRecord = { id: string; name: string; content: string; status: "active" | "deleted"; is_template_default?: number; created_at: number; updated_at: number; profile_count?: number };
-type RuleSetRecord = { id: string; name: string; description: string; kind: string; entries: Array<{ type: string; value: string; options?: string[] }>; source: string; status: string; entryCount: number; sortOrder: number; createdAt: number; updatedAt: number; usedBy?: Array<{ configId: string; configName: string; groupName: string }> };
+type RuleSetRecord = { id: string; name: string; description: string; kind: string; entries: Array<{ type: string; value: string; options?: string[] }>; source: string; status: string; entryCount: number; sortOrder: number; createdAt: number; updatedAt: number; usedBy?: Array<{ configId: string; configName: string; groupNames: string[] }> };
 type Editor =
   | { mode: "group"; index: number | null; name: string; items: string; isNew?: boolean; ruleSetId?: string; regularKinds?: string[]; regularItems?: Record<string, string>; regularRuleSets?: Record<string, string>; customEnabled?: boolean; customName?: string; customItems?: string; customRuleSetId?: string; childKinds?: string[]; childItems?: Record<string, string>; availableGroupItems?: Record<string, string> }
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
@@ -1637,7 +1637,7 @@ function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { rul
         <div className="ruleLibraryCardBody">
           <div className="ruleLibraryTitleRow"><h3>{ruleSet.name}</h3><span className="ruleSetCount">{ruleSet.entryCount} 条规则</span></div>
           <p>{ruleSet.description || "暂无说明"}</p>
-          {usedBy.length ? <div className="ruleSetUsage"><strong>正在被调用</strong><div className="ruleSetUsageList">{usedBy.map((usage) => <span className="ruleSetUsageItem" key={`${usage.configId}:${usage.groupName}`}><b>{usage.configName}</b><small>{usage.groupName}</small></span>)}</div></div> : <div className="ruleSetUnused">暂未被方案调用</div>}
+          {usedBy.length ? <div className="ruleSetUsage"><strong>正在被调用</strong><div className="ruleSetUsageList">{usedBy.map((usage) => <span className="ruleSetUsageItem" key={usage.configId}><b>{usage.configName}</b><small>{usage.groupNames.length ? `分组：${usage.groupNames.join("、")}` : "已绑定"}</small></span>)}</div></div> : <div className="ruleSetUnused">暂未被方案调用</div>}
           {ruleSet.source && <small className="ruleSetSource">来源：{ruleSet.source}</small>}
         </div>
         <div className="ruleLibraryActions"><button type="button" className="ghost" onClick={() => startEdit(ruleSet)}>编辑</button><button type="button" className="danger" disabled={saving} onClick={() => void removeRuleSet(ruleSet)}>删除</button></div>
