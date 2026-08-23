@@ -188,21 +188,24 @@ export async function ensureRuleSetLibrary() {
   const db = await getReadyRawDb();
   await dedupeRuleSetLibrary(db);
   const marker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(MIGRATION_ID).first<{ id: string }>();
-  const configs = (await db.prepare("SELECT id, name, content FROM rule_configs WHERE status <> 'deleted' ORDER BY created_at ASC").all<{ id: string; name: string; content: string }>()).results;
-  const schemeSets = new Map<string, Map<string, string>>();
-  for (const config of configs) {
-    const extracted = extractSchemeRuleSets(config.content);
-    const bindingMap = new Map<string, string>();
-    for (const [policyKey, entries] of extracted) {
-      const policyName = findPolicyName(config.content, policyKey);
-      const setId = await insertSeedRuleSet(db, policyName, entries, `从「${config.name}」迁移的规则集`);
-      bindingMap.set(policyKey, setId);
-    }
-    schemeSets.set(config.id, bindingMap);
-  }
-  for (const name of SEED_NAMES) await insertSeedRuleSet(db, name, [], "预置规则集，可在这里编辑");
-  await insertSeedRuleSet(db, "CN-国内直连（综合）", CHINA_DIRECT_ENTRIES, "中国大陆直连与常用国内服务规则集合；包含每日更新的 ChinaMaxNoIP 公共规则集", CHINA_MAX_NO_IP_URL);
   if (!marker) {
+    // The initial library is a one-time migration. Do not run these seed
+    // inserts on every read, otherwise a user-deleted preset is recreated
+    // the next time the library or a subscription is loaded.
+    const configs = (await db.prepare("SELECT id, name, content FROM rule_configs WHERE status <> 'deleted' ORDER BY created_at ASC").all<{ id: string; name: string; content: string }>()).results;
+    const schemeSets = new Map<string, Map<string, string>>();
+    for (const config of configs) {
+      const extracted = extractSchemeRuleSets(config.content);
+      const bindingMap = new Map<string, string>();
+      for (const [policyKey, entries] of extracted) {
+        const policyName = findPolicyName(config.content, policyKey);
+        const setId = await insertSeedRuleSet(db, policyName, entries, `从「${config.name}」迁移的规则集`);
+        bindingMap.set(policyKey, setId);
+      }
+      schemeSets.set(config.id, bindingMap);
+    }
+    for (const name of SEED_NAMES) await insertSeedRuleSet(db, name, [], "预置规则集，可在这里编辑");
+    await insertSeedRuleSet(db, "CN-国内直连（综合）", CHINA_DIRECT_ENTRIES, "中国大陆直连与常用国内服务规则集合；包含每日更新的 ChinaMaxNoIP 公共规则集", CHINA_MAX_NO_IP_URL);
     for (const [configId, bindings] of schemeSets) {
       const existing = await listRuleSetBindings(configId);
       if (existing.length) continue;
