@@ -3,6 +3,7 @@ import { buildShadowrocketRuleConfigFromClash } from "./clash-config";
 import { getSourceSnapshot } from "./clash-links";
 
 export const DEFAULT_RULE_CONFIG_ID = "default";
+const HAOZI_RULE_CONFIG_ID = "haozi-custom";
 const HAOZI_RULE_CONFIG_NAME = "耗子专属";
 const HAOZI_PROFILE_NAME = "耗子专用";
 
@@ -42,24 +43,31 @@ export async function ensureDefaultRuleConfig(content: string) {
 
 /**
  * Split the old single default scheme into the user's private scheme and the
- * new Flower-based default scheme. This is intentionally idempotent: once the
- * named Haozi scheme exists, later requests only repair profile assignments.
+ * new Flower-based default scheme. The migration is keyed by the stable
+ * scheme ID, not its editable display name. Once the private scheme exists,
+ * this function must never rewrite its name, content, or profile assignments.
  */
 export async function ensureRuleConfigAssignments() {
   const db = await getReadyRawDb();
   const currentDefault = await getRuleConfig(DEFAULT_RULE_CONFIG_ID);
   if (!currentDefault) return null;
 
-  const haozi = await db.prepare(
-    "SELECT id, name, content, status, is_template_default, created_at, updated_at FROM rule_configs WHERE name = ? AND status <> 'deleted' LIMIT 1"
-  ).bind(HAOZI_RULE_CONFIG_NAME).first<RuleConfigRow>();
+  // The name is user-editable. Never use it as the migration identity, or a
+  // later rename such as “MWPRO” would make the migration run again.
+  let haozi = await getRuleConfig(HAOZI_RULE_CONFIG_ID);
+  if (!haozi) {
+    // Compatibility for a partially migrated database where the stable ID was
+    // not created yet. This lookup is only used to adopt the legacy record;
+    // once adopted, all later requests use the stable ID above.
+    haozi = await db.prepare(
+      "SELECT id, name, content, status, is_template_default, created_at, updated_at FROM rule_configs WHERE name = ? AND status <> 'deleted' LIMIT 1"
+    ).bind(HAOZI_RULE_CONFIG_NAME).first<RuleConfigRow>();
+  }
 
   if (haozi) {
-    const now = Date.now();
-    await db.batch([
-      db.prepare("UPDATE clash_profiles SET rule_config_id = ?, updated_at = ? WHERE name = ? AND status <> 'deleted'").bind(haozi.id, now, HAOZI_PROFILE_NAME),
-      db.prepare("UPDATE clash_profiles SET rule_config_id = ?, updated_at = ? WHERE name <> ? AND status <> 'deleted'").bind(DEFAULT_RULE_CONFIG_ID, now, HAOZI_PROFILE_NAME),
-    ]);
+    // This is the normal path. Existing user choices are authoritative: do
+    // not rename the scheme, copy default content into it, or reset any
+    // subscription bindings on every page load or config refresh.
     return getRuleConfig(DEFAULT_RULE_CONFIG_ID);
   }
 
@@ -85,7 +93,7 @@ export async function ensureRuleConfigAssignments() {
 
   const now = Date.now();
   const existingId = await db.prepare("SELECT id FROM rule_configs WHERE id = ? LIMIT 1").bind("haozi-custom").first<{ id: string }>();
-  const haoziId = existingId?.id || "haozi-custom";
+  const haoziId = existingId?.id || HAOZI_RULE_CONFIG_ID;
   if (existingId) {
     await db.prepare(
       "UPDATE rule_configs SET name = ?, content = ?, status = 'active', updated_at = ? WHERE id = ?"
