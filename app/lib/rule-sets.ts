@@ -231,7 +231,6 @@ async function ensureChinaDirectRuleSet(db: ReadyDb) {
 
 async function ensureChinaDirectDefaultBinding(db: ReadyDb, chinaRuleSetId: string) {
   const marker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(CHINA_DEFAULT_MIGRATION_ID).first<{ id: string }>();
-  if (marker) return;
   const config = await db.prepare("SELECT id, content FROM rule_configs WHERE id = 'default' AND status <> 'deleted' LIMIT 1").first<{ id: string; content: string }>();
   if (!config) return;
   const updatedContent = ensureProxyGroup(config.content, "CN = select,DIRECT");
@@ -253,7 +252,9 @@ async function ensureChinaDirectDefaultBinding(db: ReadyDb, chinaRuleSetId: stri
     const now = Date.now();
     await db.prepare("INSERT INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, created_at, updated_at) VALUES (?, 'default', 'CN', ?, ?, ?)").bind(crypto.randomUUID(), chinaRuleSetId, now, now).run();
   }
-  await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(CHINA_DEFAULT_MIGRATION_ID, Date.now()).run();
+  if (!marker) {
+    await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(CHINA_DEFAULT_MIGRATION_ID, Date.now()).run();
+  }
 }
 
 export async function ensureRuleSetLibrary() {
