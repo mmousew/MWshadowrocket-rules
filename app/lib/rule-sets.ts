@@ -9,6 +9,7 @@ const MIGRATION_ID = "rule-set-library-v1";
 const DEDUPE_MIGRATION_ID = "rule-set-library-dedupe-v1";
 const CHINA_DEFAULT_MIGRATION_ID = "rule-set-default-cn-v1";
 export const CHINA_DIRECT_RULE_SET_NAME = "CN-国内直连（综合）";
+const CHINA_DIRECT_RULE_SET_ALIASES = [CHINA_DIRECT_RULE_SET_NAME, "CN国内直连"];
 const SEED_NAMES = ["YouTube", "Disney", "Hbomax", "Netflix", "Bahamut", "Bilibili", "Spotify", "Steam", "Telegram", "Google", "Microsoft", "OpenAI", "PayPal", "TIKTOK", "Apple", "UK", "CA", "KR", "CN", "DE", "JP", "SG", "TW", "US", "HK"];
 const CHINA_MAX_NO_IP_URL = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Shadowrocket/ChinaMaxNoIP/ChinaMaxNoIP.list";
 const CHINA_DIRECT_ENTRIES: RuleSetEntry[] = [
@@ -97,7 +98,7 @@ export async function updateRuleSet(id: string, input: { name?: string; descript
 export async function deleteRuleSet(id: string) {
   const db = await getReadyRawDb();
   const current = await db.prepare("SELECT name, kind FROM rule_sets WHERE id = ? AND status <> 'deleted' LIMIT 1").bind(id).first<{ name: string; kind: string }>();
-  if (current?.kind === "builtin" || current?.name === CHINA_DIRECT_RULE_SET_NAME) throw new Error("系统内置规则集不可删除，请使用隐藏或停用");
+  if (current?.kind === "builtin" || CHINA_DIRECT_RULE_SET_ALIASES.some((name) => current?.name?.trim().toLowerCase() === name.toLowerCase())) throw new Error("系统内置规则集不可删除，请使用隐藏或停用");
   const referenced = await db.prepare("SELECT rule_config_id, group_name FROM rule_set_bindings WHERE rule_set_id = ? ORDER BY rule_config_id, group_name").bind(id).all<{ rule_config_id: string; group_name: string }>();
   if (referenced.results.length) throw new Error(`规则集仍被使用：${referenced.results.map((item) => `${item.rule_config_id}/${item.group_name}`).join("、")}`);
   await db.prepare("UPDATE rule_sets SET status = 'deleted', updated_at = ? WHERE id = ?").bind(Date.now(), id).run();
@@ -213,15 +214,18 @@ function ensureProxyGroup(content: string, line: string) {
 }
 
 async function ensureChinaDirectRuleSet(db: ReadyDb) {
-  const active = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND status <> 'deleted' LIMIT 1").bind(CHINA_DIRECT_RULE_SET_NAME).first<{ id: string }>();
+  const active = await db.prepare("SELECT id, name, entries, source FROM rule_sets WHERE lower(trim(name)) IN (lower(trim(?)), lower(trim(?))) AND status <> 'deleted' ORDER BY CASE WHEN lower(trim(name)) = lower(trim(?)) THEN 0 ELSE 1 END, updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[0], CHINA_DIRECT_RULE_SET_ALIASES[1], CHINA_DIRECT_RULE_SET_ALIASES[0]).first<{ id: string; name: string; entries: string; source: string }>();
   if (active) {
-    await db.prepare("UPDATE rule_sets SET kind = 'builtin', updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(Date.now(), active.id).run();
+    let existingEntries: RuleSetEntry[] = [];
+    try { existingEntries = parseRuleSetEntries(JSON.parse(active.entries || "[]")); } catch { existingEntries = parseRuleSetEntries(active.entries || ""); }
+    const mergedEntries = dedupeEntries([...CHINA_DIRECT_ENTRIES, ...existingEntries]);
+    await db.prepare("UPDATE rule_sets SET kind = 'builtin', entries = ?, source = ?, visible = 1, enabled = 1, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(JSON.stringify(mergedEntries), active.source?.trim() || CHINA_MAX_NO_IP_URL, Date.now(), active.id).run();
     return active.id;
   }
 
   // This is the one explicit built-in exception: the user asked for the
   // domestic-direct set to be restored as a protected default.
-  const deleted = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) ORDER BY updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_NAME).first<{ id: string }>();
+  const deleted = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) IN (lower(trim(?)), lower(trim(?))) ORDER BY CASE WHEN lower(trim(name)) = lower(trim(?)) THEN 0 ELSE 1 END, updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[0], CHINA_DIRECT_RULE_SET_ALIASES[1], CHINA_DIRECT_RULE_SET_ALIASES[0]).first<{ id: string }>();
   if (deleted) {
     await db.prepare("UPDATE rule_sets SET kind = 'builtin', entries = ?, source = ?, status = 'active', visible = 1, enabled = 1, updated_at = ? WHERE id = ?").bind(JSON.stringify(CHINA_DIRECT_ENTRIES), CHINA_MAX_NO_IP_URL, Date.now(), deleted.id).run();
     return deleted.id;
