@@ -234,6 +234,7 @@ export default function Home() {
   const [availableRuleSets, setAvailableRuleSets] = useState<RuleSetRecord[]>([]);
   const [ruleSetBindings, setRuleSetBindings] = useState<Record<string, string>>({});
   const [ruleSetsLoading, setRuleSetsLoading] = useState(false);
+  const [ruleSetBusy, setRuleSetBusy] = useState(false);
   const [ruleConfigBusy, setRuleConfigBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
@@ -444,6 +445,19 @@ export default function Home() {
     }));
     const availableGroupItems = Object.fromEntries(parsed.groups.map((item) => [policyKey(item.name), [item.kind, ...item.items].join("\n")]));
     setEditor({ mode: "group", index: group.index, name: group.name, items: [group.kind, ...group.items].join("\n"), ruleSetId: ruleSetBindings[policyKey(group.name)] || "", childKinds, childItems, availableGroupItems });
+  }
+
+  async function toggleRuleSetFlag(ruleSet: RuleSetRecord, field: "visible" | "enabled", value: boolean) {
+    setRuleSetBusy(true); setError("");
+    try {
+      const response = await fetch("/api/rule-set", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: ruleSet.id, [field]: value }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "更新规则集状态失败");
+      setAvailableRuleSets((data.ruleSets || []) as RuleSetRecord[]);
+      setToast(`${ruleSet.name} 已${field === "visible" ? (value ? "显示" : "隐藏") : (value ? "启用" : "停用")}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "更新规则集状态失败");
+    } finally { setRuleSetBusy(false); }
   }
 
   function editRule(rule: Rule) {
@@ -778,7 +792,6 @@ export default function Home() {
 
         {isSchemeView && <section className="schemeWorkspace" aria-label={`${selectedRuleConfig?.name || "当前方案"}方案编辑区`}>
           <div className="schemeWorkspaceIntro"><div><strong>{selectedRuleConfig?.name || "当前方案"}</strong><p>这套方案的分组、域名和规则彼此独立，修改后只影响绑定此方案的订阅。</p></div><button type="button" className="ghost schemeBack" onClick={() => setView("configs")}>返回方案列表</button></div>
-          <div className="schemeTabs" role="tablist" aria-label="方案内容"><span className="schemeTabsLabel">方案内容</span>{schemeTabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={view === tab.id} className={view === tab.id ? "active" : ""} onClick={() => { setView(tab.id); setQuery(""); }}><strong>{tab.label}</strong><small>{tab.description}</small></button>)}</div>
         </section>}
 
         {(isSchemeView) && <>
@@ -807,7 +820,7 @@ export default function Home() {
             onPointerUp={() => finishGroupDrag()}
             onPointerCancel={() => finishGroupDrag("", "")}
             onKeyDown={(event) => moveGroupWithKeyboard(event, group)}
-          ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div><span className="pill">{linkedCount} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button>{isProtectedGroupName(group.name) ? <span className="pill" title="系统保留分组，不能删除或改名">系统保留</span> : <button className="danger" onClick={() => removeGroup(group)}>删除</button>}</div>; })}</div></>
+          ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置这个分组使用的节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div>{policyKey(group.name) === "cn" && (() => { const chinaRuleSet = availableRuleSets.find((ruleSet) => ruleSet.isBuiltin && ruleSet.name.trim().toLowerCase() === "cn-国内直连（综合）".toLowerCase()) || availableRuleSets.find((ruleSet) => ruleSet.name.trim().toLowerCase() === "cn国内直连"); return chinaRuleSet ? <div className="groupRuleSetSwitches" aria-label="CN规则集开关"><label><input type="checkbox" checked={chinaRuleSet.visible !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "visible", event.target.checked)} />显示</label><label><input type="checkbox" checked={chinaRuleSet.enabled !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "enabled", event.target.checked)} />启用</label></div> : null; })()}<span className="pill">{linkedCount} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button>{isProtectedGroupName(group.name) ? <span className="pill" title="系统保留分组，不能删除或改名">系统保留</span> : <button className="danger" onClick={() => removeGroup(group)}>删除</button>}</div>; })}</div></>
           : <>{viewingFinal && <div className="listNote finalRuleNote">这是系统兜底规则：未匹配到其它规则的流量会进入「{viewingGroup}」分组。它不是重复的代理分组，可通过“节点筛选”配置这个分组使用的节点。</div>}<div className="listPanel">{filteredRules.map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><input className="ruleSelect" type="checkbox" checked={effectiveSelectedRuleIndexes.includes(rule.index)} onChange={() => toggleRuleSelection(rule.index)} aria-label={`选择规则 ${rule.value}`} /><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}</div></>}
         </>}
 
@@ -1613,18 +1626,6 @@ function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { rul
     finally { setSaving(false); }
   }
 
-  async function toggleRuleSetFlag(ruleSet: RuleSetRecord, field: "visible" | "enabled", value: boolean) {
-    setSaving(true); onError("");
-    try {
-      const response = await fetch("/api/rule-set", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: ruleSet.id, [field]: value }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "更新规则集状态失败");
-      onChange((data.ruleSets || []) as RuleSetRecord[]);
-      onToast(`${ruleSet.name} 已${field === "visible" ? (value ? "显示" : "隐藏") : (value ? "启用" : "停用")}`);
-    } catch (cause) { onError(cause instanceof Error ? cause.message : "更新规则集状态失败"); }
-    finally { setSaving(false); }
-  }
-
   return <section className="ruleLibraryPanel">
     <div className="panelHead"><div><h2>公共规则集库</h2><p>所有方案共用这里的规则内容；是否使用、绑定到哪个分组，由每个方案单独选择。</p></div><button type="button" className="primary" onClick={startNew}>＋ 新增规则集</button></div>
     {loading && <p className="clashLoading">正在读取规则集…</p>}
@@ -1637,7 +1638,7 @@ function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { rul
           {usedBy.length ? <div className="ruleSetUsage"><strong>正在被调用</strong><div className="ruleSetUsageList">{usedBy.map((usage) => <span className="ruleSetUsageItem" key={usage.configId}><b>{usage.configName}</b><small>{usage.groupNames.length ? `分组：${usage.groupNames.join("、")}` : "已绑定"}</small></span>)}</div></div> : <div className="ruleSetUnused">暂未被方案调用</div>}
           {ruleSet.source && <small className="ruleSetSource">来源：{ruleSet.source}</small>}
         </div>
-        <div className="ruleLibraryActions"><div className="ruleSetSwitches"><label><input type="checkbox" checked={ruleSet.visible !== false} disabled={saving} onChange={(event) => void toggleRuleSetFlag(ruleSet, "visible", event.target.checked)} />显示</label><label><input type="checkbox" checked={ruleSet.enabled !== false} disabled={saving} onChange={(event) => void toggleRuleSetFlag(ruleSet, "enabled", event.target.checked)} />启用</label></div><button type="button" className="ghost" onClick={() => startEdit(ruleSet)}>编辑</button><button type="button" className="danger" disabled={saving || ruleSet.isBuiltin} onClick={() => void removeRuleSet(ruleSet)}>{ruleSet.isBuiltin ? "内置" : "删除"}</button></div>
+        <div className="ruleLibraryActions"><button type="button" className="ghost" onClick={() => startEdit(ruleSet)}>编辑</button><button type="button" className="danger" disabled={saving || ruleSet.isBuiltin} onClick={() => void removeRuleSet(ruleSet)}>{ruleSet.isBuiltin ? "内置" : "删除"}</button></div>
       </article>;
     })}</div>
     {modalOpen && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭规则集编辑" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor(); }} onKeyDown={(event) => { if (event.key === "Escape") closeEditor(); }}>

@@ -7,7 +7,6 @@ export type RuleSetUsageRow = { rule_set_id: string; rule_config_id: string; con
 
 const MIGRATION_ID = "rule-set-library-v1";
 const DEDUPE_MIGRATION_ID = "rule-set-library-dedupe-v1";
-const CHINA_DEFAULT_MIGRATION_ID = "rule-set-default-cn-v1";
 export const CHINA_DIRECT_RULE_SET_NAME = "CN-国内直连（综合）";
 const CHINA_DIRECT_RULE_SET_ALIASES = [CHINA_DIRECT_RULE_SET_NAME, "CN国内直连"];
 const SEED_NAMES = ["YouTube", "Disney", "Hbomax", "Netflix", "Bahamut", "Bilibili", "Spotify", "Steam", "Telegram", "Google", "Microsoft", "OpenAI", "PayPal", "TIKTOK", "Apple", "UK", "CA", "KR", "CN", "DE", "JP", "SG", "TW", "US", "HK"];
@@ -214,63 +213,69 @@ function ensureProxyGroup(content: string, line: string) {
 }
 
 async function ensureChinaDirectRuleSet(db: ReadyDb) {
-  let active = await db.prepare("SELECT id, name, entries, source FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND status <> 'deleted' ORDER BY updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[0]).first<{ id: string; name: string; entries: string; source: string }>();
-  if (!active) active = await db.prepare("SELECT id, name, entries, source FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND status <> 'deleted' ORDER BY updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[1]).first<{ id: string; name: string; entries: string; source: string }>();
-  if (active) {
-    let existingEntries: RuleSetEntry[] = [];
-    try { existingEntries = parseRuleSetEntries(JSON.parse(active.entries || "[]")); } catch { existingEntries = parseRuleSetEntries(active.entries || ""); }
-    const mergedEntries = dedupeEntries([...CHINA_DIRECT_ENTRIES, ...existingEntries]);
-    // Preserve the user's visibility/enabled switches on an existing set. The
-    // built-in protection is about deletion, not about forcing it back on
-    // every time a subscription is generated.
-    await db.prepare("UPDATE rule_sets SET kind = 'builtin', entries = ?, source = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(JSON.stringify(mergedEntries), active.source?.trim() || CHINA_MAX_NO_IP_URL, Date.now(), active.id).run();
-    return active.id;
+  const candidates = (await db.prepare(
+    "SELECT id, name, entries, source, description, status, visible, enabled, updated_at, created_at FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) OR lower(trim(name)) = lower(trim(?)) ORDER BY updated_at DESC, created_at DESC, id ASC"
+  ).bind(CHINA_DIRECT_RULE_SET_ALIASES[0], CHINA_DIRECT_RULE_SET_ALIASES[1]).all<{ id: string; name: string; entries: string; source: string; description: string; status: string; visible: number; enabled: number; updated_at: number; created_at: number }>()).results;
+
+  const cnBindingSets = (await db.prepare("SELECT DISTINCT rule_set_id FROM rule_set_bindings WHERE lower(trim(group_name)) = 'cn'").all<{ rule_set_id: string }>()).results.map((item) => item.rule_set_id).filter(Boolean);
+  const relatedIds = Array.from(new Set([...candidates.map((item) => item.id), ...cnBindingSets]));
+  const relatedRows = relatedIds.length ? (await db.prepare(`SELECT id, entries FROM rule_sets WHERE id IN (${relatedIds.map(() => "?").join(",")})`).bind(...relatedIds).all<{ id: string; entries: string }>()).results : [];
+  const mergedEntries = dedupeEntries([
+    ...CHINA_DIRECT_ENTRIES,
+    ...relatedRows.flatMap((row) => {
+      try { return parseRuleSetEntries(JSON.parse(row.entries || "[]")); } catch { return parseRuleSetEntries(row.entries || ""); }
+    }),
+  ]);
+
+  const activeCanonical = candidates.find((row) => row.status !== "deleted" && row.name.trim().toLowerCase() === CHINA_DIRECT_RULE_SET_NAME.toLowerCase());
+  const activeAlias = candidates.find((row) => row.status !== "deleted");
+  const deletedCanonical = candidates.find((row) => row.name.trim().toLowerCase() === CHINA_DIRECT_RULE_SET_NAME.toLowerCase());
+  const chosen = activeCanonical || activeAlias || deletedCanonical;
+  const now = Date.now();
+  let chosenId = chosen?.id || "";
+
+  if (!chosenId) {
+    chosenId = await insertSeedRuleSet(db, CHINA_DIRECT_RULE_SET_NAME, mergedEntries, "中国大陆直连与常用国内服务规则集合；包含每日更新的 ChinaMaxNoIP 公共规则集", CHINA_MAX_NO_IP_URL, "builtin");
+  } else {
+    // Keep one protected canonical row, merge legacy CN rows before retiring
+    // them, and repoint every historical reference to the same row.
+    await db.prepare("UPDATE rule_sets SET name = ?, description = ?, kind = 'builtin', entries = ?, source = ?, status = 'active', visible = CASE WHEN status = 'deleted' THEN 1 ELSE visible END, enabled = CASE WHEN status = 'deleted' THEN 1 ELSE enabled END, updated_at = ? WHERE id = ?").bind(CHINA_DIRECT_RULE_SET_NAME, "中国大陆直连与常用国内服务规则集合；包含每日更新的 ChinaMaxNoIP 公共规则集", JSON.stringify(mergedEntries), CHINA_MAX_NO_IP_URL, now, chosenId).run();
   }
 
-  // This is the one explicit built-in exception: the user asked for the
-  // domestic-direct set to be restored as a protected default.
-  let deleted = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) ORDER BY updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[0]).first<{ id: string }>();
-  if (!deleted) deleted = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) ORDER BY updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_ALIASES[1]).first<{ id: string }>();
-  if (deleted) {
-    await db.prepare("UPDATE rule_sets SET kind = 'builtin', entries = ?, source = ?, status = 'active', visible = 1, enabled = 1, updated_at = ? WHERE id = ?").bind(JSON.stringify(CHINA_DIRECT_ENTRIES), CHINA_MAX_NO_IP_URL, Date.now(), deleted.id).run();
-    return deleted.id;
+  const otherIds = relatedIds.filter((id) => id !== chosenId);
+  if (otherIds.length) {
+    await db.batch([
+      db.prepare(`UPDATE rule_set_bindings SET rule_set_id = ?, updated_at = ? WHERE rule_set_id IN (${otherIds.map(() => "?").join(",")})`).bind(chosenId, now, ...otherIds),
+      db.prepare(`UPDATE rule_sets SET status = 'deleted', updated_at = ? WHERE id IN (${otherIds.map(() => "?").join(",")})`).bind(now, ...otherIds),
+    ]);
   }
-  return insertSeedRuleSet(db, CHINA_DIRECT_RULE_SET_NAME, CHINA_DIRECT_ENTRIES, "中国大陆直连与常用国内服务规则集合；包含每日更新的 ChinaMaxNoIP 公共规则集", CHINA_MAX_NO_IP_URL, "builtin");
+  return chosenId;
 }
 
-async function ensureChinaDirectDefaultBinding(db: ReadyDb, chinaRuleSetId: string) {
-  const marker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(CHINA_DEFAULT_MIGRATION_ID).first<{ id: string }>();
-  const config = await db.prepare("SELECT id, content FROM rule_configs WHERE id = 'default' AND status <> 'deleted' LIMIT 1").first<{ id: string; content: string }>();
-  if (!config) return;
-  const updatedContent = ensureProxyGroup(config.content, "CN = select,DIRECT");
-  if (updatedContent !== config.content) {
-    await db.prepare("UPDATE rule_configs SET content = ?, updated_at = ? WHERE id = 'default' AND status <> 'deleted'").bind(updatedContent, Date.now()).run();
-  }
-
-  const existingBinding = await db.prepare("SELECT id, rule_set_id FROM rule_set_bindings WHERE rule_config_id = 'default' AND lower(trim(group_name)) = 'cn' LIMIT 1").first<{ id: string; rule_set_id: string }>();
-  if (existingBinding && existingBinding.rule_set_id !== chinaRuleSetId) {
-    // Repair the binding first. Merging an old rule set is best-effort and
-    // must never prevent the default CN route from pointing at the protected
-    // built-in set.
-    await db.prepare("UPDATE rule_set_bindings SET rule_set_id = ?, updated_at = ? WHERE id = ?").bind(chinaRuleSetId, Date.now(), existingBinding.id).run();
-    const oldSet = await db.prepare("SELECT entries FROM rule_sets WHERE id = ? AND status <> 'deleted' LIMIT 1").bind(existingBinding.rule_set_id).first<{ entries: string }>();
-    let oldEntries: RuleSetEntry[] = [];
-    if (oldSet) {
-      try { oldEntries = parseRuleSetEntries(JSON.parse(oldSet.entries || "[]")); } catch { oldEntries = parseRuleSetEntries(oldSet.entries || ""); }
+async function ensureChinaDirectBindings(db: ReadyDb, chinaRuleSetId: string) {
+  const configs = (await db.prepare("SELECT id, content FROM rule_configs WHERE status <> 'deleted' ORDER BY created_at ASC").all<{ id: string; content: string }>()).results;
+  for (const config of configs) {
+    const updatedContent = ensureProxyGroup(config.content, "CN = select,DIRECT");
+    if (updatedContent !== config.content) {
+      await db.prepare("UPDATE rule_configs SET content = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(updatedContent, Date.now(), config.id).run();
     }
-    const mergedEntries = dedupeEntries([...CHINA_DIRECT_ENTRIES, ...oldEntries]);
-    await db.prepare("UPDATE rule_sets SET entries = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(JSON.stringify(mergedEntries), Date.now(), chinaRuleSetId).run();
-  } else if (!existingBinding) {
+
+    const bindings = (await db.prepare("SELECT id, rule_set_id, group_name, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? AND lower(trim(group_name)) = 'cn' ORDER BY updated_at DESC, created_at DESC, id ASC").bind(config.id).all<{ id: string; rule_set_id: string; group_name: string; created_at: number; updated_at: number }>()).results;
+    const keep = bindings[0];
     const now = Date.now();
-    await db.prepare("INSERT OR IGNORE INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, created_at, updated_at) VALUES (?, 'default', 'CN', ?, ?, ?)").bind(crypto.randomUUID(), chinaRuleSetId, now, now).run();
-  }
-  if (!marker) {
-    await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(CHINA_DEFAULT_MIGRATION_ID, Date.now()).run();
+    if (bindings.length > 1) {
+      await db.batch(bindings.slice(1).map((binding) => db.prepare("DELETE FROM rule_set_bindings WHERE id = ?").bind(binding.id)));
+    }
+    if (keep) {
+      await db.prepare("UPDATE rule_set_bindings SET group_name = 'CN', rule_set_id = ?, updated_at = ? WHERE id = ?").bind(chinaRuleSetId, now, keep.id).run();
+    } else {
+      await db.prepare("INSERT OR IGNORE INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, created_at, updated_at) VALUES (?, ?, 'CN', ?, ?, ?)").bind(crypto.randomUUID(), config.id, chinaRuleSetId, now, now).run();
+    }
   }
 }
 
 /**
- * Repair the protected domestic-direct set and the default scheme binding.
+ * Repair the protected domestic-direct set and bind it to every active scheme.
  *
  * This is intentionally idempotent and does not depend on migration markers:
  * users may rename, hide, disable, or otherwise edit the set, while the
@@ -280,14 +285,14 @@ async function ensureChinaDirectDefaultBinding(db: ReadyDb, chinaRuleSetId: stri
 export async function repairChinaDirectState() {
   const db = await getReadyRawDb();
   const chinaRuleSetId = await ensureChinaDirectRuleSet(db);
-  await ensureChinaDirectDefaultBinding(db, chinaRuleSetId);
+  await ensureChinaDirectBindings(db, chinaRuleSetId);
   const ruleSet = await db.prepare(
     "SELECT id, name, kind, status, visible, enabled FROM rule_sets WHERE id = ? LIMIT 1"
   ).bind(chinaRuleSetId).first<{ id: string; name: string; kind: string; status: string; visible: number; enabled: number }>();
-  const binding = await db.prepare(
-    "SELECT rule_config_id, group_name, rule_set_id FROM rule_set_bindings WHERE rule_config_id = 'default' AND lower(trim(group_name)) = 'cn' LIMIT 1"
-  ).first<{ rule_config_id: string; group_name: string; rule_set_id: string }>();
-  return { chinaRuleSetId, ruleSet, binding };
+  const bindings = (await db.prepare(
+    "SELECT rule_config_id, group_name, rule_set_id FROM rule_set_bindings WHERE rule_set_id = ? AND lower(trim(group_name)) = 'cn' ORDER BY rule_config_id"
+  ).bind(chinaRuleSetId).all<{ rule_config_id: string; group_name: string; rule_set_id: string }>()).results;
+  return { chinaRuleSetId, ruleSet, bindings };
 }
 
 export async function ensureRuleSetLibrary() {
@@ -301,7 +306,7 @@ export async function ensureRuleSetLibrary() {
     const repaired = await repairChinaDirectState();
     chinaRuleSetId = repaired.chinaRuleSetId;
   } catch (error) {
-    console.error("[rule-sets] default CN repair failed", error);
+    console.error("[rule-sets] all-scheme CN repair failed", error);
   }
   try {
     await dedupeRuleSetLibrary(db);
@@ -339,7 +344,7 @@ export async function ensureRuleSetLibrary() {
       const repaired = await repairChinaDirectState();
       chinaRuleSetId = repaired.chinaRuleSetId;
     } catch (error) {
-      console.error("[rule-sets] default CN repair retry failed", error);
+      console.error("[rule-sets] all-scheme CN repair retry failed", error);
     }
   }
   return listRuleSets();

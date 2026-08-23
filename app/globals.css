@@ -475,11 +475,15 @@ button,input,select,textarea { max-width:100%; }
 .groupListRow .reorderButton:hover:not(:disabled) { border-color:#85b89d; color:#155b40; background:#e6f4eb; transform:none; }
 .groupListRow .reorderButton:disabled { color:#b9c4bd; background:#f7f9f7; cursor:not-allowed; }
 .groupListRow .reorderButton:focus-visible { outline:2px solid #4d9777; outline-offset:2px; }
+.groupRuleSetSwitches { display:flex; flex-direction:column; gap:5px; min-width:74px; padding:6px 8px; border:1px solid #dce7e0; border-radius:9px; background:#f7fbf8; }
+.groupRuleSetSwitches label { display:flex; align-items:center; gap:5px; color:#486255; font-size:9px; font-weight:700; white-space:nowrap; }
+.groupRuleSetSwitches input { margin:0; accent-color:#237655; }
 
 @media(max-width:760px){
   .groupListRow .dragHandle { flex:0 0 34px; min-width:34px; }
   .groupListRow .rowMain { width:calc(100% - 44px); min-width:calc(100% - 44px); }
   .groupListRow .reorderButtons { width:100%; margin-left:42px; }
+  .groupRuleSetSwitches { width:100%; margin-left:42px; flex-direction:row; justify-content:flex-start; }
   .groupListRow>button:not(.dragHandle) { flex:1 1 30%; }
 }
 
