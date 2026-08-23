@@ -58,3 +58,34 @@ export const clashAirportSources = sqliteTable("clash_airport_sources", {
 }, (table) => ({
   statusIdx: index("clash_airport_sources_status_idx").on(table.status),
 }));
+
+export const ruleSets = sqliteTable("rule_sets", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  kind: text("kind").notNull().default("managed"),
+  entries: text("entries").notNull().default("[]"),
+  source: text("source").notNull().default(""),
+  status: text("status").notNull().default("active"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => ({ statusIdx: index("rule_sets_status_idx").on(table.status), sortIdx: index("rule_sets_sort_idx").on(table.sortOrder) }));
+
+export const ruleSetBindings = sqliteTable("rule_set_bindings", {
+  id: text("id").primaryKey(),
+  ruleConfigId: text("rule_config_id").notNull(),
+  groupName: text("group_name").notNull(),
+  ruleSetId: text("rule_set_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => ({
+  configIdx: index("rule_set_bindings_config_idx").on(table.ruleConfigId),
+  groupIdx: index("rule_set_bindings_group_idx").on(table.groupName),
+}));
+
+export const ruleSetMigrations = sqliteTable("rule_set_migrations", {
+  id: text("id").primaryKey(),
+  version: integer("version").notNull(),
+  createdAt: integer("created_at").notNull(),
+});

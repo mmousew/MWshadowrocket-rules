@@ -4,13 +4,14 @@ import { FormEvent, useEffect, useMemo, useRef, useState, type DragEvent, type K
 import QRCode from "qrcode";
 import { isProtectedGroupName, validateRuleConfiguration } from "./lib/rule-validation";
 
-type View = "overview" | "groups" | "rules" | "sets" | "configs" | "clash" | "airports" | "conflicts";
+type View = "overview" | "groups" | "rules" | "sets" | "rule-library" | "configs" | "clash" | "airports" | "conflicts";
 type Group = { index: number; name: string; kind: string; items: string[] };
 type Rule = { index: number; type: string; value: string; policy: string; options: string[] };
 type CatalogResult = { name: string; file: string; url: string; source: string };
 type RuleConfigRecord = { id: string; name: string; content: string; status: "active" | "deleted"; is_template_default?: number; created_at: number; updated_at: number; profile_count?: number };
+type RuleSetRecord = { id: string; name: string; description: string; kind: string; entries: Array<{ type: string; value: string; options?: string[] }>; source: string; status: string; entryCount: number; sortOrder: number; createdAt: number; updatedAt: number };
 type Editor =
-  | { mode: "group"; index: number | null; name: string; items: string; isNew?: boolean; regularKinds?: string[]; regularItems?: Record<string, string>; customEnabled?: boolean; customName?: string; customItems?: string; childKinds?: string[]; childItems?: Record<string, string>; availableGroupItems?: Record<string, string> }
+  | { mode: "group"; index: number | null; name: string; items: string; isNew?: boolean; ruleSetId?: string; regularKinds?: string[]; regularItems?: Record<string, string>; regularRuleSets?: Record<string, string>; customEnabled?: boolean; customName?: string; customItems?: string; customRuleSetId?: string; childKinds?: string[]; childItems?: Record<string, string>; availableGroupItems?: Record<string, string> }
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
 type GroupDeleteImpact = { rules: Rule[]; finalRule: Rule | null; parentGroups: Group[] };
 type DeleteTarget = { kind: "group"; group: Group; impact: GroupDeleteImpact } | { kind: "rule"; rule: Rule };
@@ -135,6 +136,7 @@ function groupOptionLabel(kind: string) {
 const nav: { id: View; label: string }[] = [
   { id: "overview", label: "总览" },
   { id: "configs", label: "方案" },
+  { id: "rule-library", label: "规则集" },
   { id: "clash", label: "私有订阅" },
   { id: "airports", label: "机场列表" },
   { id: "conflicts", label: "检查" },
@@ -229,6 +231,9 @@ export default function Home() {
   const [saveEnabled, setSaveEnabled] = useState(false);
   const [ruleConfigs, setRuleConfigs] = useState<RuleConfigRecord[]>([]);
   const [selectedRuleConfigId, setSelectedRuleConfigId] = useState(() => typeof window === "undefined" ? "default" : new URL(window.location.href).searchParams.get("config") || "default");
+  const [availableRuleSets, setAvailableRuleSets] = useState<RuleSetRecord[]>([]);
+  const [ruleSetBindings, setRuleSetBindings] = useState<Record<string, string>>({});
+  const [ruleSetsLoading, setRuleSetsLoading] = useState(false);
   const [ruleConfigBusy, setRuleConfigBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
@@ -285,6 +290,21 @@ export default function Home() {
       .catch((cause) => { setError(cause instanceof Error ? cause.message : "读取配置失败"); setLoading(false); });
   }, []);
 
+  useEffect(() => {
+    if (!selectedRuleConfigId) return;
+    fetch(`/api/rule-set?config=${encodeURIComponent(selectedRuleConfigId)}`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (response.status === 401) { setAuthRequired(true); return; }
+        if (!response.ok) throw new Error(data.error || "读取规则集失败");
+        setAvailableRuleSets((data.ruleSets || []) as RuleSetRecord[]);
+        const bindings = Object.fromEntries(((data.bindings || []) as Array<{ group_name?: string; rule_set_id?: string }>).filter((item) => item.group_name && item.rule_set_id).map((item) => [policyKey(String(item.group_name)), String(item.rule_set_id)]));
+        setRuleSetBindings(bindings);
+      })
+      .catch((cause) => setError(cause instanceof Error ? cause.message : "读取规则集失败"))
+      .finally(() => setRuleSetsLoading(false));
+  }, [selectedRuleConfigId]);
+
   const parsed = useMemo(() => parseConfig(content), [content]);
   const conflicts = useMemo(() => {
     const issues = [...getConflicts(parsed.groups, parsed.rules), ...validateRuleConfiguration(content)];
@@ -297,13 +317,13 @@ export default function Home() {
   const duplicateRuleCount = useMemo(() => getDuplicateRuleCount(parsed.rules), [parsed.rules]);
   const selectedRuleConfig = useMemo(() => ruleConfigs.find((config) => config.id === selectedRuleConfigId), [ruleConfigs, selectedRuleConfigId]);
   const isSchemeView = schemeTabs.some((item) => item.id === view);
-  const ruleSets = useMemo(() => parsed.rules.filter((rule) => rule.type === "RULE-SET"), [parsed.rules]);
+  const inlineRuleSets = useMemo(() => parsed.rules.filter((rule) => rule.type === "RULE-SET"), [parsed.rules]);
   const domainRules = useMemo(() => parsed.rules.filter((rule) => rule.type !== "RULE-SET" && rule.type !== "FINAL"), [parsed.rules]);
   const policies = useMemo(() => [...parsed.groups.map((group) => group.name), ...BUILTINS], [parsed.groups]);
   const ruleCountForPolicy = (policy: string) => parsed.rules.filter((rule) => policyKey(rule.policy) === policyKey(policy)).length + (parsed.finalRule && policyKey(parsed.finalRule.policy) === policyKey(policy) ? 1 : 0);
   const filteredGroups = parsed.groups.filter((group) => `${group.name} ${group.items.join(" ")}`.toLowerCase().includes(query.toLowerCase()));
   const viewingGroup = view === "rules" && parsed.groups.some((group) => group.name === query) ? query : "";
-  const activeRules = viewingGroup ? parsed.rules.filter((rule) => rule.policy === viewingGroup) : view === "sets" ? ruleSets : domainRules;
+  const activeRules = viewingGroup ? parsed.rules.filter((rule) => rule.policy === viewingGroup) : view === "sets" ? inlineRuleSets : domainRules;
   const filteredRules = activeRules.filter((rule) => viewingGroup || `${rule.type} ${rule.value} ${rule.policy}`.toLowerCase().includes(query.toLowerCase()));
   const viewingFinal = Boolean(viewingGroup && parsed.finalRule && policyKey(parsed.finalRule.policy) === policyKey(viewingGroup));
   const visibleRuleCount = filteredRules.length + (viewingFinal ? 1 : 0);
@@ -414,9 +434,11 @@ export default function Home() {
       isNew: true,
       regularKinds: [],
       regularItems: {},
+      regularRuleSets: {},
       customEnabled: false,
       customName: "",
       customItems: defaultGroupItems("select"),
+      customRuleSetId: "",
     });
     else {
       const selectedPolicy = parsed.groups.some((group) => group.name === query) ? query : "国内直连";
@@ -436,7 +458,7 @@ export default function Home() {
       return [kind, child ? [child.kind, ...child.items].join("\n") : defaultGroupItems(kind)];
     }));
     const availableGroupItems = Object.fromEntries(parsed.groups.map((item) => [policyKey(item.name), [item.kind, ...item.items].join("\n")]));
-    setEditor({ mode: "group", index: group.index, name: group.name, items: [group.kind, ...group.items].join("\n"), childKinds, childItems, availableGroupItems });
+    setEditor({ mode: "group", index: group.index, name: group.name, items: [group.kind, ...group.items].join("\n"), ruleSetId: ruleSetBindings[policyKey(group.name)] || "", childKinds, childItems, availableGroupItems });
   }
 
   function editRule(rule: Rule) {
@@ -534,6 +556,13 @@ export default function Home() {
         if (customEnabled) lines.push(`${customName} = ${customItems.join(",")}`);
         const nextLines = content.split(/\r?\n/);
         nextLines.splice(parsed.ruleStart, 0, ...lines);
+        const nextBindings = { ...ruleSetBindings };
+        selectedKinds.forEach((kind) => {
+          const ruleSetId = editor.regularRuleSets?.[kind] || "";
+          if (ruleSetId) nextBindings[policyKey(groupOptionLabel(kind))] = ruleSetId;
+        });
+        if (customEnabled && editor.customRuleSetId) nextBindings[policyKey(customName)] = editor.customRuleSetId;
+        setRuleSetBindings(nextBindings);
         markContent(nextLines.join("\n"));
         setEditor(null); setError(""); setToast("修改已应用到当前页面；请点击右上角「保存方案」后再更新客户端");
         return;
@@ -568,6 +597,10 @@ export default function Home() {
           });
           next = nextLines.join("\n");
         }
+        const nextBindings = { ...ruleSetBindings };
+        if (oldGroup) delete nextBindings[policyKey(oldGroup.name)];
+        if (editor.ruleSetId) nextBindings[policyKey(name)] = editor.ruleSetId;
+        setRuleSetBindings(nextBindings);
         markContent(next);
       }
     } else {
@@ -697,6 +730,11 @@ export default function Home() {
       }));
     }
     markContent(lines.join("\n"));
+    if (deleteTarget.kind === "group") {
+      const nextBindings = { ...ruleSetBindings };
+      delete nextBindings[policyKey(deleteTarget.group.name)];
+      setRuleSetBindings(nextBindings);
+    }
     setDeleteTarget(null);
   }
 
@@ -711,7 +749,13 @@ export default function Home() {
         if (!response.ok) throw new Error([data.error, ...(data.details || [])].join("\n"));
         setSha(data.sha || sha); githubSaved = true;
       }
-      const response = await fetch("/api/rule-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: selectedRuleConfigId, content }) });
+      const bindings = Object.entries(ruleSetBindings)
+        .filter(([, ruleSetId]) => Boolean(ruleSetId))
+        .map(([groupKey, ruleSetId]) => ({
+          groupName: parsed.groups.find((group) => policyKey(group.name) === groupKey)?.name || (parsed.finalRule && policyKey(parsed.finalRule.policy) === groupKey ? parsed.finalRule.policy : groupKey),
+          ruleSetId,
+        }));
+      const response = await fetch("/api/rule-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: selectedRuleConfigId, content, ruleSetBindings: bindings }) });
       const data = await response.json();
       if (!response.ok || !data.config) throw new Error(data.error || "保存规则方案失败");
       setRuleConfigs((current) => current.map((config) => config.id === selectedRuleConfigId ? data.config : config));
@@ -783,6 +827,7 @@ export default function Home() {
         </>}
 
         {view === "configs" && <RuleConfigManager configs={ruleConfigs} selectedId={selectedRuleConfigId} busy={ruleConfigBusy} onEdit={(id) => selectRuleConfig(id, true)} onCreate={(name) => void createRuleConfig(name)} onRename={(id, name) => void renameRuleConfig(id, name)} onSetDefault={(id) => void setRuleConfigDefault(id)} onRecover={(id) => void recoverHaoziRuleConfig(id)} onDelete={(id) => void deleteRuleConfig(id)} />}
+        {view === "rule-library" && <RuleSetLibrary ruleSets={availableRuleSets} loading={ruleSetsLoading} onChange={setAvailableRuleSets} onToast={setToast} onError={setError} />}
 
         {view === "clash" && <ClashSubscription />}
         {view === "airports" && <ClashSubscription mode="airports" />}
@@ -790,7 +835,7 @@ export default function Home() {
         {view === "conflicts" && <section className="panel audit"><div className={`auditMark ${conflicts.length ? "warn" : ""}`}>{conflicts.length ? "!" : "✓"}</div><h2>{conflicts.length ? "需要处理后才能保存" : "配置检查通过"}</h2><p>{conflicts.length ? "以下规则需要确认策略名称。" : duplicateRuleCount ? `机场规则中有 ${duplicateRuleCount} 处重复匹配，这是机场原始配置的正常重叠，按规则顺序执行，不阻止保存。` : "代理分组引用与规则顺序均通过检查。"}</p>{conflicts.length > 0 && <ul>{conflicts.map((item) => <li key={item}>{item}</li>)}</ul>}<button className="ghost" onClick={() => setPreview(true)}>查看原始配置</button></section>}
       </section>
 
-      {editor && <EditorModal editor={editor} setEditor={setEditor} policies={policies} countryGroups={parsed.groups.filter((group) => COUNTRY_GROUP_NAMES.has(group.name)).map((group) => group.name)} existingGroups={parsed.groups.filter((group) => !COUNTRY_GROUP_NAMES.has(group.name)).map((group) => group.name)} error={error} onSubmit={submitEditor} onImportCatalog={importCatalogRules} />}
+      {editor && <EditorModal editor={editor} setEditor={setEditor} policies={policies} countryGroups={parsed.groups.filter((group) => COUNTRY_GROUP_NAMES.has(group.name)).map((group) => group.name)} existingGroups={parsed.groups.filter((group) => !COUNTRY_GROUP_NAMES.has(group.name)).map((group) => group.name)} ruleSets={availableRuleSets} error={error} onSubmit={submitEditor} onImportCatalog={importCatalogRules} />}
       {deleteTarget && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭删除确认" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null); }} onKeyDown={(event) => { if (event.key === "Escape") setDeleteTarget(null); }}><section className="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><span className="confirmMark">!</span><h2 id="delete-title">确认删除？</h2><p>{deleteTarget.kind === "group" ? `将删除代理分组「${deleteTarget.group.name}」，并清理当前方案内的引用。` : `将删除规则「${deleteTarget.rule.value}」。`}</p>{deleteTarget.kind === "group" && <ul className="deleteImpactList"><li>{deleteTarget.impact.rules.length} 条规则会被移除</li><li>{deleteTarget.impact.parentGroups.length} 个分组会移除对它的引用{deleteTarget.impact.parentGroups.length ? "，空分组会自动保留 DIRECT" : ""}</li>{deleteTarget.impact.finalRule && <li>FINAL 会自动改为 DIRECT，保证配置仍可用</li>}</ul>}<small>删除会先暂存，点击“保存到 GitHub”后才会正式生效。</small><footer><button className="ghost" onClick={() => setDeleteTarget(null)}>取消</button><button className="deleteConfirm" onClick={confirmDelete}>确认删除</button></footer></section></div>}
       {preview && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭配置预览" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(false); }} onKeyDown={(event) => { if (event.key === "Escape") setPreview(false); }}><section className="previewModal" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header><div><h2 id="preview-title">配置预览</h2><p>{content.split(/\r?\n/).length.toLocaleString()} 行 · {repository}</p></div><button onClick={() => setPreview(false)}>×</button></header><pre>{content}</pre></section></div>}
     </main>
@@ -1451,7 +1496,7 @@ function GroupCard({ group, ruleCount, tone, onEdit, onRules }: { group: Group; 
   return <article className="groupCard"><div className={`groupIcon ${tone}`}>{group.name.slice(0, 1)}</div><div className="groupBody"><div className="labelRow"><h3>{group.name}</h3><span>{group.items.some((item) => item.startsWith("policy-regex")) ? "节点筛选" : "服务分流"}</span></div><p>{group.items.join(" · ")}</p><button className="ruleLink" onClick={onRules}>{ruleCount} 条关联规则 →</button></div><button className="more" onClick={onEdit} aria-label={`编辑 ${group.name} 节点筛选`}>•••</button></article>;
 }
 
-function EditorModalLegacy({ editor, setEditor, policies, countryGroups, existingGroups, error, onSubmit, onImportCatalog }: { editor: Editor; setEditor: (value: Editor | null) => void; policies: string[]; countryGroups: string[]; existingGroups: string[]; error: string; onSubmit: (event: FormEvent) => void; onImportCatalog: (items: CatalogResult[], policy: string) => void }) {
+function EditorModalLegacy({ editor, setEditor, policies, countryGroups, existingGroups, ruleSets, error, onSubmit, onImportCatalog }: { editor: Editor; setEditor: (value: Editor | null) => void; policies: string[]; countryGroups: string[]; existingGroups: string[]; ruleSets: RuleSetRecord[]; error: string; onSubmit: (event: FormEvent) => void; onImportCatalog: (items: CatalogResult[], policy: string) => void }) {
   const [catalogQuery, setCatalogQuery] = useState("");
   const [catalog, setCatalog] = useState<CatalogResult[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -1477,11 +1522,11 @@ function EditorModalLegacy({ editor, setEditor, policies, countryGroups, existin
   }
 
   return <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭编辑窗口" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setEditor(null); }}><form className="editorModal" aria-label="规则编辑器" onSubmit={onSubmit}><header><div><h2>{editor.index === null ? "新增" : "编辑"}{editor.mode === "group" ? "代理分组" : "规则"}</h2><p>保存前会自动检查语法、引用与冲突。</p></div><button type="button" onClick={() => setEditor(null)}>×</button></header>{error && <div className="editorError" role="alert"><span>!</span><pre>{error}</pre></div>}{editor.mode === "group" ? <>
-<section className="customGroupConfig"><div className="groupSectionHeading"><strong>编辑当前分组</strong><small>当前分组只需要选择节点来源；已有分组（包括自动选择、故障转移、负载均衡）可以直接勾选加入，不需要重复配置。</small></div><label>分组名称{isProtectedGroupName(editor.name) && <small>系统保留名称，不能修改；可以继续调整节点来源。</small>}<input value={editor.name} readOnly={isProtectedGroupName(editor.name)} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：Proxies 或 YouTube" /></label><GroupNodeFilter raw={editor.items} countryGroups={countryGroups} existingGroups={selectableExistingGroups} onChange={updateGroupConfig} /></section>
+<section className="customGroupConfig"><div className="groupSectionHeading"><strong>编辑当前分组</strong><small>当前分组只需要选择节点来源；已有分组（包括自动选择、故障转移、负载均衡）可以直接勾选加入，不需要重复配置。</small></div><label>分组名称{isProtectedGroupName(editor.name) && <small>系统保留名称，不能修改；可以继续调整节点来源。</small>}<input value={editor.name} readOnly={isProtectedGroupName(editor.name)} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：Proxies 或 YouTube" /></label><GroupNodeFilter raw={editor.items} countryGroups={countryGroups} existingGroups={selectableExistingGroups} onChange={updateGroupConfig} /><RuleSetSelect value={editor.ruleSetId || ""} ruleSets={ruleSets} onChange={(ruleSetId) => setEditor({ ...editor, ruleSetId })} /></section>
 <details className="advancedGroupConfig"><summary>高级配置（一般不需要修改）</summary><label>配置项 <small>每行一个，第一行是类型</small><textarea rows={8} value={editor.items} onChange={(event) => setEditor({ ...editor, items: event.target.value })} /></label></details></>: <><div className="fieldGrid"><label>规则类型<select value={editor.type} onChange={(event) => setEditor({ ...editor, type: event.target.value })}>{RULE_TYPES.map((type) => <option key={type} value={type}>{type} — {RULE_TYPE_META[type].label}</option>)}</select><small className="fieldHint">{RULE_TYPE_META[editor.type]?.hint}</small></label><label>执行策略<select value={editor.policy} onChange={(event) => setEditor({ ...editor, policy: event.target.value })}>{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><small className="fieldHint">决定匹配后走哪个分组、直连或拒绝。</small></label></div>{editor.type === "RULE-SET" && <section className="catalogBox"><strong>从公开规则库搜索</strong><p>数据来自专门适配 Shadowrocket 的 blackmatrix7 公开规则库。</p><div className="catalogSearch"><input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="输入 Google、Netflix、OpenAI、哔哩哔哩…" /><button type="button" className="ghost" onClick={searchCatalog}>{catalogLoading ? "搜索中…" : "搜索"}</button></div>{catalogError && <small className="catalogError">{catalogError}</small>}{catalog.length > 0 && <><button type="button" className="catalogImport" onClick={() => onImportCatalog(catalog, editor.policy)}>一键导入全部 {catalog.length} 个规则集到「{editor.policy}」</button><div className="catalogResults">{catalog.map((item) => <button type="button" key={item.url} className={editor.value === item.url ? "selected" : ""} onClick={() => setEditor({ ...editor, value: item.url })}><span><strong>{item.name}</strong><small>{item.file} · {catalogFileHint(item.file)}</small></span><em>{editor.value === item.url ? "已选择" : "选择"}</em></button>)}</div></>}</section>}{editor.type === "RULE-SET" && <label>{"规则集地址"}<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder={"可搜索选择，也可以粘贴公开规则集地址"} /></label>}{editor.type === "DOMAIN-SUFFIX" && <label>域名后缀 <small>一行一个，按回车继续添加；保存后会生成多条规则</small><textarea rows={7} value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder={"例如：\nexample.com\nexample.org\nexample.net"} /></label>}{editor.type === "GEOSITE" && <label>geosite 名称 <small>例如 google、paypal，也可以填写 geosite:google</small><input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder="例如：google" /></label>}{editor.type !== "RULE-SET" && editor.type !== "DOMAIN-SUFFIX" && editor.type !== "GEOSITE" && <label>域名或地址<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder="例如：example.com" /></label>}<label>附加选项 <small>不确定时请留空</small><input value={editor.options} onChange={(event) => setEditor({ ...editor, options: event.target.value })} placeholder="例如：no-resolve（通常可以留空）" /></label></>}<footer><button type="button" className="ghost" onClick={() => setEditor(null)}>取消</button><button className="primary" type="submit">暂存修改</button></footer></form></div>;
 }
 
-type EditorModalProps = { editor: Editor; setEditor: (value: Editor | null) => void; policies: string[]; countryGroups: string[]; existingGroups: string[]; error: string; onSubmit: (event: FormEvent) => void; onImportCatalog: (items: CatalogResult[], policy: string) => void };
+type EditorModalProps = { editor: Editor; setEditor: (value: Editor | null) => void; policies: string[]; countryGroups: string[]; existingGroups: string[]; ruleSets: RuleSetRecord[]; error: string; onSubmit: (event: FormEvent) => void; onImportCatalog: (items: CatalogResult[], policy: string) => void };
 type NewGroupEditor = Extract<Editor, { mode: "group" }>;
 
 function GroupNodeFilter({ raw, countryGroups, existingGroups, onChange }: { raw: string; countryGroups: string[]; existingGroups: string[]; onChange: (changes: { country?: string; group?: string; keyword?: string; includeAll?: boolean }) => void }) {
@@ -1490,9 +1535,14 @@ function GroupNodeFilter({ raw, countryGroups, existingGroups, onChange }: { raw
   return <section className="friendlyGroupConfig"><div className="groupSectionHeading"><strong>节点来源</strong><small>已有分组可以直接加入；“全部节点”和“关键词筛选”只能二选一。</small></div>{existingGroups.length > 0 ? <><strong className="nodeSourceHeading">添加已有分组</strong><div className="countryChecks existingGroupChecks">{existingGroups.map((group) => <label key={group}><input type="checkbox" checked={config.selectedGroups.has(group)} onChange={() => onChange({ group })} />{group}</label>)}</div></> : null}<div className="nodeSourceMode" role="radiogroup" aria-label="节点来源方式"><label className="friendlyOption"><input type="radio" name={sourceId} checked={config.includeAll} onChange={() => onChange({ includeAll: true })} />选择全部节点</label><label className="friendlyOption"><input type="radio" name={sourceId} checked={!config.includeAll} onChange={() => onChange({ includeAll: false })} />关键词筛选</label></div><label>节点关键词 <small>用英文竖线 | 分隔，例如：YouTube|Google|美国；选择“关键词筛选”后填写。</small><input value={config.keyword} disabled={config.includeAll} onChange={(event) => onChange({ keyword: event.target.value })} placeholder="例如：YouTube|youtube|YT" /></label>{countryGroups.length > 0 && <details className="nodeSourceDetails" open={config.selectedCountries.size > 0}><summary>兼容已有国家分组（可选）</summary><div className="countryChecks">{countryGroups.map((country) => <label key={country}><input type="checkbox" checked={config.selectedCountries.has(country)} onChange={() => onChange({ country })} />{country}</label>)}</div></details>}</section>;
 }
 
-function NewGroupEditor({ editor, setEditor, error, onSubmit }: { editor: NewGroupEditor; setEditor: (value: Editor | null) => void; error: string; onSubmit: (event: FormEvent) => void }) {
+function RuleSetSelect({ value, ruleSets, onChange }: { value: string; ruleSets: RuleSetRecord[]; onChange: (value: string) => void }) {
+  return <label className="ruleSetSelect"><strong>选择规则集 <small>可选</small></strong><select value={value} onChange={(event) => onChange(event.target.value)}><option value="">不使用规则集（只作为分组）</option>{ruleSets.filter((ruleSet) => ruleSet.status !== "deleted").map((ruleSet) => <option key={ruleSet.id} value={ruleSet.id}>{ruleSet.name} · {ruleSet.entryCount} 条</option>)}</select><small>规则集来自顶部“规则集”库；只有这里手动选中后，生成订阅时才会绑定到当前分组。</small></label>;
+}
+
+function NewGroupEditor({ editor, setEditor, ruleSets, error, onSubmit }: { editor: NewGroupEditor; setEditor: (value: Editor | null) => void; ruleSets: RuleSetRecord[]; error: string; onSubmit: (event: FormEvent) => void }) {
   const regularKinds = editor.regularKinds || [];
   const regularItems = editor.regularItems || {};
+  const regularRuleSets = editor.regularRuleSets || {};
   const customEnabled = Boolean(editor.customEnabled);
   const customItems = editor.customItems || defaultGroupItems("select");
 
@@ -1500,12 +1550,12 @@ function NewGroupEditor({ editor, setEditor, error, onSubmit }: { editor: NewGro
     const nextKinds = regularKinds.includes(kind) ? regularKinds.filter((item) => item !== kind) : [...regularKinds, kind];
     const nextItems = { ...regularItems };
     if (!nextItems[kind]) nextItems[kind] = defaultGroupItems(kind);
-    setEditor({ ...editor, regularKinds: nextKinds, regularItems: nextItems });
+    setEditor({ ...editor, regularKinds: nextKinds, regularItems: nextItems, regularRuleSets });
   }
 
   function updateRegular(kind: string, changes: { country?: string; group?: string; keyword?: string; includeAll?: boolean }) {
     const raw = regularItems[kind] || defaultGroupItems(kind);
-    setEditor({ ...editor, regularItems: { ...regularItems, [kind]: updateGroupItems(raw, [], [], changes) } });
+    setEditor({ ...editor, regularItems: { ...regularItems, [kind]: updateGroupItems(raw, [], [], changes) }, regularRuleSets });
   }
 
   function updateCustom(changes: { country?: string; group?: string; keyword?: string; includeAll?: boolean }) {
@@ -1513,13 +1563,61 @@ function NewGroupEditor({ editor, setEditor, error, onSubmit }: { editor: NewGro
   }
 
   return <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭编辑窗口" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setEditor(null); }}><form className="editorModal" aria-label="新增代理分组" onSubmit={onSubmit}><header><div><h2>新增代理分组</h2><p>常规分组和自定义分组分别保存，互不影响。</p></div><button type="button" onClick={() => setEditor(null)}>×</button></header>{error && <div className="editorError" role="alert"><span>!</span><pre>{error}</pre></div>}
-    <section className="commonGroupConfig"><div className="groupSectionHeading"><strong>常规分组</strong><small>可多选，也可以一个都不选。名称使用预设名称，重复的常规分组不能再次添加。</small></div><div className="groupKindOptions">{GROUP_KIND_OPTIONS.map((option) => <div key={option.value} className={`groupKindOption ${regularKinds.includes(option.value) ? "selected" : ""}`} role="checkbox" tabIndex={0} aria-checked={regularKinds.includes(option.value)} onClick={() => toggleRegular(option.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleRegular(option.value); } }}><input type="checkbox" checked={regularKinds.includes(option.value)} onChange={() => toggleRegular(option.value)} onClick={(event) => event.stopPropagation()} aria-label={option.label} /><span><strong>{option.label}</strong><small>{option.hint}</small></span></div>)}</div>{regularKinds.length ? <div className="regularGroupDetails">{regularKinds.map((kind) => <section className="regularGroupCard" key={kind}><div className="regularGroupCardHead"><strong>{groupOptionLabel(kind)}</strong><small>预设名称 · 独立节点范围</small></div><GroupNodeFilter raw={regularItems[kind] || defaultGroupItems(kind)} countryGroups={[]} existingGroups={[]} onChange={(changes) => updateRegular(kind, changes)} /></section>)}</div> : <p className="groupConfigHint">当前未选择常规分组。</p>}</section>
-    <section className="customGroupConfig"><div className="groupSectionHeading"><strong>自定义分组</strong><small>与上面的常规分组独立；可以无限新增，但名称仍需唯一，避免规则无法判断。</small></div><label className="friendlyOption customEnableOption"><input type="checkbox" checked={customEnabled} onChange={(event) => setEditor({ ...editor, customEnabled: event.target.checked })} />启用自定义分组</label>{customEnabled && <><label>分组名称<input value={editor.customName || ""} onChange={(event) => setEditor({ ...editor, customName: event.target.value })} placeholder="例如：YouTube" /></label><GroupNodeFilter raw={customItems} countryGroups={[]} existingGroups={[]} onChange={updateCustom} /></>}</section>
+    <section className="commonGroupConfig"><div className="groupSectionHeading"><strong>常规分组</strong><small>可多选，也可以一个都不选。名称使用预设名称，重复的常规分组不能再次添加。</small></div><div className="groupKindOptions">{GROUP_KIND_OPTIONS.map((option) => <div key={option.value} className={`groupKindOption ${regularKinds.includes(option.value) ? "selected" : ""}`} role="checkbox" tabIndex={0} aria-checked={regularKinds.includes(option.value)} onClick={() => toggleRegular(option.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleRegular(option.value); } }}><input type="checkbox" checked={regularKinds.includes(option.value)} onChange={() => toggleRegular(option.value)} onClick={(event) => event.stopPropagation()} aria-label={option.label} /><span><strong>{option.label}</strong><small>{option.hint}</small></span></div>)}</div>{regularKinds.length ? <div className="regularGroupDetails">{regularKinds.map((kind) => <section className="regularGroupCard" key={kind}><div className="regularGroupCardHead"><strong>{groupOptionLabel(kind)}</strong><small>预设名称 · 独立节点范围</small></div><GroupNodeFilter raw={regularItems[kind] || defaultGroupItems(kind)} countryGroups={[]} existingGroups={[]} onChange={(changes) => updateRegular(kind, changes)} /><RuleSetSelect value={regularRuleSets[kind] || ""} ruleSets={ruleSets} onChange={(ruleSetId) => setEditor({ ...editor, regularRuleSets: { ...regularRuleSets, [kind]: ruleSetId } })} /></section>)}</div> : <p className="groupConfigHint">当前未选择常规分组。</p>}</section>
+    <section className="customGroupConfig"><div className="groupSectionHeading"><strong>自定义分组</strong><small>与上面的常规分组独立；可以无限新增，但名称仍需唯一，避免规则无法判断。</small></div><label className="friendlyOption customEnableOption"><input type="checkbox" checked={customEnabled} onChange={(event) => setEditor({ ...editor, customEnabled: event.target.checked })} />启用自定义分组</label>{customEnabled && <><label>分组名称<input value={editor.customName || ""} onChange={(event) => setEditor({ ...editor, customName: event.target.value })} placeholder="例如：YouTube" /></label><GroupNodeFilter raw={customItems} countryGroups={[]} existingGroups={[]} onChange={updateCustom} /><RuleSetSelect value={editor.customRuleSetId || ""} ruleSets={ruleSets} onChange={(ruleSetId) => setEditor({ ...editor, customRuleSetId: ruleSetId })} /></>}</section>
     <details className="advancedGroupConfig"><summary>高级配置（一般不需要修改）</summary>{customEnabled ? <label>自定义分组配置项 <small>每行一个，第一行是类型；修改后会覆盖上面的节点范围设置。</small><textarea rows={8} value={customItems} onChange={(event) => setEditor({ ...editor, customItems: event.target.value })} /></label> : <p className="groupConfigHint">启用自定义分组后，这里可以直接编辑它的底层配置。</p>}</details>
     <footer><button type="button" className="ghost" onClick={() => setEditor(null)}>取消</button><button className="primary" type="submit">暂存修改</button></footer></form></div>;
 }
 
 function EditorModal(props: EditorModalProps) {
   const isNewGroup = props.editor.mode === "group" && props.editor.index === null && props.editor.isNew;
-  return isNewGroup ? <NewGroupEditor editor={props.editor} setEditor={props.setEditor} error={props.error} onSubmit={props.onSubmit} /> : <EditorModalLegacy {...props} />;
+  return isNewGroup ? <NewGroupEditor editor={props.editor} setEditor={props.setEditor} ruleSets={props.ruleSets} error={props.error} onSubmit={props.onSubmit} /> : <EditorModalLegacy {...props} />;
+}
+
+function ruleSetEntryText(entries: RuleSetRecord["entries"]) {
+  return entries.map((entry) => [entry.type, entry.value, ...(entry.options || [])].join(",")).join("\n");
+}
+
+function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { ruleSets: RuleSetRecord[]; loading: boolean; onChange: (value: RuleSetRecord[]) => void; onToast: (value: string) => void; onError: (value: string) => void }) {
+  const [editingId, setEditingId] = useState("");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [source, setSource] = useState("");
+  const [entries, setEntries] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function startNew() {
+    setEditingId(""); setName(""); setDescription(""); setSource(""); setEntries(""); onError("");
+  }
+
+  function startEdit(ruleSet: RuleSetRecord) {
+    setEditingId(ruleSet.id); setName(ruleSet.name); setDescription(ruleSet.description); setSource(ruleSet.source); setEntries(ruleSetEntryText(ruleSet.entries)); onError("");
+  }
+
+  async function saveRuleSet(event: FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return onError("规则集名称不能为空");
+    setSaving(true); onError("");
+    try {
+      const response = await fetch("/api/rule-set", { method: editingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(editingId ? { id: editingId } : {}), name, description, source, entries }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存规则集失败");
+      onChange((data.ruleSets || []) as RuleSetRecord[]); startNew(); onToast(editingId ? `规则集「${name}」已更新` : `规则集「${name}」已新增`);
+    } catch (cause) { onError(cause instanceof Error ? cause.message : "保存规则集失败"); }
+    finally { setSaving(false); }
+  }
+
+  async function removeRuleSet(ruleSet: RuleSetRecord) {
+    if (!window.confirm(`删除规则集「${ruleSet.name}」？已绑定到方案的规则集不能删除。`)) return;
+    setSaving(true); onError("");
+    try {
+      const response = await fetch("/api/rule-set", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: ruleSet.id }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "删除规则集失败");
+      onChange((data.ruleSets || []) as RuleSetRecord[]); if (editingId === ruleSet.id) startNew(); onToast(`规则集「${ruleSet.name}」已删除`);
+    } catch (cause) { onError(cause instanceof Error ? cause.message : "删除规则集失败"); }
+    finally { setSaving(false); }
+  }
+
+  return <section className="ruleLibraryPanel"><div className="panelHead"><div><h2>公共规则集库</h2><p>所有方案共用这里的规则内容；是否使用、绑定到哪个分组，由每个方案单独选择。</p></div><button type="button" className="primary" onClick={startNew}>＋ 新增规则集</button></div>{loading && <p className="clashLoading">正在读取规则集…</p>}<div className="ruleLibraryList">{ruleSets.map((ruleSet) => <article className="ruleLibraryCard" key={ruleSet.id}><div><h3>{ruleSet.name}</h3><p>{ruleSet.entryCount} 条规则{ruleSet.description ? ` · ${ruleSet.description}` : ""}</p>{ruleSet.source && <small>{ruleSet.source}</small>}</div><div className="ruleLibraryActions"><button type="button" className="ghost" onClick={() => startEdit(ruleSet)}>编辑</button><button type="button" className="danger" disabled={saving} onClick={() => void removeRuleSet(ruleSet)}>删除</button></div></article>)}</div><form className="ruleLibraryEditor" onSubmit={saveRuleSet}><div className="groupSectionHeading"><strong>{editingId ? "编辑规则集" : "新增规则集"}</strong><small>一行一条，格式例如 DOMAIN-SUFFIX,example.com；也支持 RULE-SET、GEOSITE。</small></div><div className="fieldGrid"><label>规则集名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：Google" /></label><label>说明<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="给自己看的用途说明" /></label></div><label>公开来源（可选）<input value={source} onChange={(event) => setSource(event.target.value)} placeholder="例如：https://..." /></label><label>规则内容<textarea rows={12} value={entries} onChange={(event) => setEntries(event.target.value)} placeholder={'DOMAIN-SUFFIX,example.com\nGEOSITE,google\nRULE-SET,https://example.com/list'} /></label><footer><button type="button" className="ghost" onClick={startNew}>清空</button><button type="submit" className="primary" disabled={saving}>{saving ? "保存中…" : editingId ? "保存规则集" : "新增规则集"}</button></footer></form></section>;
 }

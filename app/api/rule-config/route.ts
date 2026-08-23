@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
 import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, restoreHaoziRuleConfig, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
 import { validateProtectedGroupChanges, validateRuleConfiguration } from "../../lib/rule-validation";
+import { ensureRuleSetLibrary, replaceRuleSetBindings } from "../../lib/rule-sets";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -39,6 +40,7 @@ async function ensureConfigs() {
   if (!defaultConfig) defaultConfig = await ensureDefaultRuleConfig(await readGitHubRules());
   if (!defaultConfig) throw new Error("默认规则方案初始化失败");
   await ensureRuleConfigAssignments();
+  await ensureRuleSetLibrary();
   defaultConfig = await getRuleConfig("default") || defaultConfig;
   return { configs: await listRuleConfigs(), defaultConfig };
 }
@@ -72,7 +74,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { id?: string; name?: string; content?: string; setDefault?: boolean; recoverHaozi?: boolean };
+    const body = await request.json() as { id?: string; name?: string; content?: string; setDefault?: boolean; recoverHaozi?: boolean; ruleSetBindings?: Array<{ groupName?: string; ruleSetId?: string }> };
     const id = String(body.id || "").trim();
     if (!id) throw new Error("规则方案不存在");
     if (body.recoverHaozi) {
@@ -90,6 +92,9 @@ export async function PATCH(request: NextRequest) {
     }
     if (body.setDefault) await setRuleConfigTemplateDefault(id);
     const config = await updateRuleConfig(id, { name: body.name, content: body.content });
+    if (Array.isArray(body.ruleSetBindings)) {
+      await replaceRuleSetBindings(id, body.ruleSetBindings.map((binding) => ({ groupName: String(binding.groupName || ""), ruleSetId: String(binding.ruleSetId || "") })));
+    }
     return NextResponse.json({ config, configs: await listRuleConfigs() });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "保存规则方案失败" }, { status: 422 });

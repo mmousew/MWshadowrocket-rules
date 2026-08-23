@@ -4,6 +4,8 @@ import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
 import { ensureRuleConfigAssignments, getRuleConfig } from "../../../lib/rule-configs";
+import { composeBoundRuleSets } from "../../../lib/rule-set-core";
+import { ensureRuleSetLibrary, listRuleSetBindings } from "../../../lib/rule-sets";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -99,6 +101,13 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       ruleContent = ruleConfig?.content || "";
       if (ruleConfig?.name?.trim()) ruleConfigName = ruleConfig.name.trim();
     } catch { /* 兼容旧数据库/旧链接，继续读取 GitHub */ }
+    try {
+      const ruleSets = await ensureRuleSetLibrary();
+      const bindings = await listRuleSetBindings(ruleConfigId);
+      ruleContent = composeBoundRuleSets(ruleContent, ruleSets, bindings.map((item) => ({ groupName: item.group_name, ruleSetId: item.rule_set_id })));
+    } catch {
+      // The legacy content remains a safe fallback if the shared ruleset library is unavailable.
+    }
     const airportResult = await Promise.allSettled(airportUrls.map(async (url) => {
         try {
           const fetched = await fetchAirportSubscription(url, subscriptionClient);

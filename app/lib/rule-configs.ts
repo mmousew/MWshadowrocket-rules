@@ -1,6 +1,7 @@
 import { getReadyRawDb } from "../../db";
 import { buildShadowrocketRuleConfigFromClash } from "./clash-config";
 import { getSourceSnapshot } from "./clash-links";
+import { cloneRuleSetBindings } from "./rule-sets";
 // @ts-expect-error Vite imports this bundled recovery asset as plain text.
 import recoveryContent from "./haozi-recovery.conf?raw";
 
@@ -145,6 +146,8 @@ export async function createRuleConfig(name: string, content: string) {
   await (await getReadyRawDb()).prepare(
     "INSERT INTO rule_configs (id, name, content, status, is_template_default, created_at, updated_at) VALUES (?, ?, ?, 'active', 0, ?, ?)"
   ).bind(id, safeName, content, now, now).run();
+  const template = await (await getReadyRawDb()).prepare("SELECT id FROM rule_configs WHERE status <> 'deleted' AND is_template_default = 1 LIMIT 1").first<{ id: string }>();
+  if (template?.id && template.id !== id) await cloneRuleSetBindings(template.id, id);
   return getRuleConfig(id);
 }
 
