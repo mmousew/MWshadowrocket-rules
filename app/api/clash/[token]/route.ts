@@ -5,7 +5,7 @@ import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
 import { ensureRuleConfigAssignments, getRuleConfig } from "../../../lib/rule-configs";
 import { composeBoundRuleSets } from "../../../lib/rule-set-core";
-import { ensureRuleSetLibrary, listRuleSetBindings, repairChinaDirectState } from "../../../lib/rule-sets";
+import { ensureRuleSetLibrary, listRuleSetBindings } from "../../../lib/rule-sets";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -109,16 +109,6 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       console.error("[clash] shared rule-set composition failed", error);
       // The legacy content remains a safe fallback if the shared ruleset library is unavailable.
     }
-    const repairProbe = request.nextUrl.searchParams.has("__repair");
-    let repairHeader = "";
-    if (repairProbe) {
-      try {
-        const repaired = await repairChinaDirectState();
-        repairHeader = `ok:${repaired.ruleSet?.id || "missing"}:${repaired.ruleSet?.kind || "missing"}:${repaired.binding?.rule_set_id || "missing"}`;
-      } catch (error) {
-        repairHeader = `error:${error instanceof Error ? error.message.slice(0, 160) : "unknown"}`;
-      }
-    }
     const airportResult = await Promise.allSettled(airportUrls.map(async (url) => {
         try {
           const fetched = await fetchAirportSubscription(url, subscriptionClient);
@@ -173,7 +163,6 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
         "Cache-Control": "no-store, no-cache, must-revalidate",
         "Profile-Update-Interval": "6",
         "X-MW-Node-Source": airportResult.snapshotCount ? (airportResult.liveCount ? "live+snapshot" : "snapshot") : (airportResult.liveCount ? "live" : "secure-snapshot"),
-        ...(repairProbe ? { "X-MW-China-Repair": repairHeader } : {}),
       },
     });
   } catch (error) {
