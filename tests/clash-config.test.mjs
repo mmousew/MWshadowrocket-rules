@@ -96,14 +96,35 @@ proxies:
     password: test-flower
 `;
 
-test("Clash FINAL uses a dedicated fallback group with PROXY as default", () => {
+test("Clash FINAL uses a dedicated fallback group with Proxies as default", () => {
   const config = parseYaml(buildClashConfig(rules, airport));
   const finalGroups = config["proxy-groups"].filter((group) => group.name === "MW-FINAL");
   assert.equal(finalGroups.length, 1);
-  assert.deepEqual(finalGroups[0].proxies, ["PROXY", "DIRECT"]);
+  assert.deepEqual(finalGroups[0].proxies, ["Proxies", "DIRECT"]);
   assert.ok(config.rules.includes("MATCH,MW-FINAL"));
   assert.ok(config.rules.includes("DOMAIN-SUFFIX,bybdc6.com,KR"));
   assert.ok(!config.rules.some((rule) => /^MATCH,Final$/i.test(rule)));
+});
+
+test("Clash keeps Proxies child strategy groups selected in the rule scheme", () => {
+  const scheme = `
+[Proxy Group]
+Proxies = select,include-all-proxies=true,DIRECT,自动选择,故障转移
+自动选择 = url-test,include-all-proxies=true,url=https://www.gstatic.com/generate_204,interval=300
+故障转移 = fallback,include-all-proxies=true,url=https://www.gstatic.com/generate_204,interval=300
+
+[Rule]
+FINAL,Proxies
+`;
+  const config = parseYaml(buildClashConfig(scheme, airport));
+  const groups = Object.fromEntries(config["proxy-groups"].map((group) => [group.name, group]));
+  assert.ok(groups.Proxies);
+  assert.ok(groups.Proxies.proxies.includes("自动选择"));
+  assert.ok(groups.Proxies.proxies.includes("故障转移"));
+  assert.ok(groups.Proxies.proxies.includes("美国节点 1"));
+  assert.equal(groups["自动选择"].type, "url-test");
+  assert.equal(groups["故障转移"].type, "fallback");
+  assert.ok(config.rules.includes("MATCH,MW-FINAL"));
 });
 
 test("Shadowrocket FINAL uses MW-FINAL with Proxies first and DIRECT second", () => {
@@ -137,7 +158,7 @@ test("Shadowrocket preserves automatic and failover group types", () => {
 test("scheme names isolate generated Clash and Shadowrocket group names", () => {
   const clash = parseYaml(buildClashConfig(rules, airport, {}, "耗子专属"));
   const clashNames = clash["proxy-groups"].map((group) => group.name);
-  assert.ok(clashNames.includes("耗子专属 · PROXY"));
+  assert.ok(clashNames.includes("耗子专属 · Proxies"));
   assert.ok(clashNames.includes("耗子专属 · KR"));
   assert.ok(clash.rules.includes("MATCH,耗子专属 · MW-FINAL"));
   assert.ok(clash.rules.includes("DOMAIN-SUFFIX,bybdc6.com,耗子专属 · KR"));

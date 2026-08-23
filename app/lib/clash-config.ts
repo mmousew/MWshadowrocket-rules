@@ -612,37 +612,56 @@ export function getAirportProxyCount(content: string) {
   return parseAirportProxies(content).length;
 }
 
+function groupProxyItems(
+  group: ShadowrocketGroup,
+  proxyNames: string[],
+  available: Map<string, string>,
+  includeAll: boolean,
+  regex: string | undefined,
+) {
+  let matched = includeAll ? proxyNames : [];
+  if (regex) {
+    try {
+      const matcher = new RegExp(regex, "i");
+      matched = proxyNames.filter((name) => matcher.test(name));
+    } catch {
+      matched = includeAll ? proxyNames : [];
+    }
+  }
+
+  // A group can contain both real nodes and other groups.  The old converter
+  // kept only the real-node part when include-all-proxies=true was present,
+  // which silently dropped entries such as 自动选择/故障转移 from Proxies.
+  const explicit = group.items
+    .filter((item) => !item.includes("=") && !/^(Traffic|Expire|流量|到期|剩余)\b/i.test(item))
+    .map((item) => available.get(item.trim().toLowerCase()) || "")
+    .filter(Boolean);
+  return [...new Set([...explicit, ...matched])];
+}
+
 function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
-  const available = createPolicyAliases(groups, "PROXY");
+  const available = createPolicyAliases(groups, "Proxies");
   proxyNames.forEach((name) => available.set(name.trim().toLowerCase(), name));
-  groups.filter((group) => group.name.trim().toLowerCase() !== "proxies").forEach((group) => {
+  groups.filter((group) => !/^(?:proxy|proxies)$/i.test(group.name.trim())).forEach((group) => {
     available.set(group.name.trim().toLowerCase(), group.name);
   });
-  const converted: Record<string, unknown>[] = [{ name: "PROXY", type: "select", proxies: proxyNames.length ? proxyNames : ["DIRECT"] }];
+  const converted: Record<string, unknown>[] = [];
+  const seenGroupNames = new Set<string>();
   for (const group of groups) {
-    if (group.name.trim().toLowerCase() === "proxies") continue;
+    const rawName = group.name.trim();
+    const groupName = /^(?:proxy|proxies)$/i.test(rawName) ? "Proxies" : rawName;
+    const groupKey = groupName.toLowerCase();
+    if (!groupName || seenGroupNames.has(groupKey)) continue;
+    seenGroupNames.add(groupKey);
     const kind = normalizeClashGroupKind(group.kind);
     const options = clashGroupOptions(group, kind);
     const regex = findOption(group.items, "policy-regex-filter");
     const includeAll = findOption(group.items, "include-all-proxies")?.toLowerCase() === "true";
-    if (includeAll || regex) {
-      let matched = proxyNames;
-      if (regex) {
-        try {
-          const matcher = new RegExp(regex, "i");
-          matched = proxyNames.filter((name) => matcher.test(name));
-        } catch {
-          matched = proxyNames;
-        }
-      }
-      converted.push({ name: group.name, type: kind, proxies: matched.length ? matched : ["DIRECT"], ...options });
-      continue;
-    }
-    const proxies = group.items
-      .filter((item) => !item.includes("=") && !/^(Traffic|Expire|流量|到期|剩余)\b/i.test(item))
-      .map((item) => available.get(item.trim().toLowerCase()) || "")
-      .filter(Boolean);
-    converted.push({ name: group.name, type: kind, proxies: proxies.length ? proxies : ["DIRECT"], ...options });
+    const proxies = groupProxyItems(group, proxyNames, available, includeAll, regex);
+    converted.push({ name: groupName, type: kind, proxies: proxies.length ? proxies : ["DIRECT"], ...options });
+  }
+  if (!seenGroupNames.has("proxies")) {
+    converted.unshift({ name: "Proxies", type: "select", proxies: proxyNames.length ? proxyNames : ["DIRECT"] });
   }
   return converted;
 }
@@ -653,10 +672,10 @@ function createPolicyAliases(groups: ShadowrocketGroup[], proxiesAlias: string) 
     ["reject", "REJECT"],
     ["reject-drop", "REJECT-DROP"],
     ["reject-no-drop", "REJECT-NO-DROP"],
-    ["proxy", "PROXY"],
+    ["proxy", proxiesAlias],
     ["proxies", proxiesAlias],
   ]);
-  groups.filter((group) => group.name.trim().toLowerCase() !== "proxies").forEach((group) => {
+  groups.filter((group) => !/^(?:proxy|proxies)$/i.test(group.name.trim())).forEach((group) => {
     aliases.set(group.name.trim().toLowerCase(), group.name.trim());
   });
   return aliases;
@@ -705,7 +724,7 @@ function normalizeFinalGroupForClash(groups: ShadowrocketGroup[], rules: Shadowr
 }
 
 function convertRules(rules: ShadowrocketRule[], groups: ShadowrocketGroup[]) {
-  const aliases = createPolicyAliases(groups, "PROXY");
+  const aliases = createPolicyAliases(groups, "Proxies");
   const converted: string[] = [];
   const providers: RuleProvider[] = [];
   let skipped = 0;

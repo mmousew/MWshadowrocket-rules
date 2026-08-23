@@ -523,17 +523,13 @@ export default function Home() {
         const nextLines = content.split(/\r?\n/);
         nextLines.splice(parsed.ruleStart, 0, ...lines);
         markContent(nextLines.join("\n"));
-        setEditor(null); setError("");
+        setEditor(null); setError(""); setToast("修改已应用到当前页面；请点击右上角「保存方案」后再更新客户端");
         return;
       }
       const name = editor.name.trim();
       const items = editor.items.split(/\n|,/).map((item) => item.trim()).filter(Boolean);
       if (!name || !items.length) return setError("分组名称和配置项不能为空");
-      const childKinds = editor.index === null ? [] : Array.from(new Set(editor.childKinds || []));
-      const childNames = childKinds.map((kind) => groupOptionLabel(kind));
-      const childNameKeys = new Set(GROUP_KIND_OPTIONS.filter((option) => option.value !== "select").map((option) => policyKey(groupOptionLabel(option.value))));
-      const parentItems = items.filter((item) => !childNameKeys.has(policyKey(item)));
-      const line = `${name} = ${[...parentItems, ...childNames].join(",")}`;
+      const line = `${name} = ${items.join(",")}`;
       if (editor.index === null) {
         markContent(insertLine(content, parsed.ruleStart, `${line}\n`));
       } else {
@@ -553,26 +549,6 @@ export default function Home() {
             return parts.join(",");
           });
           next = nextLines.join("\n");
-        }
-        if (childKinds.length) {
-          const selectedChildLines: string[] = [];
-          const existingChildIndexes = new Set<number>();
-          const nextLines = next.split(/\r?\n/);
-          childKinds.forEach((kind) => {
-            const childName = groupOptionLabel(kind);
-            const child = parsed.groups.find((item) => item.index !== editor.index && policyKey(item.name) === policyKey(childName));
-            const childItems = (editor.childItems?.[kind] || defaultGroupItems(kind)).split(/\n|,/).map((item) => item.trim()).filter(Boolean);
-            const childLine = `${childName} = ${childItems.join(",")}`;
-            if (child) {
-              existingChildIndexes.add(child.index);
-              nextLines[child.index] = childLine;
-            }
-            selectedChildLines.push(childLine);
-          });
-          const remainingLines = nextLines.filter((_, index) => !existingChildIndexes.has(index));
-          const parentIndex = remainingLines.findIndex((raw) => raw.trim() === line.trim());
-          if (parentIndex >= 0) remainingLines.splice(parentIndex, 0, ...selectedChildLines);
-          next = remainingLines.join("\n");
         }
         markContent(next);
       }
@@ -602,7 +578,7 @@ export default function Home() {
         markContent(lines.join("\n"));
       }
     }
-    setEditor(null); setError("");
+    setEditor(null); setError(""); setToast("修改已应用到当前页面；请点击右上角「保存方案」后再更新客户端");
   }
 
   function importCatalogRules(items: CatalogResult[], policy: string) {
@@ -1454,30 +1430,10 @@ function EditorModalLegacy({ editor, setEditor, policies, countryGroups, existin
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState("");
 
-  const groupConfig = editor.mode === "group" ? editor.items.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : [];
-  const groupKind = groupConfig[0] || "select";
-  const childKinds = editor.mode === "group" ? editor.childKinds || [] : [];
-  const childItems = editor.mode === "group" ? editor.childItems || {} : {};
   const selectableExistingGroups = existingGroups.filter((group) => editor.mode !== "group" || policyKey(group) !== policyKey(editor.name));
-  function updateGroupConfig(changes: { kind?: string; country?: string; group?: string; keyword?: string; includeAll?: boolean }) {
+  function updateGroupConfig(changes: { country?: string; group?: string; keyword?: string; includeAll?: boolean }) {
     if (editor.mode !== "group") return;
     setEditor({ ...editor, items: updateGroupItems(editor.items, countryGroups, selectableExistingGroups, changes) });
-  }
-
-  function toggleChildGroup(kind: string) {
-    if (editor.mode !== "group") return;
-    const nextKinds = childKinds.includes(kind) ? childKinds.filter((item) => item !== kind) : [...childKinds, kind];
-    const nextItems = { ...childItems };
-    if (!nextItems[kind]) {
-      nextItems[kind] = editor.availableGroupItems?.[policyKey(groupOptionLabel(kind))] || defaultGroupItems(kind);
-    }
-    setEditor({ ...editor, childKinds: nextKinds, childItems: nextItems });
-  }
-
-  function updateChildGroup(kind: string, changes: { country?: string; group?: string; keyword?: string; includeAll?: boolean }) {
-    if (editor.mode !== "group") return;
-    const raw = childItems[kind] || defaultGroupItems(kind);
-    setEditor({ ...editor, childItems: { ...childItems, [kind]: updateGroupItems(raw, countryGroups, selectableExistingGroups, changes) } });
   }
 
   async function searchCatalog() {
@@ -1494,9 +1450,7 @@ function EditorModalLegacy({ editor, setEditor, policies, countryGroups, existin
   }
 
   return <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭编辑窗口" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setEditor(null); }}><form className="editorModal" aria-label="规则编辑器" onSubmit={onSubmit}><header><div><h2>{editor.index === null ? "新增" : "编辑"}{editor.mode === "group" ? "代理分组" : "规则"}</h2><p>保存前会自动检查语法、引用与冲突。</p></div><button type="button" onClick={() => setEditor(null)}>×</button></header>{error && <div className="editorError" role="alert"><span>!</span><pre>{error}</pre></div>}{editor.mode === "group" ? <>
-<section className="commonGroupConfig"><div className="groupSectionHeading"><strong>常规分组</strong><small>选择一种常见策略，新增分组默认使用“自动选择”。</small></div><div className="groupKindOptions">{GROUP_KIND_OPTIONS.map((option) => <div key={option.value} className={`groupKindOption ${groupKind === option.value ? "selected" : ""}`} role="radio" tabIndex={0} aria-checked={groupKind === option.value} onClick={() => updateGroupConfig({ kind: option.value })} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); updateGroupConfig({ kind: option.value }); } }}><input type="radio" name="group-kind" value={option.value} checked={groupKind === option.value} onChange={() => updateGroupConfig({ kind: option.value })} aria-label={option.label} /><span><strong>{option.label}</strong><small>{option.hint}</small></span></div>)}</div><p className="groupConfigHint">自动选择和故障转移会使用测速地址；默认测速地址和参数可在最下方高级配置中调整。</p></section>
-<section className="nestedGroupConfig"><div className="groupSectionHeading"><strong>策略子分组</strong><small>选择后会自动创建并挂载到当前分组，子分组会排在当前分组上方。</small></div><div className="groupKindOptions">{GROUP_KIND_OPTIONS.filter((option) => option.value !== "select").map((option) => <div key={option.value} className={`groupKindOption ${childKinds.includes(option.value) ? "selected" : ""}`} role="checkbox" tabIndex={0} aria-checked={childKinds.includes(option.value)} onClick={() => toggleChildGroup(option.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleChildGroup(option.value); } }}><input type="checkbox" checked={childKinds.includes(option.value)} onChange={() => toggleChildGroup(option.value)} onClick={(event) => event.stopPropagation()} aria-label={option.label} /><span><strong>{option.label}</strong><small>作为「{editor.mode === "group" ? editor.name || "当前分组" : "当前分组"}」的子分组</small></span></div>)}</div>{childKinds.length > 0 && <div className="regularGroupDetails">{childKinds.map((kind) => <section className="regularGroupCard" key={kind}><div className="regularGroupCardHead"><strong>{groupOptionLabel(kind)}</strong><small>子分组节点范围</small></div><GroupNodeFilter raw={childItems[kind] || defaultGroupItems(kind)} countryGroups={countryGroups} existingGroups={selectableExistingGroups} onChange={(changes) => updateChildGroup(kind, changes)} /></section>)}</div>}</section>
-<section className="customGroupConfig"><label>分组名称<input value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：YouTube" /></label><GroupNodeFilter raw={editor.items} countryGroups={countryGroups} existingGroups={selectableExistingGroups} onChange={updateGroupConfig} /></section>
+<section className="customGroupConfig"><div className="groupSectionHeading"><strong>编辑当前分组</strong><small>当前分组只需要选择节点来源；已有分组（包括自动选择、故障转移、负载均衡）可以直接勾选加入，不需要重复配置。</small></div><label>分组名称<input value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：Proxies 或 YouTube" /></label><GroupNodeFilter raw={editor.items} countryGroups={countryGroups} existingGroups={selectableExistingGroups} onChange={updateGroupConfig} /></section>
 <details className="advancedGroupConfig"><summary>高级配置（一般不需要修改）</summary><label>配置项 <small>每行一个，第一行是类型</small><textarea rows={8} value={editor.items} onChange={(event) => setEditor({ ...editor, items: event.target.value })} /></label></details></>: <><div className="fieldGrid"><label>规则类型<select value={editor.type} onChange={(event) => setEditor({ ...editor, type: event.target.value })}>{RULE_TYPES.map((type) => <option key={type} value={type}>{type} — {RULE_TYPE_META[type].label}</option>)}</select><small className="fieldHint">{RULE_TYPE_META[editor.type]?.hint}</small></label><label>执行策略<select value={editor.policy} onChange={(event) => setEditor({ ...editor, policy: event.target.value })}>{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><small className="fieldHint">决定匹配后走哪个分组、直连或拒绝。</small></label></div>{editor.type === "RULE-SET" && <section className="catalogBox"><strong>从公开规则库搜索</strong><p>数据来自专门适配 Shadowrocket 的 blackmatrix7 公开规则库。</p><div className="catalogSearch"><input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="输入 Google、Netflix、OpenAI、哔哩哔哩…" /><button type="button" className="ghost" onClick={searchCatalog}>{catalogLoading ? "搜索中…" : "搜索"}</button></div>{catalogError && <small className="catalogError">{catalogError}</small>}{catalog.length > 0 && <><button type="button" className="catalogImport" onClick={() => onImportCatalog(catalog, editor.policy)}>一键导入全部 {catalog.length} 个规则集到「{editor.policy}」</button><div className="catalogResults">{catalog.map((item) => <button type="button" key={item.url} className={editor.value === item.url ? "selected" : ""} onClick={() => setEditor({ ...editor, value: item.url })}><span><strong>{item.name}</strong><small>{item.file} · {catalogFileHint(item.file)}</small></span><em>{editor.value === item.url ? "已选择" : "选择"}</em></button>)}</div></>}</section>}{editor.type === "RULE-SET" && <label>{"规则集地址"}<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder={"可搜索选择，也可以粘贴公开规则集地址"} /></label>}{editor.type === "DOMAIN-SUFFIX" && <label>域名后缀 <small>一行一个，按回车继续添加；保存后会生成多条规则</small><textarea rows={7} value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder={"例如：\nexample.com\nexample.org\nexample.net"} /></label>}{editor.type === "GEOSITE" && <label>geosite 名称 <small>例如 google、paypal，也可以填写 geosite:google</small><input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder="例如：google" /></label>}{editor.type !== "RULE-SET" && editor.type !== "DOMAIN-SUFFIX" && editor.type !== "GEOSITE" && <label>域名或地址<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder="例如：example.com" /></label>}<label>附加选项 <small>不确定时请留空</small><input value={editor.options} onChange={(event) => setEditor({ ...editor, options: event.target.value })} placeholder="例如：no-resolve（通常可以留空）" /></label></>}<footer><button type="button" className="ghost" onClick={() => setEditor(null)}>取消</button><button className="primary" type="submit">暂存修改</button></footer></form></div>;
 }
 
@@ -1505,7 +1459,7 @@ type NewGroupEditor = Extract<Editor, { mode: "group" }>;
 
 function GroupNodeFilter({ raw, countryGroups, existingGroups, onChange }: { raw: string; countryGroups: string[]; existingGroups: string[]; onChange: (changes: { country?: string; group?: string; keyword?: string; includeAll?: boolean }) => void }) {
   const config = readGroupFilter(raw, countryGroups, existingGroups);
-  return <section className="friendlyGroupConfig"><strong>节点范围</strong><p>可以包含机场全部节点、国家节点或已有代理分组，也可以再按关键词筛选；都不勾选则使用分组内的手动配置。</p><div className="countryChecks">{countryGroups.map((country) => <label key={country}><input type="checkbox" checked={config.selectedCountries.has(country)} onChange={() => onChange({ country })} />{country}</label>)}</div>{existingGroups.length > 0 && <><strong className="nodeSourceHeading">已有分组</strong><div className="countryChecks existingGroupChecks">{existingGroups.map((group) => <label key={group}><input type="checkbox" checked={config.selectedGroups.has(group)} onChange={() => onChange({ group })} />{group}</label>)}</div></>}<label className="friendlyOption"><input type="checkbox" checked={config.includeAll} onChange={(event) => onChange({ includeAll: event.target.checked })} />包含机场中的全部节点</label><label>节点关键词 <small>用英文竖线 | 分隔，例如：YouTube|Google|美国</small><input value={config.keyword} onChange={(event) => onChange({ keyword: event.target.value })} placeholder="例如：YouTube|youtube|YT" /></label></section>;
+  return <section className="friendlyGroupConfig"><div className="groupSectionHeading"><strong>节点来源</strong><small>先选择已有分组；国家节点、全部节点和关键词筛选都是可选项。</small></div>{existingGroups.length > 0 ? <><strong className="nodeSourceHeading">已有分组</strong><div className="countryChecks existingGroupChecks">{existingGroups.map((group) => <label key={group}><input type="checkbox" checked={config.selectedGroups.has(group)} onChange={() => onChange({ group })} />{group}</label>)}</div></> : <p className="groupConfigHint">当前没有可加入的已有分组。</p>}<label className="friendlyOption"><input type="checkbox" checked={config.includeAll} onChange={(event) => onChange({ includeAll: event.target.checked })} />包含机场中的全部节点</label><details className="nodeSourceDetails" open={config.selectedCountries.size > 0 || Boolean(config.keyword)}><summary>国家节点和关键词筛选（可选）</summary><div className="countryChecks">{countryGroups.map((country) => <label key={country}><input type="checkbox" checked={config.selectedCountries.has(country)} onChange={() => onChange({ country })} />{country}</label>)}</div><label>节点关键词 <small>用英文竖线 | 分隔，例如：YouTube|Google|美国</small><input value={config.keyword} onChange={(event) => onChange({ keyword: event.target.value })} placeholder="例如：YouTube|youtube|YT" /></label></details></section>;
 }
 
 function NewGroupEditor({ editor, setEditor, countryGroups, existingGroups, error, onSubmit }: { editor: NewGroupEditor; setEditor: (value: Editor | null) => void; countryGroups: string[]; existingGroups: string[]; error: string; onSubmit: (event: FormEvent) => void }) {
