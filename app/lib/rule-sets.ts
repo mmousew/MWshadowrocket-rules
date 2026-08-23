@@ -192,17 +192,38 @@ async function dedupeRuleSetLibrary(db: ReadyDb) {
 function ensureProxyGroup(content: string, line: string) {
   const name = line.split("=")[0].trim().toLowerCase();
   const lines = content.split(/\r?\n/);
-  const start = lines.findIndex((item) => item.trim() === "[Proxy Group]");
+  const start = lines.findIndex((item) => item.trim().toLowerCase() === "[proxy group]");
   if (start >= 0) {
-    for (let index = start + 1; index < lines.length; index += 1) {
-      if (/^\s*\[[^\]]+\]\s*$/.test(lines[index])) break;
+    const end = (() => {
+      for (let index = start + 1; index < lines.length; index += 1) {
+        if (/^\s*\[[^\]]+\]\s*$/.test(lines[index])) return index;
+      }
+      return lines.length;
+    })();
+    const proxyLines: string[] = [];
+    let inserted = false;
+    let changed = false;
+    for (let index = start + 1; index < end; index += 1) {
+      const current = lines[index];
       const match = lines[index].match(/^\s*([^=]+?)\s*=\s*/);
       if (match && match[1].trim().toLowerCase() === name) {
-        if (lines[index].trim() === line.trim()) return content;
-        lines[index] = line;
-        return lines.join("\n");
+        if (!inserted) {
+          proxyLines.push(line);
+          inserted = true;
+          if (current.trim() !== line.trim()) changed = true;
+        } else {
+          changed = true;
+        }
+      } else {
+        proxyLines.push(current);
       }
     }
+    if (!inserted) {
+      proxyLines.push(line);
+      changed = true;
+    }
+    if (!changed) return content;
+    return [...lines.slice(0, start + 1), ...proxyLines, ...lines.slice(end)].join("\n");
   }
   const ruleIndex = lines.findIndex((item) => item.trim() === "[Rule]");
   if (ruleIndex >= 0) {
@@ -254,11 +275,16 @@ async function ensureChinaDirectRuleSet(db: ReadyDb) {
 
 async function ensureChinaDirectBindings(db: ReadyDb, chinaRuleSetId: string) {
   const configs = (await db.prepare("SELECT id, content FROM rule_configs WHERE status <> 'deleted' ORDER BY created_at ASC").all<{ id: string; content: string }>()).results;
+  const contentUpdates = [] as Array<ReturnType<typeof db.prepare>>;
   for (const config of configs) {
     const updatedContent = ensureProxyGroup(config.content, "CN = select,DIRECT");
     if (updatedContent !== config.content) {
-      await db.prepare("UPDATE rule_configs SET content = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(updatedContent, Date.now(), config.id).run();
+      contentUpdates.push(db.prepare("UPDATE rule_configs SET content = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(updatedContent, Date.now(), config.id));
     }
+  }
+  if (contentUpdates.length) await db.batch(contentUpdates);
+
+  for (const config of configs) {
 
     const bindings = (await db.prepare("SELECT id, rule_set_id, group_name, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? AND lower(trim(group_name)) = 'cn' ORDER BY updated_at DESC, created_at DESC, id ASC").bind(config.id).all<{ id: string; rule_set_id: string; group_name: string; created_at: number; updated_at: number }>()).results;
     const keep = bindings[0];
@@ -354,9 +380,9 @@ export async function ensureRuleSetLibrary() {
   // the CN proxy group line.
   if (chinaRuleSetId) {
     try {
-      await ensureChinaDirectBindings(db, chinaRuleSetId);
+      await repairChinaDirectState();
     } catch (error) {
-      console.error("[rule-sets] final all-scheme CN content repair failed", error);
+      console.error("[rule-sets] final all-scheme CN repair failed", error);
     }
   }
   return listRuleSets();

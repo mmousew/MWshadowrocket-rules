@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
 import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, restoreHaoziRuleConfig, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
 import { validateProtectedGroupChanges, validateRuleConfiguration } from "../../lib/rule-validation";
-import { ensureRuleSetLibrary, replaceRuleSetBindings } from "../../lib/rule-sets";
+import { ensureRuleSetLibrary, repairChinaDirectState, replaceRuleSetBindings } from "../../lib/rule-sets";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -41,6 +41,7 @@ async function ensureConfigs() {
   if (!defaultConfig) throw new Error("默认规则方案初始化失败");
   await ensureRuleConfigAssignments();
   await ensureRuleSetLibrary();
+  await repairChinaDirectState();
   defaultConfig = await getRuleConfig("default") || defaultConfig;
   return { configs: await listRuleConfigs(), defaultConfig };
 }

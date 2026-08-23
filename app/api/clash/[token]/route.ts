@@ -5,7 +5,7 @@ import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
 import { ensureRuleConfigAssignments, getRuleConfig } from "../../../lib/rule-configs";
 import { composeBoundRuleSets } from "../../../lib/rule-set-core";
-import { ensureRuleSetLibrary, listRuleSetBindings } from "../../../lib/rule-sets";
+import { ensureRuleSetLibrary, listRuleSetBindings, repairChinaDirectState } from "../../../lib/rule-sets";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -44,7 +44,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
   let ruleConfigName = "默认规则";
   // Apply the one-time rule-scheme migration before reading the profile so a
   // managed link immediately picks up its corrected rule assignment.
-  try { await ensureRuleConfigAssignments(); } catch { /* retain legacy output if D1 is temporarily unavailable */ }
+  try {
+    await ensureRuleConfigAssignments();
+    await repairChinaDirectState();
+  } catch { /* retain legacy output if D1 is temporarily unavailable */ }
   try {
     const record = await findClashLink(token);
     if (record) {
