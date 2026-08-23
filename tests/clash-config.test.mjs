@@ -105,6 +105,21 @@ test("Shadowrocket FINAL uses MW-FINAL with Proxies first and DIRECT second", ()
   assert.equal((config.match(/^FINAL,/gm) || []).length, 1);
 });
 
+test("scheme names isolate generated Clash and Shadowrocket group names", () => {
+  const clash = parseYaml(buildClashConfig(rules, airport, {}, "耗子专属"));
+  const clashNames = clash["proxy-groups"].map((group) => group.name);
+  assert.ok(clashNames.includes("耗子专属 · PROXY"));
+  assert.ok(clashNames.includes("耗子专属 · KR"));
+  assert.ok(clash.rules.includes("MATCH,耗子专属 · MW-FINAL"));
+  assert.ok(clash.rules.includes("DOMAIN-SUFFIX,bybdc6.com,耗子专属 · KR"));
+
+  const shadowrocket = buildShadowrocketConfig(rules, airport, {}, "耗子专属");
+  assert.match(shadowrocket, /^耗子专属 · Proxies = select,/m);
+  assert.match(shadowrocket, /^耗子专属 · KR = select,/m);
+  assert.match(shadowrocket, /^FINAL,耗子专属 · MW-FINAL$/m);
+  assert.match(shadowrocket, /^DOMAIN-SUFFIX,bybdc6\.com,耗子专属 · KR$/m);
+});
+
 test("Rules-only Shadowrocket output keeps the fallback group without nodes", () => {
   const config = buildShadowrocketRulesConfig(rules, airport);
   assert.match(config, /^MW-FINAL = select,Proxies,DIRECT$/m);

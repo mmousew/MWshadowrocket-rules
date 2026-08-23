@@ -39,6 +39,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
   let managedLink = false;
   let profileName = "订阅配置";
   let ruleConfigId = "default";
+  let ruleConfigName = "默认规则";
   // Apply the one-time rule-scheme migration before reading the profile so a
   // managed link immediately picks up its corrected rule assignment.
   try { await ensureRuleConfigAssignments(); } catch { /* retain legacy output if D1 is temporarily unavailable */ }
@@ -93,7 +94,11 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     const shadowrocket = shadowrocketRules || requestedFormat === "shadowrocket" || /shadowrocket/i.test(userAgent);
     const subscriptionClient = shadowrocket ? "shadowrocket" as const : "clash" as const;
     let ruleContent = "";
-    try { ruleContent = (await getRuleConfig(ruleConfigId))?.content || ""; } catch { /* 兼容旧数据库/旧链接，继续读取 GitHub */ }
+    try {
+      const ruleConfig = await getRuleConfig(ruleConfigId);
+      ruleContent = ruleConfig?.content || "";
+      if (ruleConfig?.name?.trim()) ruleConfigName = ruleConfig.name.trim();
+    } catch { /* 兼容旧数据库/旧链接，继续读取 GitHub */ }
     const airportResult = await Promise.allSettled(airportUrls.map(async (url) => {
         try {
           const fetched = await fetchAirportSubscription(url, subscriptionClient);
@@ -133,10 +138,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     // Clash-only fixed-IP mapping.
     const hostMappings = shadowrocket ? {} : await resolveAirportProxyHosts(airportContent);
     const config = shadowrocketRules
-      ? buildShadowrocketRulesConfig(ruleContent, airportContent, hostMappings)
+      ? buildShadowrocketRulesConfig(ruleContent, airportContent, hostMappings, ruleConfigName)
       : shadowrocket
-        ? buildShadowrocketConfig(ruleContent, airportContent, hostMappings)
-        : buildClashConfig(ruleContent, airportContent, hostMappings);
+        ? buildShadowrocketConfig(ruleContent, airportContent, hostMappings, ruleConfigName)
+        : buildClashConfig(ruleContent, airportContent, hostMappings, ruleConfigName);
     return new NextResponse(config, {
       headers: {
         "Content-Type": shadowrocket ? "text/plain; charset=utf-8" : "text/yaml; charset=utf-8",

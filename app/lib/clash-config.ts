@@ -1,4 +1,4 @@
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 type ShadowrocketGroup = { name: string; kind: string; items: string[] };
 type ShadowrocketRule = { type: string; value: string; policy: string; options: string[] };
@@ -119,6 +119,74 @@ export function buildShadowrocketRuleConfigFromClash(content: string, name = "�
 
 function quote(value: unknown) {
   return JSON.stringify(String(value));
+}
+
+function scopedGroupName(schemeName: string, groupName: string) {
+  const namespace = schemeName.trim().replace(/[\r\n=,]/g, " ").replace(/\s+/g, " ").slice(0, 60).trim() || "规则方案";
+  return `${namespace} · ${groupName.trim()}`;
+}
+
+function namespacePolicy(policy: string, aliases: Map<string, string>) {
+  return aliases.get(policy.trim().toLowerCase()) || policy;
+}
+
+function namespaceClashConfig(config: string, schemeName: string) {
+  const parsed = parseYaml(config) as Record<string, unknown>;
+  const rawGroups = Array.isArray(parsed["proxy-groups"]) ? parsed["proxy-groups"] : [];
+  const groups = rawGroups.filter((group): group is Record<string, unknown> => Boolean(group) && typeof group === "object" && !Array.isArray(group));
+  const aliases = new Map<string, string>();
+  groups.forEach((group) => {
+    if (typeof group.name === "string" && group.name.trim()) aliases.set(group.name.trim().toLowerCase(), scopedGroupName(schemeName, group.name));
+  });
+  parsed["proxy-groups"] = groups.map((group) => ({
+    ...group,
+    name: typeof group.name === "string" ? namespacePolicy(group.name, aliases) : group.name,
+    proxies: Array.isArray(group.proxies) ? group.proxies.map((item) => typeof item === "string" ? namespacePolicy(item, aliases) : item) : group.proxies,
+  }));
+  if (Array.isArray(parsed.rules)) {
+    parsed.rules = parsed.rules.map((rawRule) => {
+      if (typeof rawRule !== "string") return rawRule;
+      const parts = splitRuleLine(rawRule);
+      const type = parts[0]?.toUpperCase();
+      const policyIndex = type === "MATCH" || type === "FINAL" ? 1 : 2;
+      if (parts.length > policyIndex) parts[policyIndex] = namespacePolicy(parts[policyIndex], aliases);
+      return parts.join(",");
+    });
+  }
+  return stringifyYaml(parsed, { lineWidth: 0 });
+}
+
+function namespaceShadowrocketConfig(config: string, schemeName: string) {
+  const lines = config.split(/\r?\n/);
+  const groupStart = lines.findIndex((line) => line.trim() === "[Proxy Group]");
+  const ruleStart = lines.findIndex((line) => line.trim() === "[Rule]");
+  if (groupStart < 0 || ruleStart < 0 || ruleStart <= groupStart) return config;
+  const groupNames = lines.slice(groupStart + 1, ruleStart).map((line) => {
+    const separator = line.indexOf("=");
+    return separator > 0 ? line.slice(0, separator).trim() : "";
+  }).filter(Boolean);
+  const aliases = new Map(groupNames.map((name) => [name.toLowerCase(), scopedGroupName(schemeName, name)]));
+  return lines.map((raw, index) => {
+    if (index > groupStart && index < ruleStart) {
+      const separator = raw.indexOf("=");
+      if (separator < 1) return raw;
+      const left = raw.slice(0, separator).trim();
+      const values = splitRuleLine(raw.slice(separator + 1));
+      if (!values.length) return raw;
+      const items = values.slice(1).map((item) => namespacePolicy(item, aliases));
+      return `${namespacePolicy(left, aliases)} = ${[values[0], ...items].join(",")}`;
+    }
+    if (index > ruleStart) {
+      const trimmed = raw.trim();
+      if (!trimmed || trimmed.startsWith("#")) return raw;
+      const parts = splitRuleLine(raw);
+      const type = parts[0]?.toUpperCase();
+      const policyIndex = type === "MATCH" || type === "FINAL" ? 1 : 2;
+      if (parts.length > policyIndex) parts[policyIndex] = namespacePolicy(parts[policyIndex], aliases);
+      return parts.join(",");
+    }
+    return raw;
+  }).join("\n");
 }
 
 function yamlValue(value: unknown, indent = 0): string {
@@ -614,7 +682,7 @@ function convertRules(rules: ShadowrocketRule[], groups: ShadowrocketGroup[]) {
   return { converted, providers, skipped };
 }
 
-export function buildClashConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}) {
+export function buildClashConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}, schemeName = "") {
   const sources = Array.isArray(airportContent) ? airportContent : [airportContent];
   const seenProxyNames = new Set<string>();
   const proxies = sources.flatMap((source) => parseAirportProxies(source)).map((proxy) => {
@@ -667,7 +735,8 @@ export function buildClashConfig(ruleContent: string, airportContent: string | s
     "  fake-ip-filter:",
     ...[...new Set(["*.lan", "+.local", "localhost.ptlogin2.qq.com", ...airportDns.fakeIpFilter])].map((item) => `    - ${quote(item)}`),
   ].join("\n");
-  return `# MW Rules for ClashX Meta\n# 自动合并机场节点与 GitHub 分流规则；跳过 ${skipped} 条 Clash 不支持的规则\nmixed-port: 7890\nmode: rule\nallow-lan: false\nlog-level: info\nipv6: false\n\n${dnsYaml}\n\nproxies:\n${yamlList(proxies)}\n\nproxy-groups:\n${yamlList(proxyGroups)}${providerYaml}\n\nrules:\n${converted.map((rule) => `  - ${quote(rule)}`).join("\n")}\n`;
+  const config = `# MW Rules for ClashX Meta\n# 自动合并机场节点与 GitHub 分流规则；跳过 ${skipped} 条 Clash 不支持的规则\nmixed-port: 7890\nmode: rule\nallow-lan: false\nlog-level: info\nipv6: false\n\n${dnsYaml}\n\nproxies:\n${yamlList(proxies)}\n\nproxy-groups:\n${yamlList(proxyGroups)}${providerYaml}\n\nrules:\n${converted.map((rule) => `  - ${quote(rule)}`).join("\n")}\n`;
+  return schemeName.trim() ? namespaceClashConfig(config, schemeName) : config;
 }
 
 function normalizeFinalGroupForShadowrocket(config: string) {
@@ -926,7 +995,7 @@ function normalizeShadowrocketPolicyReferences(config: string, proxyNames: strin
   }).join("\n");
 }
 
-export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}) {
+export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}, schemeName = "") {
   const rawSources = Array.isArray(airportContent) ? airportContent : [airportContent];
   // If the same node name exists in multiple sources, prefer the airport's
   // native Shadowrocket source over a Clash-converted copy. This keeps the
@@ -956,7 +1025,8 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
     const config = normalizeFinalGroupForShadowrocket(`${proxySection.join("\n")}\n\n${ruleContent.trim()}\n`);
     const expanded = expandShadowrocketIncludeAllGroups(config, [...names]);
     const normalized = normalizeShadowrocketPolicyReferences(expanded, [...names]);
-    return normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(normalized, dnsSources), hostMappings));
+    const output = normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(normalized, dnsSources), hostMappings));
+    return schemeName.trim() ? namespaceShadowrocketConfig(output, schemeName) : output;
   }
   const end = nextSection > proxyStart ? nextSection : lines.length;
   const config = normalizeFinalGroupForShadowrocket([...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n"));
@@ -964,11 +1034,12 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   const normalizedConfig = normalizeShadowrocketPolicyReferences(expandedConfig, [...names]);
   // Shadowrocket does not understand geosite rule references; omit them only from its output.
   const withoutGeosite = normalizedConfig.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n");
-  return normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(withoutGeosite, dnsSources), hostMappings));
+  const output = normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(withoutGeosite, dnsSources), hostMappings));
+  return schemeName.trim() ? namespaceShadowrocketConfig(output, schemeName) : output;
 }
 
-export function buildShadowrocketRulesConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}) {
-  const fullConfig = buildShadowrocketConfig(ruleContent, airportContent, hostMappings);
+export function buildShadowrocketRulesConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}, schemeName = "") {
+  const fullConfig = buildShadowrocketConfig(ruleContent, airportContent, hostMappings, schemeName);
   const lines = fullConfig.split(/\r?\n/);
   const proxyStart = lines.findIndex((line) => line.trim().toLowerCase() === "[proxy]");
   if (proxyStart < 0) return fullConfig;
