@@ -3,6 +3,7 @@ import { parseRuleSetEntries, type RuleSetEntry } from "./rule-set-core";
 
 export type RuleSetRow = { id: string; name: string; description: string; kind: string; entries: RuleSetEntry[]; source: string; status: string; sort_order: number; created_at: number; updated_at: number };
 export type RuleSetBindingRow = { id: string; rule_config_id: string; group_name: string; rule_set_id: string; created_at: number; updated_at: number };
+export type RuleSetUsageRow = { rule_set_id: string; rule_config_id: string; config_name: string; group_name: string };
 
 const MIGRATION_ID = "rule-set-library-v1";
 const SEED_NAMES = ["YouTube", "Disney", "Hbomax", "Netflix", "Bahamut", "Bilibili", "Spotify", "Steam", "Telegram", "Google", "Microsoft", "OpenAI", "PayPal", "TIKTOK", "Apple", "UK", "CA", "KR", "CN", "DE", "JP", "SG", "TW", "US", "HK"];
@@ -29,6 +30,11 @@ export async function listRuleSets() {
 
 export async function listRuleSetBindings(configId: string) {
   const result = await (await getReadyRawDb()).prepare("SELECT id, rule_config_id, group_name, rule_set_id, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? ORDER BY group_name COLLATE NOCASE").bind(configId).all<RuleSetBindingRow>();
+  return result.results;
+}
+
+export async function listRuleSetUsages() {
+  const result = await (await getReadyRawDb()).prepare("SELECT b.rule_set_id, b.rule_config_id, c.name AS config_name, b.group_name FROM rule_set_bindings b INNER JOIN rule_configs c ON c.id = b.rule_config_id AND c.status <> 'deleted' ORDER BY c.name COLLATE NOCASE, b.group_name COLLATE NOCASE").all<RuleSetUsageRow>();
   return result.results;
 }
 
