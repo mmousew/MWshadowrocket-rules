@@ -11,7 +11,8 @@ type RuleConfigRecord = { id: string; name: string; content: string; status: "ac
 type Editor =
   | { mode: "group"; index: number | null; name: string; items: string }
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
-type DeleteTarget = { kind: "group"; group: Group } | { kind: "rule"; rule: Rule };
+type GroupDeleteImpact = { rules: Rule[]; finalRule: Rule | null; parentGroups: Group[] };
+type DeleteTarget = { kind: "group"; group: Group; impact: GroupDeleteImpact } | { kind: "rule"; rule: Rule };
 type AirportSourceRecord = { id: string; name: string; kind: "url" | "content"; sourceUrl: string; hidden: boolean; nodeCount: number | null; createdAt: number; updatedAt: number };
 type AirportNodeRecord = { id: string; name: string; type: string; server: string; port: number | null; status: "valid" | "invalid" | "unloaded"; reason: string; latency?: number };
 
@@ -531,9 +532,13 @@ export default function Home() {
   }
 
   function removeGroup(group: Group) {
-    const used = parsed.finalRule?.policy === group.name || parsed.rules.some((rule) => rule.policy === group.name) || parsed.groups.some((item) => item.index !== group.index && item.items.includes(group.name));
-    if (used) return setError(`「${group.name}」仍被其他规则或分组引用，不能直接删除`);
-    setDeleteTarget({ kind: "group", group });
+    const key = policyKey(group.name);
+    const impact: GroupDeleteImpact = {
+      rules: parsed.rules.filter((rule) => policyKey(rule.policy) === key),
+      finalRule: parsed.finalRule && policyKey(parsed.finalRule.policy) === key ? parsed.finalRule : null,
+      parentGroups: parsed.groups.filter((item) => item.index !== group.index && item.items.some((itemName) => policyKey(itemName) === key)),
+    };
+    setDeleteTarget({ kind: "group", group, impact });
   }
 
   function removeRule(rule: Rule) {
@@ -542,9 +547,31 @@ export default function Home() {
 
   function confirmDelete() {
     if (!deleteTarget) return;
-    const index = deleteTarget.kind === "group" ? deleteTarget.group.index : deleteTarget.rule.index;
     const lines = content.split(/\r?\n/);
-    lines.splice(index, 1);
+    if (deleteTarget.kind === "rule") {
+      lines.splice(deleteTarget.rule.index, 1);
+    } else {
+      const targetKey = policyKey(deleteTarget.group.name);
+      const groupIndexes = new Set(parsed.groups.map((group) => group.index));
+      const parentGroupIndexes = new Set(deleteTarget.impact.parentGroups.map((group) => group.index));
+      const ruleIndexes = new Set(deleteTarget.impact.rules.map((rule) => rule.index));
+      lines.splice(0, lines.length, ...lines.flatMap((raw, index) => {
+        if (index === deleteTarget.group.index) return [];
+        if (groupIndexes.has(index) && parentGroupIndexes.has(index)) {
+          const separator = raw.indexOf("=");
+          if (separator > 0) {
+            const groupItems = splitRuleLine(raw.slice(separator + 1));
+            const kind = groupItems.shift() || "select";
+            const remaining = groupItems.filter((item) => policyKey(item) !== targetKey);
+            if (!remaining.length) remaining.push("DIRECT");
+            return [`${raw.slice(0, separator).trim()} = ${[kind, ...remaining].join(",")}`];
+          }
+        }
+        if (ruleIndexes.has(index)) return [];
+        if (deleteTarget.impact.finalRule?.index === index) return ["FINAL,DIRECT"];
+        return [raw];
+      }));
+    }
     markContent(lines.join("\n"));
     setDeleteTarget(null);
   }
@@ -640,7 +667,7 @@ export default function Home() {
       </section>
 
       {editor && <EditorModal editor={editor} setEditor={setEditor} policies={policies} countryGroups={parsed.groups.filter((group) => COUNTRY_GROUP_NAMES.has(group.name)).map((group) => group.name)} onSubmit={submitEditor} onImportCatalog={importCatalogRules} />}
-      {deleteTarget && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭删除确认" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null); }} onKeyDown={(event) => { if (event.key === "Escape") setDeleteTarget(null); }}><section className="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><span className="confirmMark">!</span><h2 id="delete-title">确认删除？</h2><p>{deleteTarget.kind === "group" ? `将删除代理分组「${deleteTarget.group.name}」。` : `将删除规则「${deleteTarget.rule.value}」。`}</p><small>删除会先暂存，点击“保存到 GitHub”后才会正式生效。</small><footer><button className="ghost" onClick={() => setDeleteTarget(null)}>取消</button><button className="deleteConfirm" onClick={confirmDelete}>确认删除</button></footer></section></div>}
+      {deleteTarget && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭删除确认" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null); }} onKeyDown={(event) => { if (event.key === "Escape") setDeleteTarget(null); }}><section className="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><span className="confirmMark">!</span><h2 id="delete-title">确认删除？</h2><p>{deleteTarget.kind === "group" ? `将删除代理分组「${deleteTarget.group.name}」，并清理当前方案内的引用。` : `将删除规则「${deleteTarget.rule.value}」。`}</p>{deleteTarget.kind === "group" && <ul className="deleteImpactList"><li>{deleteTarget.impact.rules.length} 条规则会被移除</li><li>{deleteTarget.impact.parentGroups.length} 个分组会移除对它的引用{deleteTarget.impact.parentGroups.length ? "，空分组会自动保留 DIRECT" : ""}</li>{deleteTarget.impact.finalRule && <li>FINAL 会自动改为 DIRECT，保证配置仍可用</li>}</ul>}<small>删除会先暂存，点击“保存到 GitHub”后才会正式生效。</small><footer><button className="ghost" onClick={() => setDeleteTarget(null)}>取消</button><button className="deleteConfirm" onClick={confirmDelete}>确认删除</button></footer></section></div>}
       {preview && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭配置预览" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(false); }} onKeyDown={(event) => { if (event.key === "Escape") setPreview(false); }}><section className="previewModal" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header><div><h2 id="preview-title">配置预览</h2><p>{content.split(/\r?\n/).length.toLocaleString()} 行 · {repository}</p></div><button onClick={() => setPreview(false)}>×</button></header><pre>{content}</pre></section></div>}
     </main>
   );
