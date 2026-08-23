@@ -269,6 +269,27 @@ async function ensureChinaDirectDefaultBinding(db: ReadyDb, chinaRuleSetId: stri
   }
 }
 
+/**
+ * Repair the protected domestic-direct set and the default scheme binding.
+ *
+ * This is intentionally idempotent and does not depend on migration markers:
+ * users may rename, hide, disable, or otherwise edit the set, while the
+ * system still needs to keep its identity protected and the default CN route
+ * pointed at the same row.
+ */
+export async function repairChinaDirectState() {
+  const db = await getReadyRawDb();
+  const chinaRuleSetId = await ensureChinaDirectRuleSet(db);
+  await ensureChinaDirectDefaultBinding(db, chinaRuleSetId);
+  const ruleSet = await db.prepare(
+    "SELECT id, name, kind, status, visible, enabled FROM rule_sets WHERE id = ? LIMIT 1"
+  ).bind(chinaRuleSetId).first<{ id: string; name: string; kind: string; status: string; visible: number; enabled: number }>();
+  const binding = await db.prepare(
+    "SELECT rule_config_id, group_name, rule_set_id FROM rule_set_bindings WHERE rule_config_id = 'default' AND lower(trim(group_name)) = 'cn' LIMIT 1"
+  ).first<{ rule_config_id: string; group_name: string; rule_set_id: string }>();
+  return { chinaRuleSetId, ruleSet, binding };
+}
+
 export async function ensureRuleSetLibrary() {
   const db = await getReadyRawDb();
   // Keep the default CN repair independent from the larger library migration.
@@ -277,8 +298,8 @@ export async function ensureRuleSetLibrary() {
   // fallback.
   let chinaRuleSetId = "";
   try {
-    chinaRuleSetId = await ensureChinaDirectRuleSet(db);
-    await ensureChinaDirectDefaultBinding(db, chinaRuleSetId);
+    const repaired = await repairChinaDirectState();
+    chinaRuleSetId = repaired.chinaRuleSetId;
   } catch (error) {
     console.error("[rule-sets] default CN repair failed", error);
   }
@@ -315,8 +336,8 @@ export async function ensureRuleSetLibrary() {
   }
   if (!chinaRuleSetId) {
     try {
-      chinaRuleSetId = await ensureChinaDirectRuleSet(db);
-      await ensureChinaDirectDefaultBinding(db, chinaRuleSetId);
+      const repaired = await repairChinaDirectState();
+      chinaRuleSetId = repaired.chinaRuleSetId;
     } catch (error) {
       console.error("[rule-sets] default CN repair retry failed", error);
     }
