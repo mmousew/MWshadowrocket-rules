@@ -496,6 +496,11 @@ button,input,select,textarea { max-width:100%; }
 .ruleLibraryTitleRow { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }
 .ruleLibraryCard h3 { margin:0; color:#314139; font-size:14px; letter-spacing:-.02em; }
 .ruleSetCount { display:inline-flex; align-items:center; min-height:22px; padding:3px 8px; border-radius:999px; background:#edf7f1; color:#2d7657; font-size:9px; font-weight:700; }
+.ruleSetBuiltinBadge,.ruleSetStateBadge { display:inline-flex; align-items:center; min-height:22px; padding:3px 8px; border-radius:999px; font-size:9px; font-weight:700; }
+.ruleSetBuiltinBadge { background:#eaf3ff; color:#3c6b9a; }
+.ruleSetStateBadge { background:#fff4dc; color:#9a6b18; }
+.ruleLibraryCardHidden { border-style:dashed; opacity:.72; }
+.ruleLibraryCardDisabled { background:#fbfaf7; }
 .ruleLibraryCard p { margin:7px 0 0; color:#87938c; font-size:10px; line-height:1.5; }
 .ruleLibraryCard small { display:block; margin-top:4px; color:#87938c; font-size:9px; overflow-wrap:anywhere; }
 .ruleSetUsage { margin-top:12px; padding:10px 11px; border:1px solid #e3eee6; border-radius:10px; background:#f8fcf9; }
@@ -509,6 +514,9 @@ button,input,select,textarea { max-width:100%; }
 .ruleLibraryActions { display:flex; flex:0 0 auto; gap:7px; }
 .ruleLibraryActions button { min-width:58px; padding:8px 10px; font-size:10px; }
 .ruleLibraryActions button:disabled { opacity:.55; cursor:not-allowed; }
+.ruleSetSwitches { display:flex; flex-direction:column; gap:6px; min-width:94px; padding:7px 9px; border:1px solid #dce7e0; border-radius:9px; background:#f7fbf8; }
+.ruleSetSwitches label { display:flex; align-items:center; gap:6px; color:#486255; font-size:9px; font-weight:700; white-space:nowrap; }
+.ruleSetSwitches input { margin:0; accent-color:#237655; }
 .ruleLibraryEditor { display:grid; gap:10px; padding:16px; border:1px dashed #b8d3c1; border-radius:13px; background:#f8fcf9; }
 .ruleLibraryEditor .groupSectionHeading { margin-bottom:2px; }
 .ruleLibraryEditor footer { padding-top:0; }

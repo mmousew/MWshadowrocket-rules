@@ -1,12 +1,14 @@
 import { getReadyRawDb } from "../../db";
 import { dedupeEntries, parseRuleSetEntries, type RuleSetEntry } from "./rule-set-core";
 
-export type RuleSetRow = { id: string; name: string; description: string; kind: string; entries: RuleSetEntry[]; source: string; status: string; sort_order: number; created_at: number; updated_at: number };
+export type RuleSetRow = { id: string; name: string; description: string; kind: string; entries: RuleSetEntry[]; source: string; status: string; visible: number; enabled: number; sort_order: number; created_at: number; updated_at: number };
 export type RuleSetBindingRow = { id: string; rule_config_id: string; group_name: string; rule_set_id: string; created_at: number; updated_at: number };
 export type RuleSetUsageRow = { rule_set_id: string; rule_config_id: string; config_name: string; group_names: string[] };
 
 const MIGRATION_ID = "rule-set-library-v1";
 const DEDUPE_MIGRATION_ID = "rule-set-library-dedupe-v1";
+const CHINA_DEFAULT_MIGRATION_ID = "rule-set-default-cn-v1";
+export const CHINA_DIRECT_RULE_SET_NAME = "CN-国内直连（综合）";
 const SEED_NAMES = ["YouTube", "Disney", "Hbomax", "Netflix", "Bahamut", "Bilibili", "Spotify", "Steam", "Telegram", "Google", "Microsoft", "OpenAI", "PayPal", "TIKTOK", "Apple", "UK", "CA", "KR", "CN", "DE", "JP", "SG", "TW", "US", "HK"];
 const CHINA_MAX_NO_IP_URL = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Shadowrocket/ChinaMaxNoIP/ChinaMaxNoIP.list";
 const CHINA_DIRECT_ENTRIES: RuleSetEntry[] = [
@@ -19,13 +21,13 @@ function mapRow(row: Omit<RuleSetRow, "entries"> & { entries: string }) {
   return { ...row, entries };
 }
 
-function toClient(row: RuleSetRow | { id: string; name: string; description: string; kind: string; entries: RuleSetEntry[]; source: string; status: string; sortOrder: number; createdAt: number; updatedAt: number }) {
+function toClient(row: RuleSetRow | { id: string; name: string; description: string; kind: string; entries: RuleSetEntry[]; source: string; status: string; visible?: number | boolean; enabled?: number | boolean; sortOrder: number; createdAt: number; updatedAt: number }) {
   const source = "sort_order" in row ? { sortOrder: row.sort_order, createdAt: row.created_at, updatedAt: row.updated_at } : { sortOrder: row.sortOrder, createdAt: row.createdAt, updatedAt: row.updatedAt };
-  return { id: row.id, name: row.name, description: row.description, kind: row.kind, entries: row.entries, source: row.source, status: row.status, entryCount: row.entries.length, ...source };
+  return { id: row.id, name: row.name, description: row.description, kind: row.kind, entries: row.entries, source: row.source, status: row.status, visible: row.visible !== false && row.visible !== 0, enabled: row.enabled !== false && row.enabled !== 0, isBuiltin: row.kind === "builtin", entryCount: row.entries.length, ...source };
 }
 
 export async function listRuleSets() {
-  const result = await (await getReadyRawDb()).prepare("SELECT id, name, description, kind, entries, source, status, sort_order, created_at, updated_at FROM rule_sets WHERE status <> 'deleted' ORDER BY sort_order ASC, created_at ASC").all<Omit<RuleSetRow, "entries"> & { entries: string }>();
+  const result = await (await getReadyRawDb()).prepare("SELECT id, name, description, kind, entries, source, status, visible, enabled, sort_order, created_at, updated_at FROM rule_sets WHERE status <> 'deleted' ORDER BY sort_order ASC, created_at ASC").all<Omit<RuleSetRow, "entries"> & { entries: string }>();
   return result.results.map(mapRow);
 }
 
@@ -74,25 +76,28 @@ export async function createRuleSet(input: { name: string; description?: string;
   const duplicate = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND status <> 'deleted' LIMIT 1").bind(name).first<{ id: string }>();
   if (duplicate) throw new Error("规则集名称已存在，请直接编辑现有规则集");
   const row = { id: crypto.randomUUID(), name, description: String(input.description || "").trim().slice(0, 300), kind: "managed", entries, source: String(input.source || "").trim().slice(0, 500), status: "active", sortOrder: Number(count?.value || -1) + 1, createdAt: now, updatedAt: now };
-  await db.prepare("INSERT INTO rule_sets (id, name, description, kind, entries, source, status, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(row.id, row.name, row.description, row.kind, JSON.stringify(row.entries), row.source, row.status, row.sortOrder, now, now).run();
+  await db.prepare("INSERT INTO rule_sets (id, name, description, kind, entries, source, status, visible, enabled, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)").bind(row.id, row.name, row.description, row.kind, JSON.stringify(row.entries), row.source, row.status, row.sortOrder, now, now).run();
   return row;
 }
 
-export async function updateRuleSet(id: string, input: { name?: string; description?: string; entries?: string | RuleSetEntry[]; source?: string }) {
+export async function updateRuleSet(id: string, input: { name?: string; description?: string; entries?: string | RuleSetEntry[]; source?: string; visible?: boolean; enabled?: boolean }) {
   const current = (await listRuleSets()).find((row) => row.id === id);
   if (!current) throw new Error("规则集不存在");
+  if (current.kind === "builtin" && input.name !== undefined && input.name.trim() !== current.name) throw new Error("系统规则集名称不能修改");
   const entries = input.entries === undefined ? current.entries : parseRuleSetEntries(input.entries);
   const db = await getReadyRawDb();
   const name = input.name === undefined ? current.name : input.name.trim().slice(0, 100) || current.name;
   const duplicate = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND id <> ? AND status <> 'deleted' LIMIT 1").bind(name, id).first<{ id: string }>();
   if (duplicate) throw new Error("规则集名称已存在，请直接编辑现有规则集");
-  const row = { ...current, name, description: input.description === undefined ? current.description : String(input.description).trim().slice(0, 300), source: input.source === undefined ? current.source : String(input.source).trim().slice(0, 500), entries, updatedAt: Date.now() };
-  await db.prepare("UPDATE rule_sets SET name = ?, description = ?, entries = ?, source = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(row.name, row.description, JSON.stringify(row.entries), row.source, row.updatedAt, id).run();
+  const row = { ...current, name, description: input.description === undefined ? current.description : String(input.description).trim().slice(0, 300), source: input.source === undefined ? current.source : String(input.source).trim().slice(0, 500), entries, visible: input.visible === undefined ? current.visible : Number(input.visible), enabled: input.enabled === undefined ? current.enabled : Number(input.enabled), updatedAt: Date.now() };
+  await db.prepare("UPDATE rule_sets SET name = ?, description = ?, entries = ?, source = ?, visible = ?, enabled = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(row.name, row.description, JSON.stringify(row.entries), row.source, row.visible, row.enabled, row.updatedAt, id).run();
   return row;
 }
 
 export async function deleteRuleSet(id: string) {
   const db = await getReadyRawDb();
+  const current = await db.prepare("SELECT name, kind FROM rule_sets WHERE id = ? AND status <> 'deleted' LIMIT 1").bind(id).first<{ name: string; kind: string }>();
+  if (current?.kind === "builtin" || current?.name === CHINA_DIRECT_RULE_SET_NAME) throw new Error("系统内置规则集不可删除，请使用隐藏或停用");
   const referenced = await db.prepare("SELECT rule_config_id, group_name FROM rule_set_bindings WHERE rule_set_id = ? ORDER BY rule_config_id, group_name").bind(id).all<{ rule_config_id: string; group_name: string }>();
   if (referenced.results.length) throw new Error(`规则集仍被使用：${referenced.results.map((item) => `${item.rule_config_id}/${item.group_name}`).join("、")}`);
   await db.prepare("UPDATE rule_sets SET status = 'deleted', updated_at = ? WHERE id = ?").bind(Date.now(), id).run();
@@ -132,13 +137,13 @@ function findPolicyName(content: string, policyKey: string) {
 
 type ReadyDb = Awaited<ReturnType<typeof getReadyRawDb>>;
 
-async function insertSeedRuleSet(db: ReadyDb, name: string, entries: RuleSetEntry[], description = "", source = "") {
+async function insertSeedRuleSet(db: ReadyDb, name: string, entries: RuleSetEntry[], description = "", source = "", kind = "managed") {
   const existing = await db.prepare("SELECT id FROM rule_sets WHERE lower(name) = lower(?) AND status <> 'deleted' LIMIT 1").bind(name).first<{ id: string }>();
   if (existing) return existing.id;
   const now = Date.now();
   const max = await db.prepare("SELECT COALESCE(MAX(sort_order), -1) AS value FROM rule_sets WHERE status <> 'deleted'").first<{ value: number }>();
   const id = crypto.randomUUID();
-  await db.prepare("INSERT OR IGNORE INTO rule_sets (id, name, description, kind, entries, source, status, sort_order, created_at, updated_at) VALUES (?, ?, ?, 'managed', ?, ?, 'active', ?, ?, ?)").bind(id, name, description, JSON.stringify(entries), source, Number(max?.value || -1) + 1, now, now).run();
+  await db.prepare("INSERT OR IGNORE INTO rule_sets (id, name, description, kind, entries, source, status, visible, enabled, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'active', 1, 1, ?, ?, ?)").bind(id, name, description, kind, JSON.stringify(entries), source, Number(max?.value || -1) + 1, now, now).run();
   const inserted = await db.prepare("SELECT id FROM rule_sets WHERE lower(name) = lower(?) AND status <> 'deleted' LIMIT 1").bind(name).first<{ id: string }>();
   return inserted?.id || id;
 }
@@ -184,6 +189,58 @@ async function dedupeRuleSetLibrary(db: ReadyDb) {
   await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(DEDUPE_MIGRATION_ID, Date.now()).run();
 }
 
+function hasProxyGroup(content: string, name: string) {
+  const start = content.split(/\r?\n/).findIndex((line) => line.trim() === "[Proxy Group]");
+  if (start < 0) return false;
+  const lines = content.split(/\r?\n/);
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^\s*\[[^\]]+\]\s*$/.test(lines[index])) break;
+    const match = lines[index].match(/^\s*([^=]+?)\s*=\s*/);
+    if (match && match[1].trim().toLowerCase() === name.trim().toLowerCase()) return true;
+  }
+  return false;
+}
+
+async function ensureChinaDirectRuleSet(db: ReadyDb) {
+  const active = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND status <> 'deleted' LIMIT 1").bind(CHINA_DIRECT_RULE_SET_NAME).first<{ id: string }>();
+  if (active) {
+    await db.prepare("UPDATE rule_sets SET kind = 'builtin', updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(Date.now(), active.id).run();
+    return active.id;
+  }
+
+  // This is the one explicit built-in exception: the user asked for the
+  // domestic-direct set to be restored as a protected default.
+  const deleted = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) ORDER BY updated_at DESC LIMIT 1").bind(CHINA_DIRECT_RULE_SET_NAME).first<{ id: string }>();
+  if (deleted) {
+    await db.prepare("UPDATE rule_sets SET kind = 'builtin', entries = ?, source = ?, status = 'active', visible = 1, enabled = 1, updated_at = ? WHERE id = ?").bind(JSON.stringify(CHINA_DIRECT_ENTRIES), CHINA_MAX_NO_IP_URL, Date.now(), deleted.id).run();
+    return deleted.id;
+  }
+  return insertSeedRuleSet(db, CHINA_DIRECT_RULE_SET_NAME, CHINA_DIRECT_ENTRIES, "中国大陆直连与常用国内服务规则集合；包含每日更新的 ChinaMaxNoIP 公共规则集", CHINA_MAX_NO_IP_URL, "builtin");
+}
+
+async function ensureChinaDirectDefaultBinding(db: ReadyDb, chinaRuleSetId: string) {
+  const marker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(CHINA_DEFAULT_MIGRATION_ID).first<{ id: string }>();
+  if (marker) return;
+  const config = await db.prepare("SELECT id, content FROM rule_configs WHERE id = 'default' AND status <> 'deleted' LIMIT 1").first<{ id: string; content: string }>();
+  if (!config || !hasProxyGroup(config.content, "CN")) return;
+
+  const existingBinding = await db.prepare("SELECT id, rule_set_id FROM rule_set_bindings WHERE rule_config_id = 'default' AND lower(trim(group_name)) = 'cn' LIMIT 1").first<{ id: string; rule_set_id: string }>();
+  if (existingBinding && existingBinding.rule_set_id !== chinaRuleSetId) {
+    const oldSet = await db.prepare("SELECT entries FROM rule_sets WHERE id = ? AND status <> 'deleted' LIMIT 1").bind(existingBinding.rule_set_id).first<{ entries: string }>();
+    let oldEntries: RuleSetEntry[] = [];
+    if (oldSet) {
+      try { oldEntries = parseRuleSetEntries(JSON.parse(oldSet.entries || "[]")); } catch { oldEntries = parseRuleSetEntries(oldSet.entries || ""); }
+    }
+    const mergedEntries = dedupeEntries([...CHINA_DIRECT_ENTRIES, ...oldEntries]);
+    await db.prepare("UPDATE rule_sets SET entries = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").bind(JSON.stringify(mergedEntries), Date.now(), chinaRuleSetId).run();
+    await db.prepare("UPDATE rule_set_bindings SET rule_set_id = ?, updated_at = ? WHERE id = ?").bind(chinaRuleSetId, Date.now(), existingBinding.id).run();
+  } else if (!existingBinding) {
+    const now = Date.now();
+    await db.prepare("INSERT INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, created_at, updated_at) VALUES (?, 'default', 'CN', ?, ?, ?)").bind(crypto.randomUUID(), chinaRuleSetId, now, now).run();
+  }
+  await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(CHINA_DEFAULT_MIGRATION_ID, Date.now()).run();
+}
+
 export async function ensureRuleSetLibrary() {
   const db = await getReadyRawDb();
   await dedupeRuleSetLibrary(db);
@@ -205,7 +262,7 @@ export async function ensureRuleSetLibrary() {
       schemeSets.set(config.id, bindingMap);
     }
     for (const name of SEED_NAMES) await insertSeedRuleSet(db, name, [], "预置规则集，可在这里编辑");
-    await insertSeedRuleSet(db, "CN-国内直连（综合）", CHINA_DIRECT_ENTRIES, "中国大陆直连与常用国内服务规则集合；包含每日更新的 ChinaMaxNoIP 公共规则集", CHINA_MAX_NO_IP_URL);
+    await insertSeedRuleSet(db, CHINA_DIRECT_RULE_SET_NAME, CHINA_DIRECT_ENTRIES, "中国大陆直连与常用国内服务规则集合；包含每日更新的 ChinaMaxNoIP 公共规则集", CHINA_MAX_NO_IP_URL, "builtin");
     for (const [configId, bindings] of schemeSets) {
       const existing = await listRuleSetBindings(configId);
       if (existing.length) continue;
@@ -213,6 +270,8 @@ export async function ensureRuleSetLibrary() {
     }
     await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(MIGRATION_ID, Date.now()).run();
   }
+  const chinaRuleSetId = await ensureChinaDirectRuleSet(db);
+  await ensureChinaDirectDefaultBinding(db, chinaRuleSetId);
   return listRuleSets();
 }
 

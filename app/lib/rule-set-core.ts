@@ -65,9 +65,9 @@ function rulePolicy(parts: string[]) {
   return parts.length >= 3 ? parts[2].trim() : "";
 }
 
-export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: string; entries: RuleSetEntry[]; status?: string }>, bindings: Array<{ groupName: string; ruleSetId: string }> | Record<string, string>) {
+export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: string; entries: RuleSetEntry[]; status?: string; enabled?: boolean | number }>, bindings: Array<{ groupName: string; ruleSetId: string }> | Record<string, string>) {
   const bindingEntries = Array.isArray(bindings) ? bindings : Object.entries(bindings).map(([groupName, ruleSetId]) => ({ groupName, ruleSetId }));
-  const setById = new Map(ruleSets.filter((set) => set.status !== "deleted").map((set) => [set.id, set]));
+  const setById = new Map(ruleSets.filter((set) => set.status !== "deleted" && set.enabled !== false && set.enabled !== 0).map((set) => [set.id, set]));
   const bindingByGroup = new Map(bindingEntries.filter((item) => item.groupName && item.ruleSetId).map((item) => [item.groupName.trim().toLowerCase(), item.ruleSetId]));
   if (!bindingByGroup.size) return content;
   const lines = content.split(/\r?\n/);

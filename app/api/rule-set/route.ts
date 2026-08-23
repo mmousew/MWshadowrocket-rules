@@ -39,11 +39,11 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { id?: string; name?: string; description?: string; entries?: string | unknown[]; source?: string };
+    const body = await request.json() as { id?: string; name?: string; description?: string; entries?: string | unknown[]; source?: string; visible?: boolean; enabled?: boolean };
     const id = String(body.id || "").trim();
     if (!id) throw new Error("规则集不存在");
     const entries = body.entries === undefined ? undefined : Array.isArray(body.entries) ? parseRuleSetEntries(body.entries) : parseRuleSetEntries(String(body.entries || ""));
-    const row = await updateRuleSet(id, { name: body.name, description: body.description, entries, source: body.source });
+    const row = await updateRuleSet(id, { name: body.name, description: body.description, entries, source: body.source, visible: body.visible, enabled: body.enabled });
     return NextResponse.json({ ruleSet: toClient(row), ruleSets: clientRows(await listRuleSets(), await listRuleSetUsages()) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "保存规则集失败" }, { status: 422 });

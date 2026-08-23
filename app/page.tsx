@@ -9,7 +9,7 @@ type Group = { index: number; name: string; kind: string; items: string[] };
 type Rule = { index: number; type: string; value: string; policy: string; options: string[] };
 type CatalogResult = { name: string; file: string; url: string; source: string };
 type RuleConfigRecord = { id: string; name: string; content: string; status: "active" | "deleted"; is_template_default?: number; created_at: number; updated_at: number; profile_count?: number };
-type RuleSetRecord = { id: string; name: string; description: string; kind: string; entries: Array<{ type: string; value: string; options?: string[] }>; source: string; status: string; entryCount: number; sortOrder: number; createdAt: number; updatedAt: number; usedBy?: Array<{ configId: string; configName: string; groupNames: string[] }> };
+type RuleSetRecord = { id: string; name: string; description: string; kind: string; entries: Array<{ type: string; value: string; options?: string[] }>; source: string; status: string; visible: boolean; enabled: boolean; isBuiltin?: boolean; entryCount: number; sortOrder: number; createdAt: number; updatedAt: number; usedBy?: Array<{ configId: string; configName: string; groupNames: string[] }> };
 type Editor =
   | { mode: "group"; index: number | null; name: string; items: string; isNew?: boolean; ruleSetId?: string; regularKinds?: string[]; regularItems?: Record<string, string>; regularRuleSets?: Record<string, string>; customEnabled?: boolean; customName?: string; customItems?: string; customRuleSetId?: string; childKinds?: string[]; childItems?: Record<string, string>; availableGroupItems?: Record<string, string> }
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
@@ -1601,6 +1601,7 @@ function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { rul
   }
 
   async function removeRuleSet(ruleSet: RuleSetRecord) {
+    if (ruleSet.isBuiltin) return onError("系统内置规则集不可删除，请使用隐藏或停用");
     if (!window.confirm(`删除规则集「${ruleSet.name}」？已绑定到方案的规则集不能删除。`)) return;
     setSaving(true); onError("");
     try {
@@ -1612,26 +1613,38 @@ function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { rul
     finally { setSaving(false); }
   }
 
+  async function toggleBuiltinFlag(ruleSet: RuleSetRecord, field: "visible" | "enabled", value: boolean) {
+    setSaving(true); onError("");
+    try {
+      const response = await fetch("/api/rule-set", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: ruleSet.id, [field]: value }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "更新规则集状态失败");
+      onChange((data.ruleSets || []) as RuleSetRecord[]);
+      onToast(`${ruleSet.name} 已${field === "visible" ? (value ? "显示" : "隐藏") : (value ? "启用" : "停用")}`);
+    } catch (cause) { onError(cause instanceof Error ? cause.message : "更新规则集状态失败"); }
+    finally { setSaving(false); }
+  }
+
   return <section className="ruleLibraryPanel">
     <div className="panelHead"><div><h2>公共规则集库</h2><p>所有方案共用这里的规则内容；是否使用、绑定到哪个分组，由每个方案单独选择。</p></div><button type="button" className="primary" onClick={startNew}>＋ 新增规则集</button></div>
     {loading && <p className="clashLoading">正在读取规则集…</p>}
     <div className="ruleLibraryList">{ruleSets.map((ruleSet) => {
       const usedBy = ruleSet.usedBy || [];
-      return <article className="ruleLibraryCard" key={ruleSet.id}>
+      return <article className={`ruleLibraryCard ${ruleSet.visible === false ? "ruleLibraryCardHidden" : ""} ${ruleSet.enabled === false ? "ruleLibraryCardDisabled" : ""}`} key={ruleSet.id}>
         <div className="ruleLibraryCardBody">
-          <div className="ruleLibraryTitleRow"><h3>{ruleSet.name}</h3><span className="ruleSetCount">{ruleSet.entryCount} 条规则</span></div>
+          <div className="ruleLibraryTitleRow"><h3>{ruleSet.name}</h3><span className="ruleSetCount">{ruleSet.entryCount} 条规则</span>{ruleSet.isBuiltin && <span className="ruleSetBuiltinBadge">系统内置</span>}{ruleSet.visible === false && <span className="ruleSetStateBadge">已隐藏</span>}{ruleSet.enabled === false && <span className="ruleSetStateBadge">已停用</span>}</div>
           <p>{ruleSet.description || "暂无说明"}</p>
           {usedBy.length ? <div className="ruleSetUsage"><strong>正在被调用</strong><div className="ruleSetUsageList">{usedBy.map((usage) => <span className="ruleSetUsageItem" key={usage.configId}><b>{usage.configName}</b><small>{usage.groupNames.length ? `分组：${usage.groupNames.join("、")}` : "已绑定"}</small></span>)}</div></div> : <div className="ruleSetUnused">暂未被方案调用</div>}
           {ruleSet.source && <small className="ruleSetSource">来源：{ruleSet.source}</small>}
         </div>
-        <div className="ruleLibraryActions"><button type="button" className="ghost" onClick={() => startEdit(ruleSet)}>编辑</button><button type="button" className="danger" disabled={saving} onClick={() => void removeRuleSet(ruleSet)}>删除</button></div>
+        <div className="ruleLibraryActions">{ruleSet.isBuiltin && <div className="ruleSetSwitches"><label><input type="checkbox" checked={ruleSet.visible !== false} disabled={saving} onChange={(event) => void toggleBuiltinFlag(ruleSet, "visible", event.target.checked)} />显示</label><label><input type="checkbox" checked={ruleSet.enabled !== false} disabled={saving} onChange={(event) => void toggleBuiltinFlag(ruleSet, "enabled", event.target.checked)} />启用</label></div>}<button type="button" className="ghost" onClick={() => startEdit(ruleSet)}>编辑</button><button type="button" className="danger" disabled={saving || ruleSet.isBuiltin} onClick={() => void removeRuleSet(ruleSet)}>{ruleSet.isBuiltin ? "内置" : "删除"}</button></div>
       </article>;
     })}</div>
     {modalOpen && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭规则集编辑" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor(); }} onKeyDown={(event) => { if (event.key === "Escape") closeEditor(); }}>
       <section className="ruleLibraryModal" role="dialog" aria-modal="true" aria-labelledby="rule-library-editor-title">
         <header className="ruleLibraryModalHeader"><div><p className="eyebrow">RULE SET LIBRARY</p><h2 id="rule-library-editor-title">{editingId ? "编辑规则集" : "新增规则集"}</h2><p>规则内容统一保存在公共库，方案只保存调用关系。</p></div><button type="button" className="ruleLibraryModalClose" aria-label="关闭" onClick={closeEditor}>×</button></header>
         <form className="ruleLibraryEditor ruleLibraryModalForm" onSubmit={saveRuleSet}>
-          <div className="fieldGrid"><label>规则集名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：Google" /></label><label>说明<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="给自己看的用途说明" /></label></div>
+          <div className="fieldGrid"><label>规则集名称<input value={name} readOnly={Boolean(editingId && ruleSets.find((item) => item.id === editingId)?.isBuiltin)} onChange={(event) => setName(event.target.value)} placeholder="例如：Google" /></label><label>说明<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="给自己看的用途说明" /></label></div>
           <label>公开来源（可选）<input value={source} onChange={(event) => setSource(event.target.value)} placeholder="例如：https://..." /></label>
           <label>规则内容<small className="ruleLibraryFieldHint">一行一条，例如 DOMAIN-SUFFIX,example.com；也支持 RULE-SET、GEOSITE。</small><textarea rows={12} value={entries} onChange={(event) => setEntries(event.target.value)} placeholder={'DOMAIN-SUFFIX,example.com\nGEOSITE,google\nRULE-SET,https://example.com/list'} /></label>
           <footer><button type="button" className="ghost" onClick={closeEditor}>取消</button><button type="submit" className="primary" disabled={saving}>{saving ? "保存中…" : editingId ? "保存规则集" : "新增规则集"}</button></footer>
