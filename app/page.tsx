@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent } from "react";
 import QRCode from "qrcode";
-import { validateRuleConfiguration } from "./lib/rule-validation";
+import { isProtectedGroupName, validateRuleConfiguration } from "./lib/rule-validation";
 
 type View = "overview" | "groups" | "rules" | "sets" | "configs" | "clash" | "airports" | "conflicts";
 type Group = { index: number; name: string; kind: string; items: string[] };
@@ -537,6 +537,9 @@ export default function Home() {
       const items = editor.items.split(/\n|,/).map((item) => item.trim()).filter(Boolean);
       if (!name || !items.length) return setError("分组名称和配置项不能为空");
       const oldGroup = editor.index === null ? null : parsed.groups.find((group) => group.index === editor.index) || null;
+      if (oldGroup && isProtectedGroupName(oldGroup.name) && policyKey(name) !== policyKey(oldGroup.name)) {
+        return setError(`系统保留分组「${oldGroup.name}」不能改名，只能调整节点来源`);
+      }
       const duplicateName = parsed.groups.some((group) => group.index !== editor.index && policyKey(group.name) === policyKey(name));
       if (duplicateName) return setError(`分组「${name}」已经存在，请换一个名称`);
       const line = `${name} = ${items.join(",")}`;
@@ -639,6 +642,10 @@ export default function Home() {
   }
 
   function removeGroup(group: Group) {
+    if (isProtectedGroupName(group.name)) {
+      setToast(`系统保留分组「${group.name}」不能删除；可以继续调整节点来源`);
+      return;
+    }
     const key = policyKey(group.name);
     const impact: GroupDeleteImpact = {
       rules: parsed.rules.filter((rule) => policyKey(rule.policy) === key),
@@ -654,6 +661,11 @@ export default function Home() {
 
   function confirmDelete() {
     if (!deleteTarget) return;
+    if (deleteTarget.kind === "group" && isProtectedGroupName(deleteTarget.group.name)) {
+      setDeleteTarget(null);
+      setError(`系统保留分组「${deleteTarget.group.name}」不能删除`);
+      return;
+    }
     const lines = content.split(/\r?\n/);
     if (deleteTarget.kind === "rule") {
       lines.splice(deleteTarget.rule.index, 1);
@@ -761,7 +773,7 @@ export default function Home() {
             onPointerUp={() => finishGroupDrag()}
             onPointerCancel={() => finishGroupDrag("", "")}
             onKeyDown={(event) => moveGroupWithKeyboard(event, group)}
-          ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div><span className="pill">{linkedCount} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button><button className="danger" onClick={() => removeGroup(group)}>删除</button></div>; })}</div></>
+          ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div><span className="pill">{linkedCount} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button>{isProtectedGroupName(group.name) ? <span className="pill" title="系统保留分组，不能删除或改名">系统保留</span> : <button className="danger" onClick={() => removeGroup(group)}>删除</button>}</div>; })}</div></>
           : <>{viewingFinal && <div className="listNote finalRuleNote">这是系统兜底规则：未匹配到其它规则的流量会进入「{viewingGroup}」分组。它不是重复的代理分组，可通过“节点筛选”配置这个分组使用的节点。</div>}<div className="listPanel">{filteredRules.map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><input className="ruleSelect" type="checkbox" checked={effectiveSelectedRuleIndexes.includes(rule.index)} onChange={() => toggleRuleSelection(rule.index)} aria-label={`选择规则 ${rule.value}`} /><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}</div></>}
         </>}
 
@@ -1460,7 +1472,7 @@ function EditorModalLegacy({ editor, setEditor, policies, countryGroups, existin
   }
 
   return <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭编辑窗口" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setEditor(null); }}><form className="editorModal" aria-label="规则编辑器" onSubmit={onSubmit}><header><div><h2>{editor.index === null ? "新增" : "编辑"}{editor.mode === "group" ? "代理分组" : "规则"}</h2><p>保存前会自动检查语法、引用与冲突。</p></div><button type="button" onClick={() => setEditor(null)}>×</button></header>{error && <div className="editorError" role="alert"><span>!</span><pre>{error}</pre></div>}{editor.mode === "group" ? <>
-<section className="customGroupConfig"><div className="groupSectionHeading"><strong>编辑当前分组</strong><small>当前分组只需要选择节点来源；已有分组（包括自动选择、故障转移、负载均衡）可以直接勾选加入，不需要重复配置。</small></div><label>分组名称<input value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：Proxies 或 YouTube" /></label><GroupNodeFilter raw={editor.items} countryGroups={countryGroups} existingGroups={selectableExistingGroups} onChange={updateGroupConfig} /></section>
+<section className="customGroupConfig"><div className="groupSectionHeading"><strong>编辑当前分组</strong><small>当前分组只需要选择节点来源；已有分组（包括自动选择、故障转移、负载均衡）可以直接勾选加入，不需要重复配置。</small></div><label>分组名称{isProtectedGroupName(editor.name) && <small>系统保留名称，不能修改；可以继续调整节点来源。</small>}<input value={editor.name} readOnly={isProtectedGroupName(editor.name)} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：Proxies 或 YouTube" /></label><GroupNodeFilter raw={editor.items} countryGroups={countryGroups} existingGroups={selectableExistingGroups} onChange={updateGroupConfig} /></section>
 <details className="advancedGroupConfig"><summary>高级配置（一般不需要修改）</summary><label>配置项 <small>每行一个，第一行是类型</small><textarea rows={8} value={editor.items} onChange={(event) => setEditor({ ...editor, items: event.target.value })} /></label></details></>: <><div className="fieldGrid"><label>规则类型<select value={editor.type} onChange={(event) => setEditor({ ...editor, type: event.target.value })}>{RULE_TYPES.map((type) => <option key={type} value={type}>{type} — {RULE_TYPE_META[type].label}</option>)}</select><small className="fieldHint">{RULE_TYPE_META[editor.type]?.hint}</small></label><label>执行策略<select value={editor.policy} onChange={(event) => setEditor({ ...editor, policy: event.target.value })}>{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><small className="fieldHint">决定匹配后走哪个分组、直连或拒绝。</small></label></div>{editor.type === "RULE-SET" && <section className="catalogBox"><strong>从公开规则库搜索</strong><p>数据来自专门适配 Shadowrocket 的 blackmatrix7 公开规则库。</p><div className="catalogSearch"><input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="输入 Google、Netflix、OpenAI、哔哩哔哩…" /><button type="button" className="ghost" onClick={searchCatalog}>{catalogLoading ? "搜索中…" : "搜索"}</button></div>{catalogError && <small className="catalogError">{catalogError}</small>}{catalog.length > 0 && <><button type="button" className="catalogImport" onClick={() => onImportCatalog(catalog, editor.policy)}>一键导入全部 {catalog.length} 个规则集到「{editor.policy}」</button><div className="catalogResults">{catalog.map((item) => <button type="button" key={item.url} className={editor.value === item.url ? "selected" : ""} onClick={() => setEditor({ ...editor, value: item.url })}><span><strong>{item.name}</strong><small>{item.file} · {catalogFileHint(item.file)}</small></span><em>{editor.value === item.url ? "已选择" : "选择"}</em></button>)}</div></>}</section>}{editor.type === "RULE-SET" && <label>{"规则集地址"}<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder={"可搜索选择，也可以粘贴公开规则集地址"} /></label>}{editor.type === "DOMAIN-SUFFIX" && <label>域名后缀 <small>一行一个，按回车继续添加；保存后会生成多条规则</small><textarea rows={7} value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder={"例如：\nexample.com\nexample.org\nexample.net"} /></label>}{editor.type === "GEOSITE" && <label>geosite 名称 <small>例如 google、paypal，也可以填写 geosite:google</small><input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder="例如：google" /></label>}{editor.type !== "RULE-SET" && editor.type !== "DOMAIN-SUFFIX" && editor.type !== "GEOSITE" && <label>域名或地址<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder="例如：example.com" /></label>}<label>附加选项 <small>不确定时请留空</small><input value={editor.options} onChange={(event) => setEditor({ ...editor, options: event.target.value })} placeholder="例如：no-resolve（通常可以留空）" /></label></>}<footer><button type="button" className="ghost" onClick={() => setEditor(null)}>取消</button><button className="primary" type="submit">暂存修改</button></footer></form></div>;
 }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
 import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, restoreHaoziRuleConfig, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
-import { validateRuleConfiguration } from "../../lib/rule-validation";
+import { validateProtectedGroupChanges, validateRuleConfiguration } from "../../lib/rule-validation";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -80,7 +80,14 @@ export async function PATCH(request: NextRequest) {
       const config = await restoreHaoziRuleConfig();
       return NextResponse.json({ config, configs: await listRuleConfigs() });
     }
-    if (typeof body.content === "string") validateRuleContent(body.content);
+    const current = typeof body.content === "string" ? await getRuleConfig(id) : null;
+    if (typeof body.content === "string") {
+      validateRuleContent(body.content);
+      if (current) {
+        const protectedErrors = validateProtectedGroupChanges(current.content, body.content);
+        if (protectedErrors.length) throw new Error(protectedErrors.join("\n"));
+      }
+    }
     if (body.setDefault) await setRuleConfigTemplateDefault(id);
     const config = await updateRuleConfig(id, { name: body.name, content: body.content });
     return NextResponse.json({ config, configs: await listRuleConfigs() });

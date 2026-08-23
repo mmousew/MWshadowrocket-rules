@@ -32,6 +32,49 @@ function sectionEnd(lines: string[], start: number) {
   return next >= 0 ? next : lines.length;
 }
 
+const PROTECTED_GROUP_LABELS = new Map([
+  ["proxies", "Proxies"],
+  ["final", "Final"],
+]);
+
+/** These groups are part of the client contract and must keep their identity. */
+export function isProtectedGroupName(name: string) {
+  return PROTECTED_GROUP_LABELS.has(key(name));
+}
+
+function readGroupNames(content: string) {
+  const lines = content.split(/\r?\n/);
+  const groupStart = lines.findIndex((line) => line.trim().toLowerCase() === "[proxy group]");
+  const ruleStart = lines.findIndex((line) => line.trim().toLowerCase() === "[rule]");
+  const names = new Map<string, string>();
+  if (groupStart < 0 || ruleStart <= groupStart) return names;
+  for (let index = groupStart + 1; index < ruleStart; index += 1) {
+    const raw = lines[index].trim();
+    const separator = raw.indexOf("=");
+    if (separator < 1 || raw.startsWith("#")) continue;
+    const name = raw.slice(0, separator).trim();
+    if (name) names.set(key(name), name);
+  }
+  return names;
+}
+
+/**
+ * Keep the server-side save path aligned with the editor: if a protected
+ * group existed before, a submitted configuration may not remove or rename
+ * it. This also covers direct API calls that bypass the browser UI.
+ */
+export function validateProtectedGroupChanges(previousContent: string, nextContent: string) {
+  const previousGroups = readGroupNames(previousContent);
+  const nextGroups = readGroupNames(nextContent);
+  const errors: string[] = [];
+  PROTECTED_GROUP_LABELS.forEach((label, protectedKey) => {
+    if (previousGroups.has(protectedKey) && !nextGroups.has(protectedKey)) {
+      errors.push(`系统保留分组「${label}」不能删除或改名`);
+    }
+  });
+  return errors;
+}
+
 /**
  * Validate the rule layer before it is stored or merged into a client file.
  * This intentionally does not require a FINAL line: the output builders add

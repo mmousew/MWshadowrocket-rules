@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
+import { validateProtectedGroupChanges } from "../../lib/rule-validation";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -126,6 +127,17 @@ export async function PUT(request: NextRequest) {
   if (!body.content || !body.sha) return NextResponse.json({ error: "缺少配置内容或版本信息" }, { status: 400 });
   const errors = validateConfig(body.content);
   if (errors.length) return NextResponse.json({ error: "配置检查未通过", details: errors }, { status: 422 });
+
+  // Read the current revision before writing so the direct GitHub save path
+  // cannot remove or rename the protected groups either.
+  const currentResponse = await fetch(`${API_URL}?ref=${encodeURIComponent(BRANCH)}`, {
+    headers: githubHeaders(),
+    cache: "no-store",
+  });
+  if (!currentResponse.ok) return NextResponse.json({ error: `读取当前 GitHub 配置失败（${currentResponse.status}），为保护系统分组，本次保存已取消` }, { status: 502 });
+  const currentFile = (await currentResponse.json()) as GitHubFile;
+  const protectedErrors = validateProtectedGroupChanges(decodeBase64(currentFile.content), body.content);
+  if (protectedErrors.length) return NextResponse.json({ error: "配置检查未通过", details: protectedErrors }, { status: 422 });
 
   const response = await fetch(API_URL, {
     method: "PUT",
