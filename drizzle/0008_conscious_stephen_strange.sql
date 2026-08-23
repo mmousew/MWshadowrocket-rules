@@ -29,5 +29,4 @@ CREATE TABLE `rule_sets` (
 );
 --> statement-breakpoint
 CREATE INDEX `rule_sets_status_idx` ON `rule_sets` (`status`);--> statement-breakpoint
-CREATE INDEX `rule_sets_sort_idx` ON `rule_sets` (`sort_order`);--> statement-breakpoint
-ALTER TABLE `rule_configs` ADD `is_template_default` integer DEFAULT false NOT NULL;
+CREATE INDEX `rule_sets_sort_idx` ON `rule_sets` (`sort_order`);
