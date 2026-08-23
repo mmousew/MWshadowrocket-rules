@@ -189,21 +189,21 @@ async function dedupeRuleSetLibrary(db: ReadyDb) {
   await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(DEDUPE_MIGRATION_ID, Date.now()).run();
 }
 
-function hasProxyGroup(content: string, name: string) {
-  const start = content.split(/\r?\n/).findIndex((line) => line.trim() === "[Proxy Group]");
-  if (start < 0) return false;
-  const lines = content.split(/\r?\n/);
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (/^\s*\[[^\]]+\]\s*$/.test(lines[index])) break;
-    const match = lines[index].match(/^\s*([^=]+?)\s*=\s*/);
-    if (match && match[1].trim().toLowerCase() === name.trim().toLowerCase()) return true;
-  }
-  return false;
-}
-
 function ensureProxyGroup(content: string, line: string) {
-  if (hasProxyGroup(content, line.split("=")[0].trim())) return content;
+  const name = line.split("=")[0].trim().toLowerCase();
   const lines = content.split(/\r?\n/);
+  const start = lines.findIndex((item) => item.trim() === "[Proxy Group]");
+  if (start >= 0) {
+    for (let index = start + 1; index < lines.length; index += 1) {
+      if (/^\s*\[[^\]]+\]\s*$/.test(lines[index])) break;
+      const match = lines[index].match(/^\s*([^=]+?)\s*=\s*/);
+      if (match && match[1].trim().toLowerCase() === name) {
+        if (lines[index].trim() === line.trim()) return content;
+        lines[index] = line;
+        return lines.join("\n");
+      }
+    }
+  }
   const ruleIndex = lines.findIndex((item) => item.trim() === "[Rule]");
   if (ruleIndex >= 0) {
     lines.splice(ruleIndex, 0, line, "");
@@ -345,6 +345,18 @@ export async function ensureRuleSetLibrary() {
       chinaRuleSetId = repaired.chinaRuleSetId;
     } catch (error) {
       console.error("[rule-sets] all-scheme CN repair retry failed", error);
+    }
+  }
+  // The initial repair must happen before the one-time library migration so
+  // the migration can discover legacy CN references. Run it once more after
+  // every migration path has finished: concurrent config/library requests or
+  // a legacy migration must never leave only the currently viewed scheme with
+  // the CN proxy group line.
+  if (chinaRuleSetId) {
+    try {
+      await ensureChinaDirectBindings(db, chinaRuleSetId);
+    } catch (error) {
+      console.error("[rule-sets] final all-scheme CN content repair failed", error);
     }
   }
   return listRuleSets();
