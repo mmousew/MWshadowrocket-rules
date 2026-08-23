@@ -201,6 +201,17 @@ function hasProxyGroup(content: string, name: string) {
   return false;
 }
 
+function ensureProxyGroup(content: string, line: string) {
+  if (hasProxyGroup(content, line.split("=")[0].trim())) return content;
+  const lines = content.split(/\r?\n/);
+  const ruleIndex = lines.findIndex((item) => item.trim() === "[Rule]");
+  if (ruleIndex >= 0) {
+    lines.splice(ruleIndex, 0, line, "");
+    return lines.join("\n");
+  }
+  return `${content.replace(/\s*$/, "")}\n\n[Proxy Group]\n${line}\n`;
+}
+
 async function ensureChinaDirectRuleSet(db: ReadyDb) {
   const active = await db.prepare("SELECT id FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) AND status <> 'deleted' LIMIT 1").bind(CHINA_DIRECT_RULE_SET_NAME).first<{ id: string }>();
   if (active) {
@@ -222,7 +233,11 @@ async function ensureChinaDirectDefaultBinding(db: ReadyDb, chinaRuleSetId: stri
   const marker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(CHINA_DEFAULT_MIGRATION_ID).first<{ id: string }>();
   if (marker) return;
   const config = await db.prepare("SELECT id, content FROM rule_configs WHERE id = 'default' AND status <> 'deleted' LIMIT 1").first<{ id: string; content: string }>();
-  if (!config || !hasProxyGroup(config.content, "CN")) return;
+  if (!config) return;
+  const updatedContent = ensureProxyGroup(config.content, "CN = select,DIRECT");
+  if (updatedContent !== config.content) {
+    await db.prepare("UPDATE rule_configs SET content = ?, updated_at = ? WHERE id = 'default' AND status <> 'deleted'").bind(updatedContent, Date.now()).run();
+  }
 
   const existingBinding = await db.prepare("SELECT id, rule_set_id FROM rule_set_bindings WHERE rule_config_id = 'default' AND lower(trim(group_name)) = 'cn' LIMIT 1").first<{ id: string; rule_set_id: string }>();
   if (existingBinding && existingBinding.rule_set_id !== chinaRuleSetId) {
