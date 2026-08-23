@@ -763,6 +763,44 @@ export default function Home() {
     finally { setSaving(false); }
   }
 
+  const systemGroupOrder = new Map([["proxies", 0], ["final", 1], ["cn", 2]]);
+  const systemGroups = filteredGroups
+    .filter((group) => systemGroupOrder.has(policyKey(group.name)))
+    .sort((left, right) => (systemGroupOrder.get(policyKey(left.name)) ?? 99) - (systemGroupOrder.get(policyKey(right.name)) ?? 99));
+  const customGroups = filteredGroups.filter((group) => !systemGroupOrder.has(policyKey(group.name)));
+
+  function renderGroupRow(group: Group, system = false) {
+    const linked = parsed.rules.filter((rule) => rule.policy === group.name);
+    const isFinalGroup = parsed.finalRule?.policy === group.name;
+    const linkedCount = linked.length + (isFinalGroup ? 1 : 0);
+    const rowClass = `listRow groupListRow ${system ? "systemGroupRow" : ""} ${draggingGroup === group.name ? "dragging" : ""} ${dragTargetGroup === group.name && draggingGroup !== group.name ? "dropTarget" : ""}`;
+    return <div
+      className={rowClass}
+      data-group-name={group.name}
+      key={`${group.index}-${group.name}`}
+      onPointerDown={(event) => { if (system || (event.target as HTMLElement).closest("button")) return; startTouchGroupDrag(event, group); }}
+      onPointerMove={(event) => { if (!system) moveTouchGroupDrag(event); }}
+      onPointerUp={() => { if (!system) finishGroupDrag(); }}
+      onPointerCancel={() => { if (!system) finishGroupDrag("", ""); }}
+      onDragOver={(event) => { if (system || !dragSourceRef.current) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; dragTargetRef.current = group.name; setDragTargetGroup(group.name); }}
+      onDrop={(event) => { if (system) return; event.preventDefault(); finishGroupDrag(event.dataTransfer.getData("text/plain") || dragSourceRef.current, group.name); }}
+    >{!system && <button
+      type="button"
+      className="dragHandle"
+      draggable={false}
+      disabled={Boolean(query)}
+      aria-label={`拖动调整「${group.name}」的顺序`}
+      title={query ? "清空搜索后可排序" : "拖动排序，或使用上下方向键"}
+      onDragStart={(event) => startNativeGroupDrag(event, group)}
+      onDragEnd={() => finishGroupDrag("", "")}
+      onPointerDown={(event) => startTouchGroupDrag(event, group)}
+      onPointerMove={moveTouchGroupDrag}
+      onPointerUp={() => finishGroupDrag()}
+      onPointerCancel={() => finishGroupDrag("", "")}
+      onKeyDown={(event) => moveGroupWithKeyboard(event, group)}
+    ><span aria-hidden="true">⠿</span></button>}<div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置这个分组使用的节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div>{!system && <div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div>}{policyKey(group.name) === "cn" && (() => { const chinaRuleSet = availableRuleSets.find((ruleSet) => ruleSet.isBuiltin && ruleSet.name.trim().toLowerCase() === "cn-国内直连（综合）".toLowerCase()) || availableRuleSets.find((ruleSet) => ruleSet.name.trim().toLowerCase() === "cn国内直连"); return chinaRuleSet ? <div className="groupRuleSetSwitches" aria-label="CN规则集开关"><label><input type="checkbox" checked={chinaRuleSet.visible !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "visible", event.target.checked)} />显示</label><label><input type="checkbox" checked={chinaRuleSet.enabled !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "enabled", event.target.checked)} />启用</label></div> : null; })()}<span className="pill">{linkedCount} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button>{isProtectedGroupName(group.name) ? <span className="pill" title="系统保留分组，不能删除或改名">系统保留</span> : <button className="danger" onClick={() => removeGroup(group)}>删除</button>}</div>;
+  }
+
   if (loading) return <div className="loading"><span className="brandMark">MW</span><p>正在读取 GitHub 配置…</p></div>;
   if (authRequired) return <main className="loginShell"><section className="loginCard"><span className="brandMark">MW</span><p className="eyebrow">PRIVATE RULE MANAGER</p><h1>小火箭规则管理</h1><p>仅允许 GitHub 用户 <strong>mmousew</strong> 登录。登录后才能查看和修改配置。</p>{loginError && <div className="loginError">{loginError}</div>}<a className="githubLogin" href="/api/auth/github/start"><span>◆</span> 使用 GitHub 登录</a><small>不会读取密码，也不会授权其他账号进入。</small></section></main>;
 
@@ -796,31 +834,7 @@ export default function Home() {
 
         {(isSchemeView) && <>
           <div className="toolbar"><label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "groups" ? "搜索分组或节点关键词" : "搜索域名、规则集或策略"} /></label>{view !== "groups" && query.trim() && filteredRules.length > 0 && <div className="bulkTransfer"><label className="selectAll"><input type="checkbox" checked={effectiveSelectedRuleIndexes.length === filteredRules.length} onChange={(event) => { setSelectionKey(filteredRuleKey); setSelectedRuleIndexes(event.target.checked ? filteredRules.map((rule) => rule.index) : []); }} />全选</label><span>转移到</span><select value={bulkTargetPolicy || policies[0] || ""} onChange={(event) => setBulkTargetPolicy(event.target.value)} aria-label="批量转移目标分组">{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><button type="button" onClick={() => transferFilteredRules(bulkTargetPolicy || policies[0] || "")}>转移选中 {effectiveSelectedRuleIndexes.length} 条</button></div>}<span>{view === "groups" ? filteredGroups.length : visibleRuleCount} 项</span></div>
-          {view === "groups" ? <><p className={`dragHelp ${query ? "disabled" : ""}`}>{query ? "清空搜索后可以拖拽调整完整分组顺序" : "按住左侧或整行拖动排序；也可以用上移/下移"}</p><div className="listPanel">{filteredGroups.map((group) => { const linked = parsed.rules.filter((rule) => rule.policy === group.name); const isFinalGroup = parsed.finalRule?.policy === group.name; const linkedCount = linked.length + (isFinalGroup ? 1 : 0); return <div
-            className={`listRow groupListRow ${draggingGroup === group.name ? "dragging" : ""} ${dragTargetGroup === group.name && draggingGroup !== group.name ? "dropTarget" : ""}`}
-            data-group-name={group.name}
-            key={`${group.index}-${group.name}`}
-            onPointerDown={(event) => { if ((event.target as HTMLElement).closest("button")) return; startTouchGroupDrag(event, group); }}
-            onPointerMove={moveTouchGroupDrag}
-            onPointerUp={() => finishGroupDrag()}
-            onPointerCancel={() => finishGroupDrag("", "")}
-            onDragOver={(event) => { if (!dragSourceRef.current) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; dragTargetRef.current = group.name; setDragTargetGroup(group.name); }}
-            onDrop={(event) => { event.preventDefault(); finishGroupDrag(event.dataTransfer.getData("text/plain") || dragSourceRef.current, group.name); }}
-          ><button
-            type="button"
-            className="dragHandle"
-            draggable={false}
-            disabled={Boolean(query)}
-            aria-label={`拖动调整「${group.name}」的顺序`}
-            title={query ? "清空搜索后可排序" : "拖动排序，或使用上下方向键"}
-            onDragStart={(event) => startNativeGroupDrag(event, group)}
-            onDragEnd={() => finishGroupDrag("", "")}
-            onPointerDown={(event) => startTouchGroupDrag(event, group)}
-            onPointerMove={moveTouchGroupDrag}
-            onPointerUp={() => finishGroupDrag()}
-            onPointerCancel={() => finishGroupDrag("", "")}
-            onKeyDown={(event) => moveGroupWithKeyboard(event, group)}
-          ><span aria-hidden="true">⠿</span></button><div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置这个分组使用的节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div><div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div>{policyKey(group.name) === "cn" && (() => { const chinaRuleSet = availableRuleSets.find((ruleSet) => ruleSet.isBuiltin && ruleSet.name.trim().toLowerCase() === "cn-国内直连（综合）".toLowerCase()) || availableRuleSets.find((ruleSet) => ruleSet.name.trim().toLowerCase() === "cn国内直连"); return chinaRuleSet ? <div className="groupRuleSetSwitches" aria-label="CN规则集开关"><label><input type="checkbox" checked={chinaRuleSet.visible !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "visible", event.target.checked)} />显示</label><label><input type="checkbox" checked={chinaRuleSet.enabled !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "enabled", event.target.checked)} />启用</label></div> : null; })()}<span className="pill">{linkedCount} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button>{isProtectedGroupName(group.name) ? <span className="pill" title="系统保留分组，不能删除或改名">系统保留</span> : <button className="danger" onClick={() => removeGroup(group)}>删除</button>}</div>; })}</div></>
+          {view === "groups" ? <><p className={`dragHelp ${query ? "disabled" : ""}`}>{query ? "清空搜索后可以拖拽调整完整分组顺序" : "自定义分组可以拖拽调整顺序；Proxies、Final、CN 为系统保留分组，固定显示在上方"}</p><div className="groupSections"><section className="groupSection systemGroupSection"><div className="groupSectionHead"><div><strong>系统保留分组</strong><small>Proxies、Final、CN 是配置入口，不能删除或改名；CN 的“显示 / 启用”可以单独控制。</small></div><span>{systemGroups.length} 项</span></div><div className="listPanel">{systemGroups.length ? systemGroups.map((group) => renderGroupRow(group, true)) : <div className="listNote">没有匹配到系统保留分组</div>}</div></section><section className="groupSection customGroupSection"><div className="groupSectionHead"><div><strong>自定义分组</strong><small>其它国家、服务和策略分组都在这里维护；可继续新增、删除和排序。</small></div><span>{customGroups.length} 项</span></div><div className="listPanel">{customGroups.length ? customGroups.map((group) => renderGroupRow(group)) : <div className="listNote">没有匹配到自定义分组</div>}</div></section></div></>
           : <>{viewingFinal && <div className="listNote finalRuleNote">这是系统兜底规则：未匹配到其它规则的流量会进入「{viewingGroup}」分组。它不是重复的代理分组，可通过“节点筛选”配置这个分组使用的节点。</div>}<div className="listPanel">{filteredRules.map((rule) => <div className="listRow" key={`${rule.index}-${rule.value}`}><input className="ruleSelect" type="checkbox" checked={effectiveSelectedRuleIndexes.includes(rule.index)} onChange={() => toggleRuleSelection(rule.index)} aria-label={`选择规则 ${rule.value}`} /><span className={`ruleType ${rule.type === "RULE-SET" ? "set" : ""}`}>{rule.type}<small>{RULE_TYPE_META[rule.type]?.label}</small></span><div className="rowMain"><strong>{rule.value}</strong><p>策略：{rule.policy}{rule.options.length ? ` · ${rule.options.join(", ")}` : ""}</p></div><span className="policy">{rule.policy}</span><button onClick={() => editRule(rule)}>编辑</button><button className="danger" onClick={() => removeRule(rule)}>删除</button></div>)}</div></>}
         </>}
 

@@ -35,6 +35,7 @@ function sectionEnd(lines: string[], start: number) {
 const PROTECTED_GROUP_LABELS = new Map([
   ["proxies", "Proxies"],
   ["final", "Final"],
+  ["cn", "CN"],
 ]);
 
 /** These groups are part of the client contract and must keep their identity. */
