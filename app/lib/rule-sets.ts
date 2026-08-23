@@ -1,5 +1,5 @@
 import { getReadyRawDb } from "../../db";
-import { parseRuleSetEntries, type RuleSetEntry } from "./rule-set-core";
+import { dedupeEntries, parseRuleSetEntries, type RuleSetEntry } from "./rule-set-core";
 
 export type RuleSetRow = { id: string; name: string; description: string; kind: string; entries: RuleSetEntry[]; source: string; status: string; sort_order: number; created_at: number; updated_at: number };
 export type RuleSetBindingRow = { id: string; rule_config_id: string; group_name: string; rule_set_id: string; created_at: number; updated_at: number };
