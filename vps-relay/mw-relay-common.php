@@ -126,10 +126,12 @@ function mw_relay_disposition(string $filename): string
 {
     $filename = mw_relay_clean_name($filename);
     if ($filename === '') $filename = 'MW-Subscription';
-    // Use the legacy filename parameter with the actual UTF-8 value. The
-    // filename* form is displayed literally as percent-encoding by some
-    // ClashX Meta versions.
-    return 'inline; filename="' . $filename . '"';
+    // Keep filename= ASCII-only for legacy clients and provide the real UTF-8
+    // name via RFC 5987. Raw UTF-8 in filename= is decoded as Latin-1 by some
+    // clients, which produces mojibake for Chinese subscription names.
+    $fallback = preg_replace('/[^\x20-\x7E]/', '_', $filename) ?: 'MW-Subscription';
+    $fallback = trim($fallback) !== '' ? trim($fallback) : 'MW-Subscription';
+    return 'inline; filename="' . $fallback . '"; filename*=UTF-8\'\'' . rawurlencode($filename);
 }
 
 function mw_relay_accepts_gzip(): bool

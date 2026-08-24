@@ -31,11 +31,12 @@ function configFilename(name: string, extension: "yaml" | "conf") {
     .trim()
     .slice(0, 80) || fallback;
   const filename = `${cleaned}.${extension}`;
-  // Send UTF-8 bytes through the legacy filename parameter. This is the
-  // parameter ClashX Meta actually reads; filename* made some versions show
-  // the percent-encoded Chinese text literally.
-  const headerValue = Buffer.from(filename, "utf8").toString("latin1");
-  return `inline; filename="${headerValue}"`;
+  // Keep the legacy fallback ASCII-only, and provide the real UTF-8 filename
+  // through RFC 5987. Raw UTF-8 in filename= is decoded as Latin-1 by some
+  // clients, which produces mojibake for Chinese subscription names.
+  const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/[\\/:*?"<>|]/g, "_") || `${fallback}.${extension}`;
+  const encoded = encodeURIComponent(filename).replace(/['()]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `inline; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ token: string }> }) {
