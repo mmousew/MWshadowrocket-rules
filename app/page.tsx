@@ -78,6 +78,25 @@ function policyKey(value: string) {
   return value.trim().toLowerCase();
 }
 
+function mergeGroupNames(...lists: string[][]) {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  lists.flat().forEach((item) => {
+    const name = item.trim();
+    const key = policyKey(name);
+    if (!name || seen.has(key)) return;
+    seen.add(key);
+    result.push(name);
+  });
+  return result;
+}
+
+function groupSourceLabel(name: string, countryGroups: string[]) {
+  if (["proxies", "final", "cn"].includes(policyKey(name))) return "系统";
+  if (countryGroups.some((item) => policyKey(item) === policyKey(name))) return "国家";
+  return "自定义";
+}
+
 function policyExists(policy: string, groups: Group[]) {
   const key = policyKey(policy);
   return BUILTINS.some((item) => policyKey(item) === key) || groups.some((group) => policyKey(group.name) === key);
@@ -92,8 +111,9 @@ function defaultGroupItems(kind: string) {
 
 function readGroupFilter(raw: string, countryGroups: string[], existingGroups: string[] = []) {
   const values = raw.split(/\n|,/).map((item) => item.trim()).filter(Boolean);
+  const allGroups = mergeGroupNames(countryGroups, existingGroups);
   const countryKeys = new Map(countryGroups.map((item) => [policyKey(item), item]));
-  const groupKeys = new Map(existingGroups.map((item) => [policyKey(item), item]));
+  const groupKeys = new Map(allGroups.map((item) => [policyKey(item), item]));
   const keywordItem = values.find((item) => /^policy-regex-filter=/i.test(item));
   return {
     values,
@@ -108,17 +128,18 @@ function readGroupFilter(raw: string, countryGroups: string[], existingGroups: s
 function updateGroupItems(raw: string, countryGroups: string[], existingGroups: string[], changes: { kind?: string; country?: string; group?: string; keyword?: string; includeAll?: boolean }) {
   const current = readGroupFilter(raw, countryGroups, existingGroups);
   const kind = changes.kind || current.kind;
-  const countries = new Set(current.selectedCountries);
   const groups = new Set(current.selectedGroups);
-  if (changes.country) {
-    if (countries.has(changes.country)) countries.delete(changes.country);
-    else countries.add(changes.country);
-  }
-  if (changes.group) {
-    if (groups.has(changes.group)) groups.delete(changes.group);
-    else groups.add(changes.group);
-  }
-  let extras = current.values.slice(1).filter((item) => !countryGroups.some((value) => policyKey(value) === policyKey(item)) && !existingGroups.some((value) => policyKey(value) === policyKey(item)) && !/^policy-regex-filter=/i.test(item) && policyKey(item) !== "include-all-proxies=true");
+  const allGroups = mergeGroupNames(countryGroups, existingGroups);
+  const toggleGroup = (value: string) => {
+    const canonical = allGroups.find((item) => policyKey(item) === policyKey(value)) || value.trim();
+    if (!canonical) return;
+    if (groups.has(canonical)) groups.delete(canonical);
+    else groups.add(canonical);
+  };
+  if (changes.country) toggleGroup(changes.country);
+  if (changes.group) toggleGroup(changes.group);
+  const isKnownGroup = (item: string) => allGroups.some((value) => policyKey(value) === policyKey(item));
+  let extras = current.values.slice(1).filter((item) => !isKnownGroup(item) && !/^policy-regex-filter=/i.test(item) && policyKey(item) !== "include-all-proxies=true");
   const healthCheckGroup = ["url-test", "fallback", "load-balance"].includes(kind);
   if (healthCheckGroup) extras = extras.filter((item) => policyKey(item) !== "direct");
   if (changes.kind && healthCheckGroup && !extras.some((item) => /^url=/i.test(item))) {
@@ -131,7 +152,7 @@ function updateGroupItems(raw: string, countryGroups: string[], existingGroups: 
     : changes.includeAll ? ["include-all-proxies=true"] : [];
   const effectiveKeyword = changes.includeAll ? "" : keyword;
   const keywordItems = effectiveKeyword ? [`policy-regex-filter=${effectiveKeyword}`] : [];
-  return [kind, ...includeItems, ...Array.from(countries), ...Array.from(groups), ...keywordItems, ...extras].join("\n");
+  return [kind, ...includeItems, ...Array.from(groups), ...keywordItems, ...extras].join("\n");
 }
 
 function groupOptionLabel(kind: string) {
@@ -1613,10 +1634,10 @@ function EditorModalLegacy({ editor, setEditor, policies, countryGroups, existin
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState("");
 
-  const selectableExistingGroups = existingGroups.filter((group) => editor.mode !== "group" || policyKey(group) !== policyKey(editor.name));
+  const selectableExistingGroups = mergeGroupNames(countryGroups, existingGroups).filter((group) => editor.mode !== "group" || policyKey(group) !== policyKey(editor.name));
   function updateGroupConfig(changes: { country?: string; group?: string; keyword?: string; includeAll?: boolean }) {
     if (editor.mode !== "group") return;
-    setEditor({ ...editor, items: updateGroupItems(editor.items, countryGroups, selectableExistingGroups, changes) });
+    setEditor({ ...editor, items: updateGroupItems(editor.items, [], selectableExistingGroups, changes) });
   }
 
   async function searchCatalog() {
@@ -1633,7 +1654,7 @@ function EditorModalLegacy({ editor, setEditor, policies, countryGroups, existin
   }
 
   return <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭编辑窗口" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setEditor(null); }}><form className="editorModal" aria-label="规则编辑器" onSubmit={onSubmit}><header><div><h2>{editor.index === null ? "新增" : "编辑"}{editor.mode === "group" ? "代理分组" : "规则"}</h2><p>保存前会自动检查语法、引用与冲突。</p></div><button type="button" onClick={() => setEditor(null)}>×</button></header>{error && <div className="editorError" role="alert"><span>!</span><pre>{error}</pre></div>}{editor.mode === "group" ? <>
-<section className="customGroupConfig"><div className="groupSectionHeading"><strong>编辑当前分组</strong><small>当前分组只需要选择节点来源；已有分组（包括自动选择、故障转移、负载均衡）可以直接勾选加入，不需要重复配置。</small></div><label>分组名称{isProtectedGroupName(editor.name) && <small>系统保留名称，不能修改；可以继续调整节点来源。</small>}<input value={editor.name} readOnly={isProtectedGroupName(editor.name)} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：Proxies 或 YouTube" /></label><GroupNodeFilter raw={editor.items} countryGroups={countryGroups} existingGroups={selectableExistingGroups} onChange={updateGroupConfig} /><RuleSetSelect value={editor.ruleSetIds || []} ruleSets={ruleSets} onChange={(ruleSetIds) => setEditor({ ...editor, ruleSetIds })} /></section>
+<section className="customGroupConfig"><div className="groupSectionHeading"><strong>编辑当前分组</strong><small>当前分组只需要选择节点来源；系统、国家和自定义分组统一在下面选择，不会重复添加。</small></div><label>分组名称{isProtectedGroupName(editor.name) && <small>系统保留名称，不能修改；可以继续调整节点来源。</small>}<input value={editor.name} readOnly={isProtectedGroupName(editor.name)} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：Proxies 或 YouTube" /></label><GroupNodeFilter raw={editor.items} countryGroups={countryGroups} existingGroups={selectableExistingGroups} onChange={updateGroupConfig} /><RuleSetSelect value={editor.ruleSetIds || []} ruleSets={ruleSets} onChange={(ruleSetIds) => setEditor({ ...editor, ruleSetIds })} /></section>
 <details className="advancedGroupConfig"><summary>高级配置（一般不需要修改）</summary><label>配置项 <small>每行一个，第一行是类型</small><textarea rows={8} value={editor.items} onChange={(event) => setEditor({ ...editor, items: event.target.value })} /></label></details></>: <><div className="fieldGrid"><label>规则类型<select value={editor.type} onChange={(event) => setEditor({ ...editor, type: event.target.value })}>{RULE_TYPES.map((type) => <option key={type} value={type}>{type} — {RULE_TYPE_META[type].label}</option>)}</select><small className="fieldHint">{RULE_TYPE_META[editor.type]?.hint}</small></label><label>执行策略<select value={editor.policy} onChange={(event) => setEditor({ ...editor, policy: event.target.value })}>{policies.map((policy) => <option key={policy}>{policy}</option>)}</select><small className="fieldHint">决定匹配后走哪个分组、直连或拒绝。</small></label></div>{editor.type === "RULE-SET" && <section className="catalogBox"><strong>从公开规则库搜索</strong><p>数据来自专门适配 Shadowrocket 的 blackmatrix7 公开规则库。</p><div className="catalogSearch"><input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="输入 Google、Netflix、OpenAI、哔哩哔哩…" /><button type="button" className="ghost" onClick={searchCatalog}>{catalogLoading ? "搜索中…" : "搜索"}</button></div>{catalogError && <small className="catalogError">{catalogError}</small>}{catalog.length > 0 && <><button type="button" className="catalogImport" onClick={() => onImportCatalog(catalog, editor.policy)}>一键导入全部 {catalog.length} 个规则集到「{editor.policy}」</button><div className="catalogResults">{catalog.map((item) => <button type="button" key={item.url} className={editor.value === item.url ? "selected" : ""} onClick={() => setEditor({ ...editor, value: item.url })}><span><strong>{item.name}</strong><small>{item.file} · {catalogFileHint(item.file)}</small></span><em>{editor.value === item.url ? "已选择" : "选择"}</em></button>)}</div></>}</section>}{editor.type === "RULE-SET" && <label>{"规则集地址"}<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder={"可搜索选择，也可以粘贴公开规则集地址"} /></label>}{editor.type === "DOMAIN-SUFFIX" && <label>域名后缀 <small>一行一个，按回车继续添加；保存后会生成多条规则</small><textarea rows={7} value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder={"例如：\nexample.com\nexample.org\nexample.net"} /></label>}{editor.type === "GEOSITE" && <label>geosite 名称 <small>例如 google、paypal，也可以填写 geosite:google</small><input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder="例如：google" /></label>}{editor.type !== "RULE-SET" && editor.type !== "DOMAIN-SUFFIX" && editor.type !== "GEOSITE" && <label>域名或地址<input value={editor.value} onChange={(event) => setEditor({ ...editor, value: event.target.value })} placeholder="例如：example.com" /></label>}<label>附加选项 <small>不确定时请留空</small><input value={editor.options} onChange={(event) => setEditor({ ...editor, options: event.target.value })} placeholder="例如：no-resolve（通常可以留空）" /></label></>}<footer><button type="button" className="ghost" onClick={() => setEditor(null)}>取消</button><button className="primary" type="submit">暂存修改</button></footer></form></div>;
 }
 
@@ -1642,8 +1663,9 @@ type NewGroupEditor = Extract<Editor, { mode: "group" }>;
 
 function GroupNodeFilter({ raw, countryGroups, existingGroups, onChange }: { raw: string; countryGroups: string[]; existingGroups: string[]; onChange: (changes: { country?: string; group?: string; keyword?: string; includeAll?: boolean }) => void }) {
   const config = readGroupFilter(raw, countryGroups, existingGroups);
+  const allGroups = mergeGroupNames(countryGroups, existingGroups);
   const sourceId = `node-source-${Math.abs(raw.split("").reduce((hash, character) => ((hash << 5) - hash + character.charCodeAt(0)) | 0, 0))}`;
-  return <section className="friendlyGroupConfig"><div className="groupSectionHeading"><strong>节点来源</strong><small>已有分组可以直接加入；“全部节点”和“关键词筛选”只能二选一。</small></div>{existingGroups.length > 0 ? <><strong className="nodeSourceHeading">添加已有分组</strong><div className="countryChecks existingGroupChecks">{existingGroups.map((group) => <label key={group}><input type="checkbox" checked={config.selectedGroups.has(group)} onChange={() => onChange({ group })} />{group}</label>)}</div></> : null}<div className="nodeSourceMode" role="radiogroup" aria-label="节点来源方式"><label className="friendlyOption"><input type="radio" name={sourceId} checked={config.includeAll} onChange={() => onChange({ includeAll: true })} />选择全部节点</label><label className="friendlyOption"><input type="radio" name={sourceId} checked={!config.includeAll} onChange={() => onChange({ includeAll: false })} />关键词筛选</label></div><label>节点关键词 <small>用英文竖线 | 分隔，例如：YouTube|Google|美国；选择“关键词筛选”后填写。</small><input value={config.keyword} disabled={config.includeAll} onChange={(event) => onChange({ keyword: event.target.value })} placeholder="例如：YouTube|youtube|YT" /></label>{countryGroups.length > 0 && <details className="nodeSourceDetails" open={config.selectedCountries.size > 0}><summary>兼容已有国家分组（可选）</summary><div className="countryChecks">{countryGroups.map((country) => <label key={country}><input type="checkbox" checked={config.selectedCountries.has(country)} onChange={() => onChange({ country })} />{country}</label>)}</div></details>}</section>;
+  return <section className="friendlyGroupConfig"><div className="groupSectionHeading"><strong>节点来源</strong><small>系统、国家和自定义分组统一选择；“全部节点”和“关键词筛选”只能二选一。</small></div>{allGroups.length > 0 ? <><strong className="nodeSourceHeading">添加已有分组</strong><div className="countryChecks existingGroupChecks">{allGroups.map((group) => <label key={group}><input type="checkbox" checked={config.selectedGroups.has(group)} onChange={() => onChange({ group })} /><span>{group}</span><small className="groupSourceTag">{groupSourceLabel(group, countryGroups)}</small></label>)}</div></> : null}<div className="nodeSourceMode" role="radiogroup" aria-label="节点来源方式"><label className="friendlyOption"><input type="radio" name={sourceId} checked={config.includeAll} onChange={() => onChange({ includeAll: true })} />选择全部节点</label><label className="friendlyOption"><input type="radio" name={sourceId} checked={!config.includeAll} onChange={() => onChange({ includeAll: false })} />关键词筛选</label></div><label>节点关键词 <small>用英文竖线 | 分隔，例如：YouTube|Google|美国；选择“关键词筛选”后填写。</small><input value={config.keyword} disabled={config.includeAll} onChange={(event) => onChange({ keyword: event.target.value })} placeholder="例如：YouTube|youtube|YT" /></label></section>;
 }
 
 function RuleSetSelect({ value, ruleSets, onChange }: { value: string[]; ruleSets: RuleSetRecord[]; onChange: (value: string[]) => void }) {
@@ -1655,12 +1677,17 @@ function RuleSetSelect({ value, ruleSets, onChange }: { value: string[]; ruleSet
   return <section className="ruleSetSelect"><div className="ruleSetSelectHeading"><strong>选择规则集 <small>可多选</small></strong>{selected.length ? <button type="button" className="ghost" onClick={() => onChange([])}>清空</button> : null}</div><div className="ruleSetMultiList">{activeSets.map((ruleSet) => <label key={ruleSet.id} className="ruleSetMultiOption"><input type="checkbox" checked={selected.includes(ruleSet.id)} onChange={() => toggle(ruleSet.id)} /><span><strong>{ruleSet.name}</strong><small>{ruleSet.entryCount} 条</small></span></label>)}</div><small>{selected.length ? "按选择顺序合并，重复规则自动去重。" : "不使用规则集（只作为分组）"}</small></section>;
 }
 
-function NewGroupEditor({ editor, setEditor, ruleSets, error, onSubmit }: { editor: NewGroupEditor; setEditor: (value: Editor | null) => void; ruleSets: RuleSetRecord[]; error: string; onSubmit: (event: FormEvent) => void }) {
+function NewGroupEditor({ editor, setEditor, countryGroups, existingGroups, ruleSets, error, onSubmit }: { editor: NewGroupEditor; setEditor: (value: Editor | null) => void; countryGroups: string[]; existingGroups: string[]; ruleSets: RuleSetRecord[]; error: string; onSubmit: (event: FormEvent) => void }) {
   const regularKinds = editor.regularKinds || [];
   const regularItems = editor.regularItems || {};
   const regularRuleSets = editor.regularRuleSets || {};
   const customEnabled = Boolean(editor.customEnabled);
   const customItems = editor.customItems || defaultGroupItems("select");
+  const allAvailableGroups = mergeGroupNames(countryGroups, existingGroups);
+  const customName = (editor.customName || "").trim();
+  const selectableCustomGroups = allAvailableGroups.filter((group) => !customName || policyKey(group) !== policyKey(customName));
+  const selectableCustomCountries = countryGroups.filter((group) => selectableCustomGroups.some((item) => policyKey(item) === policyKey(group)));
+  const selectableCustomExistingGroups = existingGroups.filter((group) => selectableCustomGroups.some((item) => policyKey(item) === policyKey(group)));
 
   function toggleRegular(kind: string) {
     const nextKinds = regularKinds.includes(kind) ? regularKinds.filter((item) => item !== kind) : [...regularKinds, kind];
@@ -1671,23 +1698,23 @@ function NewGroupEditor({ editor, setEditor, ruleSets, error, onSubmit }: { edit
 
   function updateRegular(kind: string, changes: { country?: string; group?: string; keyword?: string; includeAll?: boolean }) {
     const raw = regularItems[kind] || defaultGroupItems(kind);
-    setEditor({ ...editor, regularItems: { ...regularItems, [kind]: updateGroupItems(raw, [], [], changes) }, regularRuleSets });
+    setEditor({ ...editor, regularItems: { ...regularItems, [kind]: updateGroupItems(raw, countryGroups, existingGroups, changes) }, regularRuleSets });
   }
 
   function updateCustom(changes: { country?: string; group?: string; keyword?: string; includeAll?: boolean }) {
-    setEditor({ ...editor, customItems: updateGroupItems(customItems, [], [], changes) });
+    setEditor({ ...editor, customItems: updateGroupItems(customItems, selectableCustomCountries, selectableCustomExistingGroups, changes) });
   }
 
   return <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭编辑窗口" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setEditor(null); }}><form className="editorModal" aria-label="新增代理分组" onSubmit={onSubmit}><header><div><h2>新增代理分组</h2><p>常规分组和自定义分组分别保存，互不影响。</p></div><button type="button" onClick={() => setEditor(null)}>×</button></header>{error && <div className="editorError" role="alert"><span>!</span><pre>{error}</pre></div>}
-    <section className="commonGroupConfig"><div className="groupSectionHeading"><strong>常规分组</strong><small>可多选，也可以一个都不选。名称使用预设名称，重复的常规分组不能再次添加。</small></div><div className="groupKindOptions">{GROUP_KIND_OPTIONS.map((option) => <div key={option.value} className={`groupKindOption ${regularKinds.includes(option.value) ? "selected" : ""}`} role="checkbox" tabIndex={0} aria-checked={regularKinds.includes(option.value)} onClick={() => toggleRegular(option.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleRegular(option.value); } }}><input type="checkbox" checked={regularKinds.includes(option.value)} onChange={() => toggleRegular(option.value)} onClick={(event) => event.stopPropagation()} aria-label={option.label} /><span><strong>{option.label}</strong><small>{option.hint}</small></span></div>)}</div>{regularKinds.length ? <div className="regularGroupDetails">{regularKinds.map((kind) => <section className="regularGroupCard" key={kind}><div className="regularGroupCardHead"><strong>{groupOptionLabel(kind)}</strong><small>预设名称 · 独立节点范围</small></div><GroupNodeFilter raw={regularItems[kind] || defaultGroupItems(kind)} countryGroups={[]} existingGroups={[]} onChange={(changes) => updateRegular(kind, changes)} /><RuleSetSelect value={regularRuleSets[kind] || []} ruleSets={ruleSets} onChange={(ruleSetIds) => setEditor({ ...editor, regularRuleSets: { ...regularRuleSets, [kind]: ruleSetIds } })} /></section>)}</div> : <p className="groupConfigHint">当前未选择常规分组。</p>}</section>
-    <section className="customGroupConfig"><div className="groupSectionHeading"><strong>自定义分组</strong><small>与上面的常规分组独立；可以无限新增，但名称仍需唯一，避免规则无法判断。</small></div><label className="friendlyOption customEnableOption"><input type="checkbox" checked={customEnabled} onChange={(event) => setEditor({ ...editor, customEnabled: event.target.checked })} />启用自定义分组</label>{customEnabled && <><label>分组名称<input value={editor.customName || ""} onChange={(event) => setEditor({ ...editor, customName: event.target.value })} placeholder="例如：YouTube" /></label><GroupNodeFilter raw={customItems} countryGroups={[]} existingGroups={[]} onChange={updateCustom} /><RuleSetSelect value={editor.customRuleSetIds || []} ruleSets={ruleSets} onChange={(ruleSetIds) => setEditor({ ...editor, customRuleSetIds: ruleSetIds })} /></>}</section>
+    <section className="commonGroupConfig"><div className="groupSectionHeading"><strong>常规分组</strong><small>可多选，也可以一个都不选。名称使用预设名称，重复的常规分组不能再次添加。</small></div><div className="groupKindOptions">{GROUP_KIND_OPTIONS.map((option) => <div key={option.value} className={`groupKindOption ${regularKinds.includes(option.value) ? "selected" : ""}`} role="checkbox" tabIndex={0} aria-checked={regularKinds.includes(option.value)} onClick={() => toggleRegular(option.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleRegular(option.value); } }}><input type="checkbox" checked={regularKinds.includes(option.value)} onChange={() => toggleRegular(option.value)} onClick={(event) => event.stopPropagation()} aria-label={option.label} /><span><strong>{option.label}</strong><small>{option.hint}</small></span></div>)}</div>{regularKinds.length ? <div className="regularGroupDetails">{regularKinds.map((kind) => <section className="regularGroupCard" key={kind}><div className="regularGroupCardHead"><strong>{groupOptionLabel(kind)}</strong><small>预设名称 · 独立节点范围</small></div><GroupNodeFilter raw={regularItems[kind] || defaultGroupItems(kind)} countryGroups={countryGroups} existingGroups={existingGroups} onChange={(changes) => updateRegular(kind, changes)} /><RuleSetSelect value={regularRuleSets[kind] || []} ruleSets={ruleSets} onChange={(ruleSetIds) => setEditor({ ...editor, regularRuleSets: { ...regularRuleSets, [kind]: ruleSetIds } })} /></section>)}</div> : <p className="groupConfigHint">当前未选择常规分组。</p>}</section>
+    <section className="customGroupConfig"><div className="groupSectionHeading"><strong>自定义分组</strong><small>与上面的常规分组独立；可以无限新增，但名称仍需唯一，避免规则无法判断。</small></div><label className="friendlyOption customEnableOption"><input type="checkbox" checked={customEnabled} onChange={(event) => setEditor({ ...editor, customEnabled: event.target.checked })} />启用自定义分组</label>{customEnabled && <><label>分组名称<input value={editor.customName || ""} onChange={(event) => setEditor({ ...editor, customName: event.target.value })} placeholder="例如：YouTube" /></label><GroupNodeFilter raw={customItems} countryGroups={selectableCustomCountries} existingGroups={selectableCustomExistingGroups} onChange={updateCustom} /><RuleSetSelect value={editor.customRuleSetIds || []} ruleSets={ruleSets} onChange={(ruleSetIds) => setEditor({ ...editor, customRuleSetIds: ruleSetIds })} /></>}</section>
     <details className="advancedGroupConfig"><summary>高级配置（一般不需要修改）</summary>{customEnabled ? <label>自定义分组配置项 <small>每行一个，第一行是类型；修改后会覆盖上面的节点范围设置。</small><textarea rows={8} value={customItems} onChange={(event) => setEditor({ ...editor, customItems: event.target.value })} /></label> : <p className="groupConfigHint">启用自定义分组后，这里可以直接编辑它的底层配置。</p>}</details>
     <footer><button type="button" className="ghost" onClick={() => setEditor(null)}>取消</button><button className="primary" type="submit">暂存修改</button></footer></form></div>;
 }
 
 function EditorModal(props: EditorModalProps) {
   const isNewGroup = props.editor.mode === "group" && props.editor.index === null && props.editor.isNew;
-  return isNewGroup ? <NewGroupEditor editor={props.editor} setEditor={props.setEditor} ruleSets={props.ruleSets} error={props.error} onSubmit={props.onSubmit} /> : <EditorModalLegacy {...props} />;
+  return isNewGroup ? <NewGroupEditor editor={props.editor} setEditor={props.setEditor} countryGroups={props.countryGroups} existingGroups={props.existingGroups} ruleSets={props.ruleSets} error={props.error} onSubmit={props.onSubmit} /> : <EditorModalLegacy {...props} />;
 }
 
 function ruleSetEntryText(entries: RuleSetRecord["entries"]) {

@@ -81,6 +81,7 @@ h1 { font-size:34px; letter-spacing:-.04em; margin:0; }
 @media(max-width:640px){.shell{display:block}.sidebar{position:static;height:auto;padding:12px 16px;display:block}.brand{padding:0 0 10px}.sidebar nav{display:flex;gap:6px;overflow-x:auto;padding-bottom:3px}.navItem,.navItem:not(.active){font-size:11px;white-space:nowrap;justify-content:flex-start;padding:8px 10px}.navItem span{font-size:14px;width:auto}.content{padding:24px 16px 50px}.topbar{align-items:flex-start;flex-direction:column}.titleBlock{align-items:flex-start}.backButton span{display:none}.backButton{padding:8px 11px;font-size:16px}.topActions{width:100%;flex-wrap:wrap}.topActions .ghost{display:none}.metrics{grid-template-columns:1fr 1fr}.notice button{display:none}.listRow{gap:8px;flex-wrap:wrap}.pill,.policy{display:none}.ruleType{min-width:84px}.rowMain{min-width:calc(100% - 104px)}.fieldGrid{grid-template-columns:1fr}.editorModal{padding:17px}.catalogSearch{align-items:stretch}}
 @media(max-width:640px){.countryChecks{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:640px){.groupKindOptions{grid-template-columns:1fr}.regularGroupCard .countryChecks{grid-template-columns:repeat(2,1fr)}.regularGroupCardHead{align-items:flex-start;flex-direction:column;gap:2px}}
+.existingGroupChecks label > span { flex:1; }.groupSourceTag { margin-left:auto; color:#8b9b91; font-size:9px; font-weight:400; white-space:nowrap; }
 
 /* Fluid responsive layout */
 html,body { width:100%; max-width:100%; overflow-x:hidden; }

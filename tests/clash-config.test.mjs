@@ -174,6 +174,25 @@ test("Clash preserves automatic, failover and load-balance groups", () => {
   assert.ok(!groups.Balance.proxies.includes("DIRECT"));
 });
 
+test("DIRECT is last in ordinary groups and excluded from health candidates", () => {
+  const scheme = `
+[Proxy Group]
+Proxies = select,DIRECT,US,自动选择
+自动选择 = url-test,include-all-proxies=true,DIRECT,url=https://www.gstatic.com/generate_204
+
+[Rule]
+FINAL,Proxies
+`;
+  const config = parseYaml(buildClashConfig(scheme, airport));
+  const groups = Object.fromEntries(config["proxy-groups"].map((group) => [group.name, group]));
+  assert.equal(groups.Proxies.proxies.at(-1), "DIRECT");
+  assert.ok(!groups["自动选择"].proxies.includes("DIRECT"));
+
+  const shadowrocket = buildShadowrocketConfig(scheme, airport);
+  assert.match(shadowrocket, /^Proxies = select,.*自动选择,DIRECT$/m);
+  assert.doesNotMatch(shadowrocket, /^自动选择 = url-test,.*DIRECT/m);
+});
+
 test("Shadowrocket preserves automatic and failover group types", () => {
   const config = buildShadowrocketConfig(strategyRules, airport);
   assert.match(config, /^Auto = url-test,/m);

@@ -45,6 +45,26 @@ function isHealthCheckGroupKind(value: string) {
   return ["url-test", "fallback", "load-balance"].includes(normalizeClashGroupKind(value));
 }
 
+function orderGroupItems(items: string[], kind: string) {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  let hasDirect = false;
+  for (const raw of items) {
+    const value = raw.trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (/^direct$/i.test(value)) {
+      hasDirect = true;
+      continue;
+    }
+    ordered.push(value);
+  }
+  if (!isHealthCheckGroupKind(kind) && hasDirect) ordered.push("DIRECT");
+  return ordered;
+}
+
 const GROUP_OPTION_KEYS = ["url", "interval", "tolerance", "timeout", "lazy", "strategy", "max-failed-times"];
 
 function readGroupOptions(group: Record<string, unknown>) {
@@ -96,16 +116,14 @@ export function buildShadowrocketRuleConfigFromClash(content: string, name = "�
     const includeAll = groupName === "Proxies"
       || rawUse.length > 0
       || Boolean(group["include-all"]);
-    const safeProxies = isHealthCheckGroupKind(type)
-      ? rawProxies.filter((item) => !/^direct$/i.test(item))
-      : rawProxies;
     const items = groupName === "Proxies"
       ? ["include-all-proxies=true", "DIRECT"]
-      : [...safeProxies, ...(includeAll || filter ? ["include-all-proxies=true"] : [])];
+      : [...rawProxies, ...(includeAll || filter ? ["include-all-proxies=true"] : [])];
     if (filter) items.push(`policy-regex-filter=${filter}`);
     items.push(...readGroupOptions(group));
-    if (!items.length) items.push("DIRECT");
-    groups.push(`${groupName} = ${type},${[...new Set(items)].join(",")}`);
+    const orderedItems = orderGroupItems(items, type);
+    if (!orderedItems.length) orderedItems.push("DIRECT");
+    groups.push(`${groupName} = ${type},${orderedItems.join(",")}`);
   }
   if (!groupKeys.has("proxies")) groups.unshift("Proxies = select,include-all-proxies=true,DIRECT");
 
@@ -668,9 +686,7 @@ function convertGroups(groups: ShadowrocketGroup[], proxyNames: string[]) {
       try { new RegExp(regex, "i"); } catch { throw new Error(`分组「${groupName}」的关键词筛选不是有效表达式：${regex}`); }
     }
     const proxies = groupProxyItems(group, proxyNames, available, includeAll, regex);
-    const safeProxies = isHealthCheckGroupKind(kind)
-      ? proxies.filter((item) => !/^direct$/i.test(item))
-      : proxies;
+    const safeProxies = orderGroupItems(proxies, kind);
     converted.push({ name: groupName, type: kind, proxies: safeProxies.length ? safeProxies : ["DIRECT"], ...options });
   }
   if (!seenGroupNames.has("proxies")) {
@@ -1016,9 +1032,9 @@ function expandShadowrocketIncludeAllGroups(config: string, proxyNames: string[]
         if (key === "proxies") return groupNameByKey.get("proxies") || "PROXY";
         return groupNameByKey.get(key) || item;
       });
-    const items = [...new Set([...extras, ...matched])];
-    const safeItems = items.length ? items : ["DIRECT"];
-    return `${left} = ${[kind, ...safeItems].join(",")}`;
+    const safeItems = orderGroupItems([...extras, ...matched], kind);
+    const outputItems = safeItems.length ? safeItems : ["DIRECT"];
+    return `${left} = ${[kind, ...outputItems].join(",")}`;
   }).join("\n");
 }
 
@@ -1057,8 +1073,9 @@ function normalizeShadowrocketPolicyReferences(config: string, proxyNames: strin
         const trimmed = item.trim();
         if (!trimmed || trimmed.includes("=") || /^(Traffic|Expire|流量|到期|剩余)\b/i.test(trimmed)) return trimmed;
         return aliases.get(trimmed.toLowerCase()) || trimmed;
-      }).filter((item) => !isHealthCheckGroupKind(values[0] || "select") || !/^direct$/i.test(item));
-      const safeItems = items.length ? items : ["DIRECT"];
+      });
+      const orderedItems = orderGroupItems(items, values[0] || "select");
+      const safeItems = orderedItems.length ? orderedItems : ["DIRECT"];
       return `${left} = ${[values[0], ...safeItems].join(",")}`;
     }
     if (index > ruleStart) {
