@@ -22,16 +22,11 @@ function getAirportSnapshot() {
   return encoded ? `[Proxy]\n${Buffer.from(encoded, "base64").toString("utf8")}\n` : "";
 }
 
-function configFilename(name: string, extension: "yaml" | "conf") {
-  const base = (name.trim() || "订阅配置")
-    .replace(new RegExp("[\\\\/:*?\\\"<>|\\\\u0000-\\\\u001f]", "g"), "_")
-    .replace(/\s+/g, " ")
-    .slice(0, 80)
-    .trim() || "订阅配置";
-  const filename = `${base}.${extension}`;
-  const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "_") || `subscription.${extension}`;
-  const encoded = encodeURIComponent(filename).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
-  return `inline; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+function configFilename(_name: string, extension: "yaml" | "conf") {
+  // ClashX Meta versions differ in filename* support. An ASCII-only fallback
+  // avoids exposing raw percent-encoded Chinese names as the downloaded file.
+  const fallback = extension === "yaml" ? "MW-Clash.yaml" : "MW-Shadowrocket.conf";
+  return `inline; filename="${fallback}"`;
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ token: string }> }) {
@@ -174,7 +169,6 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       headers: {
         "Content-Type": shadowrocket ? "text/plain; charset=utf-8" : "text/yaml; charset=utf-8",
         "Content-Disposition": configFilename(outputName, shadowrocketRules || shadowrocket ? "conf" : "yaml"),
-        "X-MW-Config-Name": encodeURIComponent(outputName),
         // Always return the newest airport/rules merge after a client update.
         // Caching the generated profile can make one airport appear broken after
         // another source has just been fixed.
