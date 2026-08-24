@@ -140,6 +140,18 @@ function mw_relay_accepts_gzip(): bool
     return str_contains($acceptEncoding, 'gzip') && function_exists('gzencode');
 }
 
+function mw_relay_apply_name(string $body, string $format, string $name): string
+{
+    if ($format !== 'shadowrocket' || $name === '') return $body;
+    $safeName = str_replace(["\r", "\n"], ' ', $name);
+    $safeName = trim(preg_replace('/\s+/', ' ', $safeName) ?? '');
+    if ($safeName === '') return $body;
+    $replacement = '#!name=' . $safeName;
+    $updated = preg_replace('/^#!name=.*$/mi', $replacement, $body, 1, $count);
+    if ($count > 0 && is_string($updated)) return $updated;
+    return $replacement . "\n" . ltrim($body);
+}
+
 function mw_relay_send(string $body, array $meta, string $format, string $defaultFilename, string $cacheState, string $name = ''): void
 {
     $extension = $format === 'clash' ? '.yaml' : '.conf';
@@ -154,7 +166,7 @@ function mw_relay_send(string $body, array $meta, string $format, string $defaul
     header('Pragma: no-cache');
     header('Expires: 0');
     header('X-Content-Type-Options: nosniff');
-    $payload = $body;
+    $payload = mw_relay_apply_name($body, $format, $name);
     if (mw_relay_accepts_gzip()) {
         $compressed = @gzencode($body, 6, ZLIB_ENCODING_GZIP);
         if (is_string($compressed) && strlen($compressed) < strlen($body)) {
