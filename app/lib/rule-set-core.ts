@@ -87,10 +87,28 @@ function rulePolicy(parts: string[]) {
 
 export type TemporaryRule = { groupName: string; type: string; value: string; policy?: string; options?: string[] };
 
-export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: string; entries: RuleSetEntry[]; platformSources?: RuleSetPlatformSources | string; status?: string; enabled?: boolean | number }>, bindings: Array<{ groupName: string; ruleSetId: string }> | Record<string, string>, platform: RuleSetPlatform = "shadowrocket") {
-  const bindingEntries = Array.isArray(bindings) ? bindings : Object.entries(bindings).map(([groupName, ruleSetId]) => ({ groupName, ruleSetId }));
+export type RuleSetBindingInput = { groupName: string; ruleSetId: string };
+
+export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: string; entries: RuleSetEntry[]; platformSources?: RuleSetPlatformSources | string; status?: string; enabled?: boolean | number }>, bindings: Array<RuleSetBindingInput> | Record<string, string | string[]>, platform: RuleSetPlatform = "shadowrocket") {
+  const bindingEntries: RuleSetBindingInput[] = [];
+  if (Array.isArray(bindings)) {
+    bindingEntries.push(...bindings);
+  } else {
+    for (const [groupName, value] of Object.entries(bindings)) {
+      for (const ruleSetId of Array.isArray(value) ? value : [value]) bindingEntries.push({ groupName, ruleSetId });
+    }
+  }
   const setById = new Map(ruleSets.filter((set) => set.status !== "deleted" && set.enabled !== false && set.enabled !== 0).map((set) => [set.id, set]));
-  const bindingByGroup = new Map(bindingEntries.filter((item) => item.groupName && item.ruleSetId).map((item) => [item.groupName.trim().toLowerCase(), item.ruleSetId]));
+  const bindingByGroup = new Map<string, { groupName: string; ruleSetIds: string[] }>();
+  for (const item of bindingEntries) {
+    const groupName = String(item.groupName || "").trim();
+    const ruleSetId = String(item.ruleSetId || "").trim();
+    if (!groupName || !ruleSetId) continue;
+    const key = groupName.toLowerCase();
+    const current = bindingByGroup.get(key) || { groupName, ruleSetIds: [] };
+    if (!current.ruleSetIds.includes(ruleSetId)) current.ruleSetIds.push(ruleSetId);
+    bindingByGroup.set(key, current);
+  }
   if (!bindingByGroup.size) return content;
   const lines = content.split(/\r?\n/);
   const ruleStart = lines.findIndex((line) => line.trim() === "[Rule]");
@@ -104,19 +122,23 @@ export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: stri
     if (!raw || raw.startsWith("#")) continue;
     const parts = splitRuleLine(raw);
     const policy = rulePolicy(parts);
-    const bindingId = bindingByGroup.get(policy.toLowerCase());
-    if (!bindingId || !setById.has(bindingId)) continue;
+    const binding = bindingByGroup.get(policy.toLowerCase());
+    if (!binding || !binding.ruleSetIds.some((id) => setById.has(id))) continue;
     const key = policy.toLowerCase();
     if (!positions.has(key)) positions.set(key, index);
     removed.add(index);
   }
   const generated = new Map<string, string[]>();
-  for (const [groupKey, ruleSetId] of bindingByGroup) {
-    const set = setById.get(ruleSetId);
-    if (!set) continue;
-    const platformSources = normalizePlatformSources(set.platformSources);
-    const entries = platformSources[platform]?.length ? platformSources[platform] : set.entries;
-    generated.set(groupKey, dedupeEntries(entries || []).map((entry) => generatedLine(entry, bindingEntries.find((item) => item.groupName.trim().toLowerCase() === groupKey)?.groupName.trim() || groupKey)));
+  for (const [groupKey, binding] of bindingByGroup) {
+    const generatedLines: string[] = [];
+    for (const ruleSetId of binding.ruleSetIds) {
+      const set = setById.get(ruleSetId);
+      if (!set) continue;
+      const platformSources = normalizePlatformSources(set.platformSources);
+      const entries = platformSources[platform]?.length ? platformSources[platform] : set.entries;
+      generatedLines.push(...dedupeEntries(entries || []).map((entry) => generatedLine(entry, binding.groupName)));
+    }
+    generated.set(groupKey, Array.from(new Set(generatedLines)));
   }
   const fallbackIndex = Math.max(ruleStart + 1, lines.findIndex((line, index) => index > ruleStart && line.trim().toUpperCase().startsWith("FINAL,")));
   const insertAt = new Map<number, string[]>();

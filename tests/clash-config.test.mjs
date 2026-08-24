@@ -8,6 +8,7 @@ import {
   buildShadowrocketRulesConfig,
   resolveAirportProxyHosts,
 } from "../app/lib/clash-config.ts";
+import { composeBoundRuleSets } from "../app/lib/rule-set-core.ts";
 
 const flowerRules = `
 proxy-groups:
@@ -95,6 +96,28 @@ proxies:
     cipher: aes-128-gcm
     password: test-flower
 `;
+
+test("one group can merge multiple rule sets and dedupe generated rules", () => {
+  const source = "[Rule]\nDOMAIN-SUFFIX,old.example,Google\nFINAL,DIRECT\n";
+  const ruleSets = [
+    { id: "one", name: "Google", entries: [{ type: "DOMAIN-SUFFIX", value: "dup.example" }] },
+    { id: "two", name: "Google Extra", entries: [
+      { type: "DOMAIN-SUFFIX", value: "dup.example" },
+      { type: "DOMAIN-SUFFIX", value: "second.example" },
+    ] },
+  ];
+  const bindings = [
+    { groupName: "Google", ruleSetId: "one" },
+    { groupName: "Google", ruleSetId: "two" },
+  ];
+  const shadowrocket = composeBoundRuleSets(source, ruleSets, bindings, "shadowrocket");
+  assert.equal((shadowrocket.match(/DOMAIN-SUFFIX,dup\.example,Google/g) || []).length, 1);
+  assert.match(shadowrocket, /DOMAIN-SUFFIX,second\.example,Google/);
+
+  const clash = composeBoundRuleSets(source, ruleSets, { Google: ["one", "two"] }, "clash");
+  assert.equal((clash.match(/DOMAIN-SUFFIX,dup\.example,Google/g) || []).length, 1);
+  assert.match(clash, /DOMAIN-SUFFIX,second\.example,Google/);
+});
 
 test("Clash FINAL uses a dedicated fallback group with Proxies as default", () => {
   const config = parseYaml(buildClashConfig(rules, airport));

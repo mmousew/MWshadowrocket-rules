@@ -61,6 +61,13 @@ async function addMissingRuleSetColumns() {
   if (statements.length) await db.batch(statements);
 }
 
+async function addMissingRuleSetBindingColumns() {
+  const db = getRawDb();
+  const info = await db.prepare("PRAGMA table_info(rule_set_bindings)").all<{ name: string }>();
+  const columns = new Set((info.results || []).map((column) => column.name));
+  if (!columns.has("sort_order")) await db.prepare("ALTER TABLE rule_set_bindings ADD COLUMN sort_order integer DEFAULT 0 NOT NULL").run();
+}
+
 async function initializeDatabaseSchema() {
   const db = getRawDb();
   await db.batch([
@@ -70,7 +77,7 @@ async function initializeDatabaseSchema() {
     db.prepare("CREATE TABLE IF NOT EXISTS clash_source_snapshots (source_key text PRIMARY KEY NOT NULL, source_url text NOT NULL, content text NOT NULL, node_count integer DEFAULT 0 NOT NULL, updated_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS clash_airport_sources (id text PRIMARY KEY NOT NULL, name text DEFAULT '机场订阅' NOT NULL, kind text DEFAULT 'url' NOT NULL, source_url text DEFAULT '' NOT NULL, content text DEFAULT '' NOT NULL, hidden integer DEFAULT 0 NOT NULL, status text DEFAULT 'active' NOT NULL, node_count integer, created_at integer NOT NULL, updated_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS rule_sets (id text PRIMARY KEY NOT NULL, name text NOT NULL, description text DEFAULT '' NOT NULL, kind text DEFAULT 'managed' NOT NULL, entries text DEFAULT '[]' NOT NULL, platform_sources text DEFAULT '{}' NOT NULL, source text DEFAULT '' NOT NULL, status text DEFAULT 'active' NOT NULL, visible integer DEFAULT 1 NOT NULL, enabled integer DEFAULT 1 NOT NULL, sort_order integer DEFAULT 0 NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS rule_set_bindings (id text PRIMARY KEY NOT NULL, rule_config_id text NOT NULL, group_name text NOT NULL, rule_set_id text NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS rule_set_bindings (id text PRIMARY KEY NOT NULL, rule_config_id text NOT NULL, group_name text NOT NULL, rule_set_id text NOT NULL, sort_order integer DEFAULT 0 NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS rule_set_migrations (id text PRIMARY KEY NOT NULL, version integer NOT NULL, created_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS group_temp_rules (id text PRIMARY KEY NOT NULL, rule_config_id text NOT NULL, group_name text NOT NULL, type text NOT NULL, value text NOT NULL, policy text NOT NULL, options text DEFAULT '[]' NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
   ]);
@@ -78,6 +85,7 @@ async function initializeDatabaseSchema() {
   await addMissingClashProfileColumns();
   await addMissingRuleConfigColumns();
   await addMissingRuleSetColumns();
+  await addMissingRuleSetBindingColumns();
   await db.batch([
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS clash_links_token_hash_unique ON clash_links (token_hash)"),
     db.prepare("CREATE INDEX IF NOT EXISTS clash_links_status_idx ON clash_links (status)"),

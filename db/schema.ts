@@ -80,6 +80,7 @@ export const ruleSetBindings = sqliteTable("rule_set_bindings", {
   ruleConfigId: text("rule_config_id").notNull(),
   groupName: text("group_name").notNull(),
   ruleSetId: text("rule_set_id").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 }, (table) => ({

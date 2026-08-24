@@ -2,7 +2,7 @@ import { getReadyRawDb } from "../../db";
 import { dedupeEntries, normalizePlatformSources, parseRuleSetEntries, type RuleSetEntry, type RuleSetPlatformSources } from "./rule-set-core";
 
 export type RuleSetRow = { id: string; name: string; description: string; kind: string; entries: RuleSetEntry[]; platformSources: RuleSetPlatformSources; source: string; status: string; visible: number; enabled: number; sort_order: number; created_at: number; updated_at: number };
-export type RuleSetBindingRow = { id: string; rule_config_id: string; group_name: string; rule_set_id: string; created_at: number; updated_at: number };
+export type RuleSetBindingRow = { id: string; rule_config_id: string; group_name: string; rule_set_id: string; sort_order: number; created_at: number; updated_at: number };
 export type RuleSetUsageRow = { rule_set_id: string; rule_config_id: string; config_name: string; group_names: string[] };
 
 const MIGRATION_ID = "rule-set-library-v1";
@@ -49,7 +49,7 @@ export async function listRuleSets() {
 }
 
 export async function listRuleSetBindings(configId: string) {
-  const result = await (await getReadyRawDb()).prepare("SELECT id, rule_config_id, group_name, rule_set_id, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? ORDER BY group_name COLLATE NOCASE").bind(configId).all<RuleSetBindingRow>();
+  const result = await (await getReadyRawDb()).prepare("SELECT id, rule_config_id, group_name, rule_set_id, sort_order, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? ORDER BY group_name COLLATE NOCASE, sort_order ASC, created_at ASC, id ASC").bind(configId).all<RuleSetBindingRow>();
   return result.results;
 }
 
@@ -67,15 +67,23 @@ export async function listRuleSetUsages() {
 
 export async function replaceRuleSetBindings(configId: string, bindings: Array<{ groupName: string; ruleSetId: string }>) {
   const db = await getReadyRawDb();
-  const clean = new Map<string, { groupName: string; ruleSetId: string }>();
+  // Older databases may still have the former one-binding-per-group index.
+  // Remove it here too so a save can immediately persist multiple rule sets.
+  await db.prepare("DROP INDEX IF EXISTS rule_set_bindings_config_group_unique_idx").run();
+  const clean: Array<{ groupName: string; ruleSetId: string }> = [];
+  const seen = new Set<string>();
   for (const binding of bindings) {
     const groupName = String(binding.groupName || "").trim();
     const ruleSetId = String(binding.ruleSetId || "").trim();
-    if (groupName && ruleSetId) clean.set(groupName.toLowerCase(), { groupName, ruleSetId });
+    const key = `${groupName.toLowerCase()}\u0000${ruleSetId}`;
+    if (groupName && ruleSetId && !seen.has(key)) {
+      seen.add(key);
+      clean.push({ groupName, ruleSetId });
+    }
   }
   const now = Date.now();
   await db.prepare("DELETE FROM rule_set_bindings WHERE rule_config_id = ?").bind(configId).run();
-  if (clean.size) await db.batch(Array.from(clean.values()).map((binding) => db.prepare("INSERT INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), configId, binding.groupName, binding.ruleSetId, now, now)));
+  if (clean.length) await db.batch(clean.map((binding, sortOrder) => db.prepare("INSERT INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), configId, binding.groupName, binding.ruleSetId, sortOrder, now, now)));
   return listRuleSetBindings(configId);
 }
 
@@ -168,6 +176,10 @@ async function insertSeedRuleSet(db: ReadyDb, name: string, entries: RuleSetEntr
 }
 
 async function dedupeRuleSetLibrary(db: ReadyDb) {
+  // Older deployments created a unique (config, group) index when one group
+  // could only call one rule set. Drop it on every request before any write;
+  // otherwise the new multi-select binding cannot be persisted.
+  await db.prepare("DROP INDEX IF EXISTS rule_set_bindings_config_group_unique_idx").run();
   const marker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(DEDUPE_MIGRATION_ID).first<{ id: string }>();
   if (marker) return;
 
@@ -198,18 +210,17 @@ async function dedupeRuleSetLibrary(db: ReadyDb) {
     }
   }
 
-  const bindings = (await db.prepare("SELECT id, rule_config_id, group_name, updated_at, created_at FROM rule_set_bindings ORDER BY rule_config_id, lower(group_name), updated_at DESC, created_at DESC, id ASC").all<{ id: string; rule_config_id: string; group_name: string; updated_at: number; created_at: number }>()).results;
+  const bindings = (await db.prepare("SELECT id, rule_config_id, group_name, rule_set_id, sort_order, updated_at, created_at FROM rule_set_bindings ORDER BY rule_config_id, lower(group_name), sort_order ASC, updated_at DESC, created_at DESC, id ASC").all<{ id: string; rule_config_id: string; group_name: string; rule_set_id: string; sort_order: number; updated_at: number; created_at: number }>()).results;
   const seenBindings = new Set<string>();
   const duplicateBindingIds: string[] = [];
   for (const binding of bindings) {
-    const key = `${binding.rule_config_id}\u0000${binding.group_name.trim().toLowerCase()}`;
+    const key = `${binding.rule_config_id}\u0000${binding.group_name.trim().toLowerCase()}\u0000${binding.rule_set_id}`;
     if (seenBindings.has(key)) duplicateBindingIds.push(binding.id);
     else seenBindings.add(key);
   }
   if (duplicateBindingIds.length) await db.batch(duplicateBindingIds.map((id) => db.prepare("DELETE FROM rule_set_bindings WHERE id = ?").bind(id)));
 
   await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS rule_sets_active_name_unique_idx ON rule_sets (name COLLATE NOCASE) WHERE status <> 'deleted'").run();
-  await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS rule_set_bindings_config_group_unique_idx ON rule_set_bindings (rule_config_id, group_name COLLATE NOCASE)").run();
   await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(DEDUPE_MIGRATION_ID, Date.now()).run();
 }
 
@@ -262,8 +273,9 @@ async function ensureChinaDirectRuleSet(db: ReadyDb) {
     "SELECT id, name, entries, platform_sources, source, description, status, visible, enabled, updated_at, created_at FROM rule_sets WHERE lower(trim(name)) = lower(trim(?)) OR lower(trim(name)) = lower(trim(?)) ORDER BY updated_at DESC, created_at DESC, id ASC"
   ).bind(CHINA_DIRECT_RULE_SET_ALIASES[0], CHINA_DIRECT_RULE_SET_ALIASES[1]).all<{ id: string; name: string; entries: string; platform_sources?: string; source: string; description: string; status: string; visible: number; enabled: number; updated_at: number; created_at: number }>()).results;
 
-  const cnBindingSets = (await db.prepare("SELECT DISTINCT rule_set_id FROM rule_set_bindings WHERE lower(trim(group_name)) = 'cn'").all<{ rule_set_id: string }>()).results.map((item) => item.rule_set_id).filter(Boolean);
-  const relatedIds = Array.from(new Set([...candidates.map((item) => item.id), ...cnBindingSets]));
+  // Only aliases with the protected name are merged. A different rule set
+  // intentionally bound to CN must remain an independent binding.
+  const relatedIds = Array.from(new Set(candidates.map((item) => item.id)));
 
   const activeCanonical = candidates.find((row) => row.status !== "deleted" && row.name.trim().toLowerCase() === CHINA_DIRECT_RULE_SET_NAME.toLowerCase());
   const activeAlias = candidates.find((row) => row.status !== "deleted");
@@ -305,16 +317,23 @@ async function ensureChinaDirectBindings(db: ReadyDb, chinaRuleSetId: string) {
 
   for (const config of configs) {
 
-    const bindings = (await db.prepare("SELECT id, rule_set_id, group_name, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? AND lower(trim(group_name)) = 'cn' ORDER BY updated_at DESC, created_at DESC, id ASC").bind(config.id).all<{ id: string; rule_set_id: string; group_name: string; created_at: number; updated_at: number }>()).results;
-    const keep = bindings[0];
+    const bindings = (await db.prepare("SELECT id, rule_set_id, group_name, sort_order, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? AND lower(trim(group_name)) = 'cn' ORDER BY sort_order ASC, updated_at DESC, created_at DESC, id ASC").bind(config.id).all<{ id: string; rule_set_id: string; group_name: string; sort_order: number; created_at: number; updated_at: number }>()).results;
+    const seenRuleSetIds = new Set<string>();
+    const uniqueBindings = bindings.filter((binding) => {
+      if (!binding.rule_set_id || seenRuleSetIds.has(binding.rule_set_id)) return false;
+      seenRuleSetIds.add(binding.rule_set_id);
+      return true;
+    });
+    const duplicateBindings = bindings.filter((binding) => !uniqueBindings.some((item) => item.id === binding.id));
+    const keep = uniqueBindings.find((binding) => binding.rule_set_id === chinaRuleSetId) || uniqueBindings[0];
     const now = Date.now();
-    if (bindings.length > 1) {
-      await db.batch(bindings.slice(1).map((binding) => db.prepare("DELETE FROM rule_set_bindings WHERE id = ?").bind(binding.id)));
+    if (duplicateBindings.length) {
+      await db.batch(duplicateBindings.map((binding) => db.prepare("DELETE FROM rule_set_bindings WHERE id = ?").bind(binding.id)));
     }
     if (keep) {
-      await db.prepare("UPDATE rule_set_bindings SET group_name = 'CN', rule_set_id = ?, updated_at = ? WHERE id = ?").bind(chinaRuleSetId, now, keep.id).run();
+      await db.prepare("UPDATE rule_set_bindings SET group_name = 'CN', rule_set_id = ?, sort_order = ?, updated_at = ? WHERE id = ?").bind(chinaRuleSetId, keep.sort_order || 0, now, keep.id).run();
     } else {
-      await db.prepare("INSERT OR IGNORE INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, created_at, updated_at) VALUES (?, ?, 'CN', ?, ?, ?)").bind(crypto.randomUUID(), config.id, chinaRuleSetId, now, now).run();
+      await db.prepare("INSERT OR IGNORE INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, sort_order, created_at, updated_at) VALUES (?, ?, 'CN', ?, 0, ?, ?)").bind(crypto.randomUUID(), config.id, chinaRuleSetId, now, now).run();
     }
   }
 }
