@@ -124,14 +124,12 @@ function mw_relay_finish_response(): void
 
 function mw_relay_disposition(string $filename): string
 {
-    // Some ClashX Meta builds use filename* without decoding it and show the
-    // percent-encoded UTF-8 text literally. Keep the download name ASCII-only.
     $filename = mw_relay_clean_name($filename);
-    $dot = strrpos($filename, '.');
-    $extension = $dot !== false ? strtolower(substr($filename, $dot)) : '';
-    $fallback = $extension === '.yaml' ? 'MW-Clash.yaml'
-        : ($extension === '.conf' ? 'MW-Shadowrocket.conf' : 'MW-Subscription');
-    return 'inline; filename="' . $fallback . '"';
+    if ($filename === '') $filename = 'MW-Subscription';
+    // Use the legacy filename parameter with the actual UTF-8 value. The
+    // filename* form is displayed literally as percent-encoding by some
+    // ClashX Meta versions.
+    return 'inline; filename="' . $filename . '"';
 }
 
 function mw_relay_accepts_gzip(): bool
@@ -191,7 +189,9 @@ function mw_relay_handle(array $options): never
             'format' => $format,
             'fetchedAt' => gmdate('c'),
             'contentDisposition' => $headers['content-disposition'] ?? '',
-            'configName' => $headers['x-mw-config-name'] ?? '',
+            'configName' => isset($headers['x-mw-config-name'])
+                ? mw_relay_clean_name(rawurldecode((string) $headers['x-mw-config-name']))
+                : '',
         ];
         mw_relay_write_cache($bodyFile, $metaFile, $body, $meta);
         if ($cached === null) mw_relay_send($body, $meta, $format, (string) $options['defaultFilename'], 'fresh', $name);

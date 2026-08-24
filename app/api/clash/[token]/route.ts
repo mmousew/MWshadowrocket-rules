@@ -22,11 +22,20 @@ function getAirportSnapshot() {
   return encoded ? `[Proxy]\n${Buffer.from(encoded, "base64").toString("utf8")}\n` : "";
 }
 
-function configFilename(_name: string, extension: "yaml" | "conf") {
-  // ClashX Meta versions differ in filename* support. An ASCII-only fallback
-  // avoids exposing raw percent-encoded Chinese names as the downloaded file.
-  const fallback = extension === "yaml" ? "MW-Clash.yaml" : "MW-Shadowrocket.conf";
-  return `inline; filename="${fallback}"`;
+function configFilename(name: string, extension: "yaml" | "conf") {
+  const fallback = extension === "yaml" ? "MW-Clash" : "MW-Shadowrocket";
+  const cleaned = name
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/[\\/:*?"<>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || fallback;
+  const filename = `${cleaned}.${extension}`;
+  // Send UTF-8 bytes through the legacy filename parameter. This is the
+  // parameter ClashX Meta actually reads; filename* made some versions show
+  // the percent-encoded Chinese text literally.
+  const headerValue = Buffer.from(filename, "utf8").toString("latin1");
+  return `inline; filename="${headerValue}"`;
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ token: string }> }) {
@@ -169,6 +178,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       headers: {
         "Content-Type": shadowrocket ? "text/plain; charset=utf-8" : "text/yaml; charset=utf-8",
         "Content-Disposition": configFilename(outputName, shadowrocketRules || shadowrocket ? "conf" : "yaml"),
+        // The VPS relay uses this ASCII-safe metadata header to preserve the
+        // subscription name when it re-serves the cached body.
+        "X-MW-Config-Name": encodeURIComponent(outputName),
         // Always return the newest airport/rules merge after a client update.
         // Caching the generated profile can make one airport appear broken after
         // another source has just been fixed.

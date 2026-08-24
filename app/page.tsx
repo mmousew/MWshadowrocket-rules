@@ -186,11 +186,12 @@ function subscriptionToken(value: string) {
   }
 }
 
-function relayUrl(value: string, endpoint: "mw-subscribe.php" | "mw-clash.php" | "mw-shadowrocket.php" | "mw-shadowrocket-config.php") {
+function relayUrl(value: string, name: string, endpoint: "mw-subscribe.php" | "mw-clash.php" | "mw-shadowrocket.php" | "mw-shadowrocket-config.php") {
   const token = subscriptionToken(value);
   if (!token) return value;
   const url = new URL(`https://656577.xyz/${endpoint}`);
   url.searchParams.set("token", token);
+  if (name.trim()) url.searchParams.set("name", name.trim());
   if (endpoint === "mw-clash.php") url.searchParams.set("compat", "clashxmeta");
   return url.toString();
 }
@@ -1135,12 +1136,14 @@ function LegacyClashSubscription() {
     finally { setSourceBusy(false); }
   }
 
-  function shadowrocketUrl(value: string) {
-    return relayUrl(value, "mw-shadowrocket.php");
+  function shadowrocketUrl(value: string, name = "") {
+    const effectiveName = name.trim() || links.find((item) => item.url === value)?.name?.trim() || "";
+    return relayUrl(value, effectiveName, "mw-shadowrocket.php");
   }
 
-  function clashRelayUrl(value: string) {
-    return relayUrl(value, "mw-clash.php");
+  function clashRelayUrl(value: string, name = "") {
+    const effectiveName = name.trim() || links.find((item) => item.url === value)?.name?.trim() || "";
+    return relayUrl(value, effectiveName, "mw-clash.php");
   }
 
   async function showQr(value: string, label: string) {
@@ -1347,28 +1350,32 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
     await navigator.clipboard.writeText(value); setCopied(true); window.setTimeout(() => setCopied(false), 1800);
   }
 
-  function shadowrocketUrl(value: string) {
-    return relayUrl(value, "mw-shadowrocket.php");
+  function shadowrocketUrl(value: string, name = "") {
+    const effectiveName = name.trim() || links.find((item) => item.url === value)?.name?.trim() || "";
+    return relayUrl(value, effectiveName, "mw-shadowrocket.php");
   }
 
-  function shadowrocketImportUrl(value: string) {
-    return `shadowrocket://config/add/${shadowrocketConfigUrl(value)}`;
+  function shadowrocketImportUrl(value: string, name = "") {
+    return `shadowrocket://config/add/${shadowrocketConfigUrl(value, name)}`;
   }
 
-  function shadowrocketAddUrl(value: string) {
-    return `shadowrocket://add/${shadowrocketUrl(value)}`;
+  function shadowrocketAddUrl(value: string, name = "") {
+    return `shadowrocket://add/${shadowrocketUrl(value, name)}`;
   }
 
-  function shadowrocketConfigUrl(value: string) {
-    return relayUrl(value, "mw-shadowrocket-config.php");
+  function shadowrocketConfigUrl(value: string, name = "") {
+    const effectiveName = name.trim() || links.find((item) => item.url === value)?.name?.trim() || "";
+    return relayUrl(value, effectiveName, "mw-shadowrocket-config.php");
   }
 
-  function clashRelayUrl(value: string) {
-    return relayUrl(value, "mw-clash.php");
+  function clashRelayUrl(value: string, name = "") {
+    const effectiveName = name.trim() || links.find((item) => item.url === value)?.name?.trim() || "";
+    return relayUrl(value, effectiveName, "mw-clash.php");
   }
 
-  function unifiedSubscriptionUrl(value: string) {
-    return relayUrl(value, "mw-subscribe.php");
+  function unifiedSubscriptionUrl(value: string, name = "") {
+    const effectiveName = name.trim() || links.find((item) => item.url === value)?.name?.trim() || "";
+    return relayUrl(value, effectiveName, "mw-subscribe.php");
   }
 
   async function showQr(value: string, label: string) {
