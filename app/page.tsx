@@ -17,6 +17,7 @@ type GroupDeleteImpact = { rules: Rule[]; finalRule: Rule | null; parentGroups: 
 type DeleteTarget = { kind: "group"; group: Group; impact: GroupDeleteImpact } | { kind: "rule"; rule: Rule };
 type AirportSourceRecord = { id: string; name: string; kind: "url" | "content"; sourceUrl: string; hidden: boolean; nodeCount: number | null; createdAt: number; updatedAt: number };
 type AirportNodeRecord = { id: string; name: string; type: string; server: string; port: number | null; status: "valid" | "invalid" | "unloaded"; reason: string; latency?: number };
+type GroupRuleViewItem = { key: string; type: string; value: string; policy: string; source: string };
 
 const RULE_TYPES = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "RULE-SET", "GEOSITE", "IP-CIDR", "IP-CIDR6", "GEOIP"];
 const RULE_TYPE_META: Record<string, { label: string; hint: string }> = {
@@ -246,6 +247,8 @@ export default function Home() {
   const [selectedRuleIndexes, setSelectedRuleIndexes] = useState<number[]>([]);
   const [selectionKey, setSelectionKey] = useState("");
   const [editor, setEditor] = useState<Editor | null>(null);
+  const [groupRulesModal, setGroupRulesModal] = useState<Group | null>(null);
+  const [groupRulesQuery, setGroupRulesQuery] = useState("");
   const [preview, setPreview] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [toast, setToast] = useState("");
@@ -433,8 +436,8 @@ export default function Home() {
   }
 
   function showGroupRules(group: Group) {
-    setView("rules");
-    setQuery(group.name);
+    setGroupRulesQuery("");
+    setGroupRulesModal(group);
   }
 
   function editGroup(group: Group) {
@@ -848,6 +851,7 @@ export default function Home() {
       </section>
 
       {editor && <EditorModal editor={editor} setEditor={setEditor} policies={policies} countryGroups={parsed.groups.filter((group) => COUNTRY_GROUP_NAMES.has(group.name)).map((group) => group.name)} existingGroups={parsed.groups.filter((group) => !COUNTRY_GROUP_NAMES.has(group.name)).map((group) => group.name)} ruleSets={availableRuleSets} error={error} onSubmit={submitEditor} onImportCatalog={importCatalogRules} />}
+      {groupRulesModal && <GroupRulesModal group={groupRulesModal} rules={parsed.rules} finalRule={parsed.finalRule} ruleSet={availableRuleSets.find((ruleSet) => ruleSet.id === ruleSetBindings[policyKey(groupRulesModal.name)]) || null} query={groupRulesQuery} onQueryChange={setGroupRulesQuery} onClose={() => setGroupRulesModal(null)} />}
       {deleteTarget && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭删除确认" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null); }} onKeyDown={(event) => { if (event.key === "Escape") setDeleteTarget(null); }}><section className="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><span className="confirmMark">!</span><h2 id="delete-title">确认删除？</h2><p>{deleteTarget.kind === "group" ? `将删除代理分组「${deleteTarget.group.name}」，并清理当前方案内的引用。` : `将删除规则「${deleteTarget.rule.value}」。`}</p>{deleteTarget.kind === "group" && <ul className="deleteImpactList"><li>{deleteTarget.impact.rules.length} 条规则会被移除</li><li>{deleteTarget.impact.parentGroups.length} 个分组会移除对它的引用{deleteTarget.impact.parentGroups.length ? "，空分组会自动保留 DIRECT" : ""}</li>{deleteTarget.impact.finalRule && <li>FINAL 会自动改为 DIRECT，保证配置仍可用</li>}</ul>}<small>删除会先暂存，点击“保存到 GitHub”后才会正式生效。</small><footer><button className="ghost" onClick={() => setDeleteTarget(null)}>取消</button><button className="deleteConfirm" onClick={confirmDelete}>确认删除</button></footer></section></div>}
       {preview && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭配置预览" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(false); }} onKeyDown={(event) => { if (event.key === "Escape") setPreview(false); }}><section className="previewModal" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header><div><h2 id="preview-title">配置预览</h2><p>{content.split(/\r?\n/).length.toLocaleString()} 行 · {repository}</p></div><button onClick={() => setPreview(false)}>×</button></header><pre>{content}</pre></section></div>}
     </main>
@@ -1501,6 +1505,37 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
       </div>;
     }) : <p className="clashLoading">机场列表还没有来源，请先添加机场订阅或上传 YAML 文件。</p>}</div>
   </section>;
+}
+
+function GroupRulesModal({ group, rules, finalRule, ruleSet, query, onQueryChange, onClose }: { group: Group; rules: Rule[]; finalRule: Rule | null; ruleSet: RuleSetRecord | null; query: string; onQueryChange: (value: string) => void; onClose: () => void }) {
+  const items = useMemo<GroupRuleViewItem[]>(() => {
+    const directRules = rules
+      .filter((rule) => policyKey(rule.policy) === policyKey(group.name))
+      .map((rule) => ({ key: `rule-${rule.index}`, type: rule.type, value: rule.value, policy: rule.policy, source: "直接规则" }));
+    const finalItems = finalRule && policyKey(finalRule.policy) === policyKey(group.name)
+      ? [{ key: `final-${finalRule.index}`, type: "FINAL", value: "未匹配流量", policy: finalRule.policy, source: "系统兜底" }]
+      : [];
+    const ruleSetItems = ruleSet?.entries.map((entry, index) => ({
+      key: `set-${ruleSet.id}-${index}`,
+      type: entry.type,
+      value: entry.value,
+      policy: group.name,
+      source: `规则集 · ${ruleSet.name}`,
+    })) || [];
+    return [...directRules, ...finalItems, ...ruleSetItems];
+  }, [finalRule, group.name, ruleSet, rules]);
+  const filteredItems = items.filter((item) => `${item.type} ${item.value} ${item.policy} ${item.source}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const ruleSetDisabled = Boolean(ruleSet && ruleSet.enabled === false);
+
+  return <div className="modalBackdrop" role="button" tabIndex={0} aria-label={`关闭${group.name}规则`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
+    <section className="groupRulesModal" role="dialog" aria-modal="true" aria-labelledby="group-rules-title">
+      <header className="groupRulesModalHeader"><div><p className="eyebrow">GROUP RULES</p><h2 id="group-rules-title">{group.name}</h2><p>这里只显示已经加入当前分组的规则。</p></div><button type="button" aria-label="关闭" onClick={onClose}>×</button></header>
+      <div className="groupRulesSummary"><span><strong>{items.length}</strong> 条规则</span>{ruleSet ? <span className={ruleSetDisabled ? "groupRulesState disabled" : "groupRulesState"}>规则集：{ruleSet.name}{ruleSetDisabled ? " · 已停用" : ""}</span> : <span className="groupRulesState">未绑定规则集</span>}</div>
+      <label className="groupRulesSearch"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="搜索当前分组规则" aria-label="搜索当前分组规则" /></label>
+      <div className="groupRulesList">{filteredItems.length ? filteredItems.map((item) => <div className="groupRuleItem" key={item.key}><span className={`groupRuleType ${item.type === "FINAL" ? "final" : item.source.startsWith("规则集") ? "set" : ""}`}>{item.type}<small>{item.source}</small></span><div><strong>{item.value}</strong><p>策略：{item.policy}</p></div></div>) : <div className="groupRulesEmpty">{items.length ? "没有匹配的规则" : "当前分组暂无已加入规则"}</div>}</div>
+      <footer className="groupRulesModalFooter"><span>关闭后仍停留在当前方案。</span><button type="button" className="primary" onClick={onClose}>完成</button></footer>
+    </section>
+  </div>;
 }
 
 function GroupCard({ group, ruleCount, tone, onEdit, onRules }: { group: Group; ruleCount: number; tone: string; onEdit: () => void; onRules: () => void }) {
