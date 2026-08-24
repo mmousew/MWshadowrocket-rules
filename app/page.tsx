@@ -1359,15 +1359,12 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
     };
     try {
       const url = new URL(value);
-      const marker = "/api/clash/";
-      const index = url.pathname.indexOf(marker);
-      if (index < 0) return withName(value.replace("/api/clash/", "/api/subscribe/"));
-      const token = url.pathname.slice(index + marker.length).split("/", 1)[0];
+      const token = url.searchParams.get("token") || url.pathname.split("/api/clash/")[1]?.split("/", 1)[0] || "";
       if (!token) return withName(value);
-      url.pathname = `${url.pathname.slice(0, index)}/api/subscribe/${token}`;
-      url.search = "";
-      if (name.trim()) url.searchParams.set("name", name.trim().slice(0, 80));
-      return url.toString();
+      const relay = new URL("https://656577.xyz/mw-subscribe.php");
+      relay.searchParams.set("token", token);
+      if (name.trim()) relay.searchParams.set("name", name.trim().slice(0, 80));
+      return relay.toString();
     } catch {
       return withName(value.replace("/api/clash/", "/api/subscribe/"));
     }
