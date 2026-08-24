@@ -15,19 +15,14 @@ const CHINA_SHADOWROCKET_DOMAIN_URL = "https://raw.githubusercontent.com/blackma
 const CHINA_CLASH_DIRECT_URL = "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt";
 const CHINA_CLASH_CNCIDR_URL = "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt";
 const CHINA_DIRECT_SOURCE_PAGE = "https://github.com/blackmatrix7/ios_rule_script/tree/master/rule/Shadowrocket/ChinaMax";
-const CHINA_DIRECT_SERVICE_ENTRIES: RuleSetEntry[] = [
-  "GEOSITE,paypal@cn", "GEOSITE,paypal", "DOMAIN-SUFFIX,wise.com", "DOMAIN-SUFFIX,ifastgb.com", "DOMAIN-SUFFIX,myfin.bg", "DOMAIN-SUFFIX,shunzhengjinfu.com", "DOMAIN-SUFFIX,dtcpay.com", "DOMAIN-SUFFIX,dtcpayment.com",
-].map((line) => parseRuleSetEntries(line)[0]).filter(Boolean) as RuleSetEntry[];
 const CHINA_DIRECT_PLATFORM_SOURCES: RuleSetPlatformSources = {
   shadowrocket: [
     ...parseRuleSetEntries(`RULE-SET,${CHINA_SHADOWROCKET_URL}`),
     ...parseRuleSetEntries(`DOMAIN-SET,${CHINA_SHADOWROCKET_DOMAIN_URL}`),
-    ...CHINA_DIRECT_SERVICE_ENTRIES,
   ],
   clash: [
     ...parseRuleSetEntries(`RULE-SET,${CHINA_CLASH_DIRECT_URL}`),
     ...parseRuleSetEntries(`RULE-SET,${CHINA_CLASH_CNCIDR_URL}`),
-    ...CHINA_DIRECT_SERVICE_ENTRIES,
   ],
 };
 const CHINA_DIRECT_ENTRIES: RuleSetEntry[] = CHINA_DIRECT_PLATFORM_SOURCES.shadowrocket || [];
