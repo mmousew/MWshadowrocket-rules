@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
-import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, restoreHaoziRuleConfig, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
+import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureDefaultRuleConfigTemplate, ensureMwDefaultTemplateMerge, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, restoreHaoziRuleConfig, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
 import { validateProtectedGroupChanges, validateRuleConfiguration } from "../../lib/rule-validation";
 import { ensureRuleSetLibrary, repairChinaDirectState, replaceRuleSetBindings } from "../../lib/rule-sets";
 
@@ -42,6 +42,8 @@ async function ensureConfigs() {
   await ensureRuleConfigAssignments();
   await ensureRuleSetLibrary();
   await repairChinaDirectState();
+  await ensureMwDefaultTemplateMerge();
+  await ensureDefaultRuleConfigTemplate();
   defaultConfig = await getRuleConfig("default") || defaultConfig;
   return { configs: await listRuleConfigs(), defaultConfig };
 }
@@ -63,7 +65,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as { name?: string };
     const { configs } = await ensureConfigs();
-    const source = configs.find((config) => Boolean(config.is_template_default)) || configs.find((config) => config.id === "default") || configs[0];
+    const source = configs.find((config) => config.id === "default") || configs[0];
     if (!source) throw new Error("没有可复制的规则方案");
     const config = await createRuleConfig(String(body.name || "规则方案"), source.content);
     return NextResponse.json({ config });

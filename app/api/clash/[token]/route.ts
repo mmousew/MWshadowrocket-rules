@@ -3,7 +3,7 @@ import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
-import { ensureRuleConfigAssignments, getRuleConfig } from "../../../lib/rule-configs";
+import { ensureMwDefaultTemplateMerge, ensureRuleConfigAssignments, getRuleConfig } from "../../../lib/rule-configs";
 import { composeBoundRuleSets, composeTemporaryRules } from "../../../lib/rule-set-core";
 import { listGroupTempRules } from "../../../lib/group-temp-rules";
 import { ensureRuleSetLibrary, listRuleSetBindings, repairChinaDirectState } from "../../../lib/rule-sets";
@@ -107,6 +107,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     } catch { /* 兼容旧数据库/旧链接，继续读取 GitHub */ }
     try {
       const ruleSets = await ensureRuleSetLibrary();
+      await ensureMwDefaultTemplateMerge();
       const bindings = await listRuleSetBindings(ruleConfigId);
       ruleContent = composeBoundRuleSets(ruleContent, ruleSets, bindings.map((item) => ({ groupName: item.group_name, ruleSetId: item.rule_set_id })), subscriptionClient);
       const temporaryRules = await listGroupTempRules(ruleConfigId);
