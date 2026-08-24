@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
-import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureDefaultRuleConfigTemplate, ensureMwDefaultTemplateMerge, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, restoreHaoziRuleConfig, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
+import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureDefaultRuleConfigTemplate, ensureMwDefaultTemplateMerge, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, listRuleGroupVisibility, migrateLegacyGroupVisibility, replaceRuleGroupVisibility, restoreHaoziRuleConfig, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
 import { validateProtectedGroupChanges, validateRuleConfiguration } from "../../lib/rule-validation";
 import { ensureRuleSetLibrary, repairChinaDirectState, replaceRuleSetBindings } from "../../lib/rule-sets";
 
@@ -42,6 +42,7 @@ async function ensureConfigs() {
   await ensureRuleConfigAssignments();
   await ensureRuleSetLibrary();
   await repairChinaDirectState();
+  await migrateLegacyGroupVisibility();
   await ensureMwDefaultTemplateMerge();
   await ensureDefaultRuleConfigTemplate();
   defaultConfig = await getRuleConfig("default") || defaultConfig;
@@ -54,7 +55,7 @@ export async function GET(request: NextRequest) {
     const { configs } = await ensureConfigs();
     const requestedId = request.nextUrl.searchParams.get("id") || "default";
     const selected = configs.find((config) => config.id === requestedId) || configs[0];
-    return NextResponse.json({ configs, selectedId: selected?.id || "default" });
+    return NextResponse.json({ configs, selectedId: selected?.id || "default", groupVisibility: selected ? await listRuleGroupVisibility(selected.id) : [] });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "读取规则方案失败" }, { status: 422 });
   }
@@ -68,7 +69,7 @@ export async function POST(request: NextRequest) {
     const source = configs.find((config) => config.id === "default") || configs[0];
     if (!source) throw new Error("没有可复制的规则方案");
     const config = await createRuleConfig(String(body.name || "规则方案"), source.content);
-    return NextResponse.json({ config });
+    return NextResponse.json({ config, groupVisibility: config ? await listRuleGroupVisibility(config.id) : [] });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "新增规则方案失败" }, { status: 422 });
   }
@@ -77,7 +78,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { id?: string; name?: string; content?: string; setDefault?: boolean; recoverHaozi?: boolean; ruleSetBindings?: Array<{ groupName?: string; ruleSetId?: string }> };
+    const body = await request.json() as { id?: string; name?: string; content?: string; setDefault?: boolean; recoverHaozi?: boolean; ruleSetBindings?: Array<{ groupName?: string; ruleSetId?: string }>; groupVisibility?: Array<{ groupName?: string; visible?: boolean }> };
     const id = String(body.id || "").trim();
     if (!id) throw new Error("规则方案不存在");
     if (body.recoverHaozi) {
@@ -98,7 +99,10 @@ export async function PATCH(request: NextRequest) {
     if (Array.isArray(body.ruleSetBindings)) {
       await replaceRuleSetBindings(id, body.ruleSetBindings.map((binding) => ({ groupName: String(binding.groupName || ""), ruleSetId: String(binding.ruleSetId || "") })));
     }
-    return NextResponse.json({ config, configs: await listRuleConfigs() });
+    if (Array.isArray(body.groupVisibility)) {
+      await replaceRuleGroupVisibility(id, body.groupVisibility.map((setting) => ({ groupName: String(setting.groupName || ""), visible: setting.visible !== false })));
+    }
+    return NextResponse.json({ config, configs: await listRuleConfigs(), groupVisibility: await listRuleGroupVisibility(id) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "保存规则方案失败" }, { status: 422 });
   }

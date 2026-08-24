@@ -6,6 +6,7 @@ import {
   buildShadowrocketRuleConfigFromClash,
   buildShadowrocketConfig,
   buildShadowrocketRulesConfig,
+  filterHiddenGroups,
   resolveAirportProxyHosts,
 } from "../app/lib/clash-config.ts";
 import { composeBoundRuleSets } from "../app/lib/rule-set-core.ts";
@@ -321,4 +322,20 @@ test("Shadowrocket does not force a public DNS address when the airport resolver
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("client visibility hides a group and removes all dangling references", () => {
+  const source = `[Proxy Group]\nProxies = select,US,CN,DIRECT\nFinal = select,Proxies,DIRECT\nCN = select,DIRECT\nUS = select,美国节点\n\n[Rule]\nDOMAIN-SUFFIX,cn.example,CN\nFINAL,Final\n`;
+  const filtered = filterHiddenGroups(source, ["CN"]);
+  assert.match(filtered, /Proxies = select,US,DIRECT/);
+  assert.doesNotMatch(filtered, /^CN\s*=/m);
+  assert.match(filtered, /DOMAIN-SUFFIX,cn\.example,DIRECT/);
+  assert.match(filtered, /FINAL,Final/);
+});
+
+test("hiding the final group redirects FINAL to the visible proxies group", () => {
+  const source = `[Proxy Group]\nProxies = select,US,DIRECT\nFinal = select,Proxies,DIRECT\nUS = select,美国节点\n\n[Rule]\nFINAL,Final\n`;
+  const filtered = filterHiddenGroups(source, ["Final"]);
+  assert.doesNotMatch(filtered, /^Final\s*=/m);
+  assert.match(filtered, /FINAL,Proxies/);
 });

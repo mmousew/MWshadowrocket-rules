@@ -11,6 +11,7 @@ const HAOZI_RULE_CONFIG_NAME = "MWPRO";
 const HAOZI_LEGACY_RULE_CONFIG_NAME = "耗子专属";
 const HAOZI_PROFILE_NAME = "耗子专用";
 const MW_DEFAULT_TEMPLATE_MERGE_MIGRATION_ID = "rule-config:mw-default-template-merge-v1";
+const GROUP_VISIBILITY_MIGRATION_ID = "rule-config:group-visibility-v1";
 const PROTECTED_GROUP_KEYS = new Set(["proxies", "final", "cn"]);
 
 export type RuleConfigRow = {
@@ -23,6 +24,58 @@ export type RuleConfigRow = {
   updated_at: number;
   profile_count?: number;
 };
+
+export type RuleGroupVisibilityRow = {
+  rule_config_id: string;
+  group_name: string;
+  visible: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export type RuleGroupVisibility = { groupName: string; visible: boolean };
+
+export async function listRuleGroupVisibility(configId: string) {
+  const result = await (await getReadyRawDb()).prepare(
+    "SELECT rule_config_id, group_name, visible, created_at, updated_at FROM rule_group_settings WHERE rule_config_id = ? ORDER BY lower(group_name), group_name"
+  ).bind(configId).all<RuleGroupVisibilityRow>();
+  return result.results || [];
+}
+
+export async function replaceRuleGroupVisibility(configId: string, settings: RuleGroupVisibility[]) {
+  const db = await getReadyRawDb();
+  const hidden = new Map<string, string>();
+  for (const setting of settings) {
+    const groupName = String(setting.groupName || "").trim();
+    if (!groupName || setting.visible !== false) continue;
+    const key = groupName.toLowerCase();
+    if (!hidden.has(key)) hidden.set(key, groupName);
+  }
+  const now = Date.now();
+  await db.prepare("DELETE FROM rule_group_settings WHERE rule_config_id = ?").bind(configId).run();
+  if (hidden.size) {
+    await db.batch(Array.from(hidden.values()).map((groupName) => db.prepare(
+      "INSERT INTO rule_group_settings (rule_config_id, group_name, visible, created_at, updated_at) VALUES (?, ?, 0, ?, ?)"
+    ).bind(configId, groupName, now, now)));
+  }
+}
+
+export async function migrateLegacyGroupVisibility() {
+  const db = await getReadyRawDb();
+  const marker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(GROUP_VISIBILITY_MIGRATION_ID).first<{ id: string }>();
+  if (marker) return;
+  const legacyHidden = await db.prepare(
+    "SELECT id FROM rule_sets WHERE status <> 'deleted' AND visible = 0 AND (lower(trim(name)) = lower(trim(?)) OR lower(trim(name)) = lower(trim(?))) LIMIT 1"
+  ).bind("CN-国内直连（综合）", "CN国内直连").first<{ id: string }>();
+  if (legacyHidden) {
+    const configs = (await db.prepare("SELECT id FROM rule_configs WHERE status <> 'deleted'").all<{ id: string }>()).results || [];
+    const now = Date.now();
+    await db.batch(configs.map((config) => db.prepare(
+      "INSERT OR IGNORE INTO rule_group_settings (rule_config_id, group_name, visible, created_at, updated_at) VALUES (?, 'CN', 0, ?, ?)"
+    ).bind(config.id, now, now)));
+  }
+  await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(GROUP_VISIBILITY_MIGRATION_ID, Date.now()).run();
+}
 
 export async function getRuleConfig(id = DEFAULT_RULE_CONFIG_ID) {
   return (await getReadyRawDb()).prepare(
@@ -341,7 +394,16 @@ export async function createRuleConfig(name: string, content: string) {
     "INSERT INTO rule_configs (id, name, content, status, is_template_default, created_at, updated_at) VALUES (?, ?, ?, 'active', 0, ?, ?)"
   ).bind(id, safeName, content, now, now).run();
   const template = await getRuleConfig(DEFAULT_RULE_CONFIG_ID);
-  if (template?.id && template.id !== id) await cloneRuleSetBindings(template.id, id);
+  if (template?.id && template.id !== id) {
+    await cloneRuleSetBindings(template.id, id);
+    const visibility = await listRuleGroupVisibility(template.id);
+    if (visibility.length) {
+      await replaceRuleGroupVisibility(id, visibility.map((row) => ({
+        groupName: row.group_name,
+        visible: row.visible !== 0,
+      })));
+    }
+  }
   return getRuleConfig(id);
 }
 

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig, resolveAirportProxyHosts } from "../../../lib/clash-config";
+import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig, filterHiddenGroups, resolveAirportProxyHosts } from "../../../lib/clash-config";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
-import { ensureMwDefaultTemplateMerge, ensureRuleConfigAssignments, getRuleConfig } from "../../../lib/rule-configs";
+import { ensureMwDefaultTemplateMerge, ensureRuleConfigAssignments, getRuleConfig, listRuleGroupVisibility, migrateLegacyGroupVisibility } from "../../../lib/rule-configs";
 import { composeBoundRuleSets, composeTemporaryRules } from "../../../lib/rule-set-core";
 import { listGroupTempRules } from "../../../lib/group-temp-rules";
 import { ensureRuleSetLibrary, listRuleSetBindings, repairChinaDirectState } from "../../../lib/rule-sets";
@@ -48,6 +48,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
   try {
     await ensureRuleConfigAssignments();
     await repairChinaDirectState();
+    await migrateLegacyGroupVisibility();
   } catch { /* retain legacy output if D1 is temporarily unavailable */ }
   try {
     const record = await findClashLink(token);
@@ -146,6 +147,14 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       const file = await ruleResponse.json() as GitHubFile;
       if (!file.content) throw new Error(file.message || "规则方案内容为空");
       ruleContent = Buffer.from(file.content.replace(/\n/g, ""), "base64").toString("utf8");
+    }
+    try {
+      await migrateLegacyGroupVisibility();
+      const visibility = await listRuleGroupVisibility(ruleConfigId);
+      ruleContent = filterHiddenGroups(ruleContent, visibility.filter((row) => row.visible === 0).map((row) => row.group_name));
+    } catch {
+      // If the visibility table is temporarily unavailable, retain the last
+      // complete rule output instead of failing an otherwise valid subscription.
     }
     const liveAirportContent = airportResult.content;
     const airportContent = liveAirportContent.length ? liveAirportContent : (encryptedSource ? [] : [getAirportSnapshot()]);

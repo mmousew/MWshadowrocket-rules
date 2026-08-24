@@ -79,6 +79,7 @@ async function initializeDatabaseSchema() {
     db.prepare("CREATE TABLE IF NOT EXISTS rule_sets (id text PRIMARY KEY NOT NULL, name text NOT NULL, description text DEFAULT '' NOT NULL, kind text DEFAULT 'managed' NOT NULL, entries text DEFAULT '[]' NOT NULL, platform_sources text DEFAULT '{}' NOT NULL, source text DEFAULT '' NOT NULL, status text DEFAULT 'active' NOT NULL, visible integer DEFAULT 1 NOT NULL, enabled integer DEFAULT 1 NOT NULL, sort_order integer DEFAULT 0 NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS rule_set_bindings (id text PRIMARY KEY NOT NULL, rule_config_id text NOT NULL, group_name text NOT NULL, rule_set_id text NOT NULL, sort_order integer DEFAULT 0 NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS rule_set_migrations (id text PRIMARY KEY NOT NULL, version integer NOT NULL, created_at integer NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS rule_group_settings (rule_config_id text NOT NULL, group_name text NOT NULL, visible integer DEFAULT 0 NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL, PRIMARY KEY (rule_config_id, group_name))"),
     db.prepare("CREATE TABLE IF NOT EXISTS group_temp_rules (id text PRIMARY KEY NOT NULL, rule_config_id text NOT NULL, group_name text NOT NULL, type text NOT NULL, value text NOT NULL, policy text NOT NULL, options text DEFAULT '[]' NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
   ]);
   await addMissingClashLinkColumns();
@@ -98,6 +99,7 @@ async function initializeDatabaseSchema() {
     db.prepare("CREATE INDEX IF NOT EXISTS rule_sets_sort_idx ON rule_sets (sort_order)"),
     db.prepare("CREATE INDEX IF NOT EXISTS rule_set_bindings_config_idx ON rule_set_bindings (rule_config_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS rule_set_bindings_group_idx ON rule_set_bindings (group_name)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS rule_group_settings_config_idx ON rule_group_settings (rule_config_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS group_temp_rules_config_idx ON group_temp_rules (rule_config_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS group_temp_rules_group_idx ON group_temp_rules (group_name)"),
   ]);

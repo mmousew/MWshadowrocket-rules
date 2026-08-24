@@ -283,6 +283,62 @@ function parseGroupsAndRules(content: string) {
   return { groups, rules };
 }
 
+/**
+ * Apply per-scheme client visibility to a Shadowrocket-style rule file.
+ *
+ * `visible` is intentionally handled at generation time instead of deleting
+ * the group from the saved scheme. This keeps the editor's model intact while
+ * preventing the client from receiving a group that the user chose to hide.
+ */
+export function filterHiddenGroups(content: string, hiddenGroupNames: string[] = []) {
+  const hidden = new Set(hiddenGroupNames.map((name) => name.trim().toLowerCase()).filter(Boolean));
+  if (!hidden.size) return content;
+
+  const lines = content.split(/\r?\n/);
+  const groupStart = lines.findIndex((line) => line.trim().toLowerCase() === "[proxy group]");
+  const ruleStart = lines.findIndex((line) => line.trim().toLowerCase() === "[rule]");
+  if (groupStart < 0 || ruleStart < 0 || ruleStart <= groupStart) return content;
+
+  const isHidden = (value: string) => hidden.has(value.trim().toLowerCase());
+  const fallbackFor = (policy: string) => {
+    const key = policy.trim().toLowerCase();
+    if (key === "direct" || key === "cn") return "DIRECT";
+    if (key === "final" && !hidden.has("final")) return "Final";
+    if (!hidden.has("proxies") && !hidden.has("proxy")) return "Proxies";
+    if (!hidden.has("final")) return "Final";
+    return "DIRECT";
+  };
+
+  return lines.map((raw, index) => {
+    if (index > groupStart && index < ruleStart) {
+      const match = raw.match(/^\s*([^#=]+?)\s*=\s*(.+)$/);
+      if (!match) return raw;
+      const groupName = match[1].trim();
+      if (isHidden(groupName)) return null;
+
+      const values = splitRuleLine(match[2]);
+      const kind = values.shift() || "select";
+      const options = values.filter((value) => value.includes("="));
+      const items = values.filter((value) => !value.includes("=") && !isHidden(value));
+      if (!items.length) items.push("DIRECT");
+      return `${groupName} = ${[kind, ...items, ...options].join(",")}`;
+    }
+
+    if (index > ruleStart && raw.trim() && !raw.trim().startsWith("#")) {
+      const parts = splitRuleLine(raw);
+      if (parts[0]?.trim().toUpperCase() === "FINAL" && parts[1] && isHidden(parts[1])) {
+        parts[1] = fallbackFor(parts[1]);
+        return parts.join(",");
+      }
+      if (parts.length >= 3 && isHidden(parts[2])) {
+        parts[2] = fallbackFor(parts[2]);
+        return parts.join(",");
+      }
+    }
+    return raw;
+  }).filter((line): line is string => line !== null).join("\n");
+}
+
 function parseShadowrocketProxies(content: string): ClashProxy[] {
   const lines = content.split(/\r?\n/);
   const proxyStart = lines.findIndex((line) => line.trim() === "[Proxy]");

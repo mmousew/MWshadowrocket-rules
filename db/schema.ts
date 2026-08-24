@@ -88,6 +88,14 @@ export const ruleSetBindings = sqliteTable("rule_set_bindings", {
   groupIdx: index("rule_set_bindings_group_idx").on(table.groupName),
 }));
 
+export const ruleGroupSettings = sqliteTable("rule_group_settings", {
+  ruleConfigId: text("rule_config_id").notNull(),
+  groupName: text("group_name").notNull(),
+  visible: integer("visible", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => ({ configIdx: index("rule_group_settings_config_idx").on(table.ruleConfigId) }));
+
 export const ruleSetMigrations = sqliteTable("rule_set_migrations", {
   id: text("id").primaryKey(),
   version: integer("version").notNull(),
