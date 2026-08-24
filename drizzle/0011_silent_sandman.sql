@@ -7,4 +7,3 @@ CREATE TABLE `rule_group_settings` (
 );
 --> statement-breakpoint
 CREATE INDEX `rule_group_settings_config_idx` ON `rule_group_settings` (`rule_config_id`);--> statement-breakpoint
-ALTER TABLE `rule_set_bindings` ADD `sort_order` integer DEFAULT 0 NOT NULL;
