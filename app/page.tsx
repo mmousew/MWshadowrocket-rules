@@ -169,6 +169,32 @@ function updateGroupItems(raw: string, countryGroups: string[], existingGroups: 
 function groupOptionLabel(kind: string) {
   return GROUP_KIND_OPTIONS.find((option) => option.value === kind)?.label || kind;
 }
+
+// Managed links have existed in several path formats. Always derive the
+// token first, then build the client-specific VPS relay URL from that token.
+// This keeps old links and the current /api/subscribe links interchangeable.
+function subscriptionToken(value: string) {
+  try {
+    const url = new URL(value);
+    const queryToken = url.searchParams.get("token")?.trim();
+    if (queryToken) return queryToken;
+    const match = url.pathname.match(/\/api\/(?:clash|subscribe|shadowrocket-config|shadowrocket|mihomo)\/([^/?#]+)/i);
+    return match?.[1]?.trim() || "";
+  } catch {
+    const match = value.match(/\/api\/(?:clash|subscribe|shadowrocket-config|shadowrocket|mihomo)\/([^/?#\s]+)/i);
+    return match?.[1]?.trim() || "";
+  }
+}
+
+function relayUrl(value: string, endpoint: "mw-subscribe.php" | "mw-clash.php" | "mw-shadowrocket.php" | "mw-shadowrocket-config.php") {
+  const token = subscriptionToken(value);
+  if (!token) return value;
+  const url = new URL(`https://656577.xyz/${endpoint}`);
+  url.searchParams.set("token", token);
+  if (endpoint === "mw-clash.php") url.searchParams.set("compat", "clashxmeta");
+  return url.toString();
+}
+
 const nav: { id: View; label: string }[] = [
   { id: "overview", label: "总览" },
   { id: "configs", label: "方案" },
@@ -1110,13 +1136,11 @@ function LegacyClashSubscription() {
   }
 
   function shadowrocketUrl(value: string) {
-    const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
-    return token ? `https://656577.xyz/mw-shadowrocket.php?token=${encodeURIComponent(token)}` : value.replace("/api/clash/", "/api/shadowrocket/");
+    return relayUrl(value, "mw-shadowrocket.php");
   }
 
   function clashRelayUrl(value: string) {
-    const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
-    return token ? `https://656577.xyz/mw-clash.php?token=${encodeURIComponent(token)}&compat=clashxmeta` : value;
+    return relayUrl(value, "mw-clash.php");
   }
 
   async function showQr(value: string, label: string) {
@@ -1324,8 +1348,7 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
   }
 
   function shadowrocketUrl(value: string) {
-    const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
-    return token ? `https://656577.xyz/mw-shadowrocket.php?token=${encodeURIComponent(token)}` : value.replace("/api/clash/", "/api/shadowrocket/");
+    return relayUrl(value, "mw-shadowrocket.php");
   }
 
   function shadowrocketImportUrl(value: string) {
@@ -1337,37 +1360,15 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
   }
 
   function shadowrocketConfigUrl(value: string) {
-    const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
-    return token ? `https://656577.xyz/mw-shadowrocket-config.php?token=${encodeURIComponent(token)}` : value.replace("/api/clash/", "/api/shadowrocket-config/");
+    return relayUrl(value, "mw-shadowrocket-config.php");
   }
 
   function clashRelayUrl(value: string) {
-    const token = value.split("/api/clash/")[1]?.split(/[?#]/, 1)[0];
-    return token ? `https://656577.xyz/mw-clash.php?token=${encodeURIComponent(token)}&compat=clashxmeta` : value;
+    return relayUrl(value, "mw-clash.php");
   }
 
-  function unifiedSubscriptionUrl(value: string, name = "") {
-    const withName = (candidate: string) => {
-      if (!name.trim()) return candidate;
-      try {
-        const url = new URL(candidate);
-        url.searchParams.set("name", name.trim().slice(0, 80));
-        return url.toString();
-      } catch {
-        return candidate;
-      }
-    };
-    try {
-      const url = new URL(value);
-      const token = url.searchParams.get("token") || url.pathname.split("/api/clash/")[1]?.split("/", 1)[0] || "";
-      if (!token) return withName(value);
-      const relay = new URL("https://656577.xyz/mw-subscribe.php");
-      relay.searchParams.set("token", token);
-      if (name.trim()) relay.searchParams.set("name", name.trim().slice(0, 80));
-      return relay.toString();
-    } catch {
-      return withName(value.replace("/api/clash/", "/api/subscribe/"));
-    }
+  function unifiedSubscriptionUrl(value: string) {
+    return relayUrl(value, "mw-subscribe.php");
   }
 
   async function showQr(value: string, label: string) {
@@ -1380,7 +1381,7 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
   const profileLinkCard = (link: LinkRecord) => <article className={`clashLinkCard ${link.status === "revoked" ? "revoked" : ""}`} key={link.id}>
     <div className="clashCardActions">{link.status === "active" && <button type="button" className="ghost" onClick={() => setPendingLinkAction({ id: link.id, action: "revoke" })}>失效</button>}<button type="button" className="danger" onClick={() => setPendingLinkAction({ id: link.id, action: "delete" })}>删除</button></div>
     <div className="clashLinkMeta"><span>{link.status === "active" ? "已启用" : "已失效"} · {link.createdAt ? new Date(link.createdAt).toLocaleString("zh-CN") : "历史链接"}</span></div>
-    <label className="clientLinkLabel">统一订阅地址（自动识别 Clash / 小火箭）<div className="clientLinkRow"><input readOnly value={unifiedSubscriptionUrl(link.url, link.name)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(unifiedSubscriptionUrl(link.url, link.name))}>复制</button>{link.status === "active" && <button type="button" className="inlineQr" onClick={() => void showQr(unifiedSubscriptionUrl(link.url, link.name), "统一订阅")}>二维码</button>}</div></label>
+    <label className="clientLinkLabel">统一订阅地址（自动识别 Clash / 小火箭）<div className="clientLinkRow"><input readOnly value={unifiedSubscriptionUrl(link.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(unifiedSubscriptionUrl(link.url))}>复制</button>{link.status === "active" && <button type="button" className="inlineQr" onClick={() => void showQr(unifiedSubscriptionUrl(link.url), "统一订阅")}>二维码</button>}</div></label>
     <details className="legacySubscriptionLinks"><summary>兼容旧链接（可选）</summary><label className="clientLinkLabel">CLASH 地址<div className="clientLinkRow"><input readOnly value={clashRelayUrl(link.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(clashRelayUrl(link.url))}>复制</button>{link.status === "active" && <button type="button" className="inlineQr" onClick={() => void showQr(clashRelayUrl(link.url), "CLASH")}>二维码</button>}</div></label><label className="clientLinkLabel">小火箭订阅地址<div className="clientLinkRow"><input readOnly value={shadowrocketUrl(link.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(shadowrocketUrl(link.url))}>复制订阅</button>{link.status === "active" && <a className="inlineImport" href={shadowrocketAddUrl(link.url)}>添加订阅</a>}{link.status === "active" && <button type="button" className="inlineQr" onClick={() => void showQr(shadowrocketUrl(link.url), "小火箭订阅")}>二维码</button>}</div></label></details>
     <label className="clientLinkLabel">小火箭配置地址（仅规则与分组）<div className="clientLinkRow"><input readOnly value={shadowrocketConfigUrl(link.url)} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="inlineCopy" onClick={() => void copyLink(shadowrocketConfigUrl(link.url))}>复制配置</button>{link.status === "active" && <a className="inlineImport" href={shadowrocketImportUrl(link.url)}>导入配置</a>}{link.status === "active" && <button type="button" className="inlineQr" onClick={() => void showQr(shadowrocketImportUrl(link.url), "小火箭配置")}>二维码</button>}</div></label>
   </article>;
