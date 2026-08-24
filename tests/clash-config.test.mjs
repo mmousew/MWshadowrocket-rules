@@ -204,6 +204,11 @@ test("Shadowrocket preserves automatic and failover group types", () => {
   assert.doesNotMatch(config, /^Balance = .*DIRECT/m);
 });
 
+test("Shadowrocket embeds the subscription remark as the config name", () => {
+  const config = buildShadowrocketConfig(rules, airport, {}, "MWPRO", "耗子专用");
+  assert.match(config, /^#!name=耗子专用$/m);
+});
+
 test("scheme names isolate generated Clash and Shadowrocket group names", () => {
   const clash = parseYaml(buildClashConfig(rules, airport, {}, "耗子专属"));
   const clashNames = clash["proxy-groups"].map((group) => group.name);

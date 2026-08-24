@@ -169,12 +169,12 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     // the airport's original hostname and DNS behavior instead of receiving a
     // Clash-only fixed-IP mapping.
     const hostMappings = shadowrocket ? {} : await resolveAirportProxyHosts(airportContent);
-    const config = shadowrocketRules
-      ? buildShadowrocketRulesConfig(ruleContent, airportContent, hostMappings, ruleConfigName)
-      : shadowrocket
-        ? buildShadowrocketConfig(ruleContent, airportContent, hostMappings, ruleConfigName)
-        : buildClashConfig(ruleContent, airportContent, hostMappings, ruleConfigName);
     const outputName = (requestedConfigName || profileName).slice(0, 80).trim() || "订阅配置";
+    const config = shadowrocketRules
+      ? buildShadowrocketRulesConfig(ruleContent, airportContent, hostMappings, ruleConfigName, outputName)
+      : shadowrocket
+        ? buildShadowrocketConfig(ruleContent, airportContent, hostMappings, ruleConfigName, outputName)
+        : buildClashConfig(ruleContent, airportContent, hostMappings, ruleConfigName);
     return new NextResponse(config, {
       headers: {
         "Content-Type": shadowrocket ? "text/plain; charset=utf-8" : "text/yaml; charset=utf-8",

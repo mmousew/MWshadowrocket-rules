@@ -1151,7 +1151,17 @@ function normalizeShadowrocketPolicyReferences(config: string, proxyNames: strin
   }).join("\n");
 }
 
-export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}, schemeName = "") {
+function setShadowrocketConfigName(config: string, configName = "") {
+  const name = configName.replace(/[\r\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!name) return config;
+  const lines = config.split(/\r?\n/);
+  const nameIndex = lines.findIndex((line) => /^#!name=/i.test(line.trim()));
+  if (nameIndex >= 0) lines[nameIndex] = `#!name=${name}`;
+  else lines.unshift(`#!name=${name}`);
+  return lines.join("\n");
+}
+
+export function buildShadowrocketConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}, schemeName = "", configName = "") {
   const rawSources = Array.isArray(airportContent) ? airportContent : [airportContent];
   // If the same node name exists in multiple sources, prefer the airport's
   // native Shadowrocket source over a Clash-converted copy. This keeps the
@@ -1182,7 +1192,8 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
     const expanded = expandShadowrocketIncludeAllGroups(config, [...names]);
     const normalized = normalizeShadowrocketPolicyReferences(expanded, [...names]);
     const output = normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(normalized, dnsSources), hostMappings));
-    return schemeName.trim() ? namespaceShadowrocketConfig(output, schemeName) : output;
+    const namespaced = schemeName.trim() ? namespaceShadowrocketConfig(output, schemeName) : output;
+    return setShadowrocketConfigName(namespaced, configName);
   }
   const end = nextSection > proxyStart ? nextSection : lines.length;
   const config = normalizeFinalGroupForShadowrocket([...lines.slice(0, proxyStart), ...proxySection, ...lines.slice(end)].join("\n"));
@@ -1191,11 +1202,12 @@ export function buildShadowrocketConfig(ruleContent: string, airportContent: str
   // Shadowrocket does not understand geosite rule references; omit them only from its output.
   const withoutGeosite = normalizedConfig.split(/\r?\n/).filter((line) => !/^\s*(?:RULE-SET|GEOSITE),geosite:/i.test(line)).join("\n");
   const output = normalizeShadowrocketConfig(addShadowrocketHostMappings(addShadowrocketAirportDns(withoutGeosite, dnsSources), hostMappings));
-  return schemeName.trim() ? namespaceShadowrocketConfig(output, schemeName) : output;
+  const namespaced = schemeName.trim() ? namespaceShadowrocketConfig(output, schemeName) : output;
+  return setShadowrocketConfigName(namespaced, configName);
 }
 
-export function buildShadowrocketRulesConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}, schemeName = "") {
-  const fullConfig = buildShadowrocketConfig(ruleContent, airportContent, hostMappings, schemeName);
+export function buildShadowrocketRulesConfig(ruleContent: string, airportContent: string | string[], hostMappings: Record<string, string> = {}, schemeName = "", configName = "") {
+  const fullConfig = buildShadowrocketConfig(ruleContent, airportContent, hostMappings, schemeName, configName);
   const lines = fullConfig.split(/\r?\n/);
   const proxyStart = lines.findIndex((line) => line.trim().toLowerCase() === "[proxy]");
   if (proxyStart < 0) return fullConfig;
