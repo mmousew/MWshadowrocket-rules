@@ -57,6 +57,7 @@ async function addMissingRuleSetColumns() {
   const statements = [];
   if (!columns.has("visible")) statements.push(db.prepare("ALTER TABLE rule_sets ADD COLUMN visible integer DEFAULT 1 NOT NULL"));
   if (!columns.has("enabled")) statements.push(db.prepare("ALTER TABLE rule_sets ADD COLUMN enabled integer DEFAULT 1 NOT NULL"));
+  if (!columns.has("platform_sources")) statements.push(db.prepare("ALTER TABLE rule_sets ADD COLUMN platform_sources text DEFAULT '{}' NOT NULL"));
   if (statements.length) await db.batch(statements);
 }
 
@@ -68,7 +69,7 @@ async function initializeDatabaseSchema() {
     db.prepare("CREATE TABLE IF NOT EXISTS rule_configs (id text PRIMARY KEY NOT NULL, name text DEFAULT '默认规则' NOT NULL, content text DEFAULT '' NOT NULL, status text DEFAULT 'active' NOT NULL, is_template_default integer DEFAULT 0 NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS clash_source_snapshots (source_key text PRIMARY KEY NOT NULL, source_url text NOT NULL, content text NOT NULL, node_count integer DEFAULT 0 NOT NULL, updated_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS clash_airport_sources (id text PRIMARY KEY NOT NULL, name text DEFAULT '机场订阅' NOT NULL, kind text DEFAULT 'url' NOT NULL, source_url text DEFAULT '' NOT NULL, content text DEFAULT '' NOT NULL, hidden integer DEFAULT 0 NOT NULL, status text DEFAULT 'active' NOT NULL, node_count integer, created_at integer NOT NULL, updated_at integer NOT NULL)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS rule_sets (id text PRIMARY KEY NOT NULL, name text NOT NULL, description text DEFAULT '' NOT NULL, kind text DEFAULT 'managed' NOT NULL, entries text DEFAULT '[]' NOT NULL, source text DEFAULT '' NOT NULL, status text DEFAULT 'active' NOT NULL, visible integer DEFAULT 1 NOT NULL, enabled integer DEFAULT 1 NOT NULL, sort_order integer DEFAULT 0 NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS rule_sets (id text PRIMARY KEY NOT NULL, name text NOT NULL, description text DEFAULT '' NOT NULL, kind text DEFAULT 'managed' NOT NULL, entries text DEFAULT '[]' NOT NULL, platform_sources text DEFAULT '{}' NOT NULL, source text DEFAULT '' NOT NULL, status text DEFAULT 'active' NOT NULL, visible integer DEFAULT 1 NOT NULL, enabled integer DEFAULT 1 NOT NULL, sort_order integer DEFAULT 0 NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS rule_set_bindings (id text PRIMARY KEY NOT NULL, rule_config_id text NOT NULL, group_name text NOT NULL, rule_set_id text NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS rule_set_migrations (id text PRIMARY KEY NOT NULL, version integer NOT NULL, created_at integer NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS group_temp_rules (id text PRIMARY KEY NOT NULL, rule_config_id text NOT NULL, group_name text NOT NULL, type text NOT NULL, value text NOT NULL, policy text NOT NULL, options text DEFAULT '[]' NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)"),

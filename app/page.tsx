@@ -9,7 +9,8 @@ type Group = { index: number; name: string; kind: string; items: string[] };
 type Rule = { index: number; type: string; value: string; policy: string; options: string[] };
 type CatalogResult = { name: string; file: string; url: string; source: string };
 type RuleConfigRecord = { id: string; name: string; content: string; status: "active" | "deleted"; is_template_default?: number; created_at: number; updated_at: number; profile_count?: number };
-type RuleSetRecord = { id: string; name: string; description: string; kind: string; entries: Array<{ type: string; value: string; options?: string[] }>; source: string; status: string; visible: boolean; enabled: boolean; isBuiltin?: boolean; entryCount: number; sortOrder: number; createdAt: number; updatedAt: number; usedBy?: Array<{ configId: string; configName: string; groupNames: string[] }> };
+type RuleSetEntryRecord = { type: string; value: string; options?: string[] };
+type RuleSetRecord = { id: string; name: string; description: string; kind: string; entries: RuleSetEntryRecord[]; platformSources?: { shadowrocket?: RuleSetEntryRecord[]; clash?: RuleSetEntryRecord[] }; source: string; status: string; visible: boolean; enabled: boolean; isBuiltin?: boolean; entryCount: number; sortOrder: number; createdAt: number; updatedAt: number; usedBy?: Array<{ configId: string; configName: string; groupNames: string[] }> };
 type TempRuleRecord = { id: string; configId: string; groupName: string; type: string; value: string; policy: string; options: string[]; createdAt: number; updatedAt: number };
 type Editor =
   | { mode: "group"; index: number | null; name: string; items: string; isNew?: boolean; ruleSetId?: string; regularKinds?: string[]; regularItems?: Record<string, string>; regularRuleSets?: Record<string, string>; customEnabled?: boolean; customName?: string; customItems?: string; customRuleSetId?: string; childKinds?: string[]; childItems?: Record<string, string>; availableGroupItems?: Record<string, string> }
@@ -20,12 +21,13 @@ type AirportSourceRecord = { id: string; name: string; kind: "url" | "content"; 
 type AirportNodeRecord = { id: string; name: string; type: string; server: string; port: number | null; status: "valid" | "invalid" | "unloaded"; reason: string; latency?: number };
 type GroupRuleViewItem = { key: string; type: string; value: string; policy: string; source: string; tempId?: string };
 
-const RULE_TYPES = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "RULE-SET", "GEOSITE", "IP-CIDR", "IP-CIDR6", "GEOIP"];
+const RULE_TYPES = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "RULE-SET", "DOMAIN-SET", "GEOSITE", "IP-CIDR", "IP-CIDR6", "GEOIP"];
 const RULE_TYPE_META: Record<string, { label: string; hint: string }> = {
   DOMAIN: { label: "完整域名", hint: "只匹配这一个完整网址，例如 api.example.com。" },
   "DOMAIN-SUFFIX": { label: "域名后缀", hint: "匹配主域名及所有子域名，最常用，例如 example.com。" },
   "DOMAIN-KEYWORD": { label: "域名关键词", hint: "域名中出现该关键词就匹配，范围较大，请谨慎使用。" },
   "RULE-SET": { label: "在线规则集", hint: "引用公开维护的整套规则，更新配置时会自动获取。" },
+  "DOMAIN-SET": { label: "域名规则集", hint: "小火箭专用的域名规则集来源，例如 ChinaMax_Domain.list。" },
   GEOSITE: { label: "内置 geosite", hint: "填写内置规则名称，例如 google、paypal@cn；保存时会自动生成 RULE-SET,geosite:名称。" },
   "IP-CIDR": { label: "IPv4 地址段", hint: "匹配一段 IPv4 地址，通常由规则维护者提供。" },
   "IP-CIDR6": { label: "IPv6 地址段", hint: "匹配一段 IPv6 地址，通常由规则维护者提供。" },
@@ -1688,7 +1690,7 @@ function EditorModal(props: EditorModalProps) {
 }
 
 function ruleSetEntryText(entries: RuleSetRecord["entries"]) {
-  return entries.map((entry) => [entry.type, entry.value, ...(entry.options || [])].join(",")).join("\n");
+  return (entries || []).map((entry) => [entry.type, entry.value, ...(entry.options || [])].join(",")).join("\n");
 }
 
 function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { ruleSets: RuleSetRecord[]; loading: boolean; onChange: (value: RuleSetRecord[]) => void; onToast: (value: string) => void; onError: (value: string) => void }) {
@@ -1697,21 +1699,23 @@ function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { rul
   const [description, setDescription] = useState("");
   const [source, setSource] = useState("");
   const [entries, setEntries] = useState("");
+  const [shadowrocketEntries, setShadowrocketEntries] = useState("");
+  const [clashEntries, setClashEntries] = useState("");
   const [saving, setSaving] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
 
   function startNew() {
-    setEditingId(""); setName(""); setDescription(""); setSource(""); setEntries(""); onError(""); setModalOpen(true);
+    setEditingId(""); setName(""); setDescription(""); setSource(""); setEntries(""); setShadowrocketEntries(""); setClashEntries(""); onError(""); setModalOpen(true);
   }
 
   function startEdit(ruleSet: RuleSetRecord) {
-    setEditingId(ruleSet.id); setName(ruleSet.name); setDescription(ruleSet.description); setSource(ruleSet.source); setEntries(ruleSetEntryText(ruleSet.entries)); onError(""); setModalOpen(true);
+    setEditingId(ruleSet.id); setName(ruleSet.name); setDescription(ruleSet.description); setSource(ruleSet.source); setEntries(ruleSetEntryText(ruleSet.entries)); setShadowrocketEntries(ruleSetEntryText(ruleSet.platformSources?.shadowrocket || [])); setClashEntries(ruleSetEntryText(ruleSet.platformSources?.clash || [])); onError(""); setModalOpen(true);
   }
 
   function closeEditor() {
     if (saving) return;
     setModalOpen(false);
-    setEditingId(""); setName(""); setDescription(""); setSource(""); setEntries(""); onError("");
+    setEditingId(""); setName(""); setDescription(""); setSource(""); setEntries(""); setShadowrocketEntries(""); setClashEntries(""); onError("");
   }
 
   async function saveRuleSet(event: FormEvent) {
@@ -1721,7 +1725,7 @@ function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { rul
     const savedName = name.trim();
     setSaving(true); onError("");
     try {
-      const response = await fetch("/api/rule-set", { method: editingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(editingId ? { id: editingId } : {}), name, description, source, entries }) });
+      const response = await fetch("/api/rule-set", { method: editingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(editingId ? { id: editingId } : {}), name, description, source, entries, platformSources: { shadowrocket: shadowrocketEntries, clash: clashEntries } }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "保存规则集失败");
       onChange((data.ruleSets || []) as RuleSetRecord[]); closeEditor(); onToast(wasEditing ? `规则集「${savedName}」已更新` : `规则集「${savedName}」已新增`);
@@ -1764,6 +1768,10 @@ function RuleSetLibrary({ ruleSets, loading, onChange, onToast, onError }: { rul
           <div className="fieldGrid"><label>规则集名称<input value={name} readOnly={Boolean(editingId && ruleSets.find((item) => item.id === editingId)?.isBuiltin)} onChange={(event) => setName(event.target.value)} placeholder="例如：Google" /></label><label>说明<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="给自己看的用途说明" /></label></div>
           <label>公开来源（可选）<input value={source} onChange={(event) => setSource(event.target.value)} placeholder="例如：https://..." /></label>
           <label>规则内容<small className="ruleLibraryFieldHint">一行一条，例如 DOMAIN-SUFFIX,example.com；也支持 RULE-SET、GEOSITE。</small><textarea rows={12} value={entries} onChange={(event) => setEntries(event.target.value)} placeholder={'DOMAIN-SUFFIX,example.com\nGEOSITE,google\nRULE-SET,https://example.com/list'} /></label>
+          <div className="ruleLibraryPlatformGrid">
+            <label>小火箭专用来源<small className="ruleLibraryFieldHint">可选。留空时使用上面的通用规则。</small><textarea value={shadowrocketEntries} onChange={(event) => setShadowrocketEntries(event.target.value)} placeholder={'RULE-SET,https://example.com/shadowrocket.list\nDOMAIN-SET,https://example.com/domain.list'} /></label>
+            <label>Clash 专用来源<small className="ruleLibraryFieldHint">可选。留空时使用上面的通用规则。</small><textarea value={clashEntries} onChange={(event) => setClashEntries(event.target.value)} placeholder={'RULE-SET,https://example.com/direct.txt\nRULE-SET,https://example.com/cncidr.txt'} /></label>
+          </div>
           <footer><button type="button" className="ghost" onClick={closeEditor}>取消</button><button type="submit" className="primary" disabled={saving}>{saving ? "保存中…" : editingId ? "保存规则集" : "新增规则集"}</button></footer>
         </form>
       </section>

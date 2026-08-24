@@ -1,4 +1,6 @@
 export type RuleSetEntry = { type: string; value: string; options?: string[] };
+export type RuleSetPlatform = "shadowrocket" | "clash";
+export type RuleSetPlatformSources = Partial<Record<RuleSetPlatform, RuleSetEntry[]>>;
 
 function splitRuleLine(line: string) {
   return line.split(",").map((part) => part.trim());
@@ -17,7 +19,7 @@ export function parseRuleSetEntries(input: string | unknown[]) {
       if (parts[1]) entries.push({ type, value: parts[1], options: parts.slice(3).filter(Boolean) });
       continue;
     }
-    if (["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "IP-CIDR", "IP-CIDR6", "GEOIP", "GEOSITE"].includes(type) && parts[1]) {
+    if (["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-SET", "IP-CIDR", "IP-CIDR6", "GEOIP", "GEOSITE"].includes(type) && parts[1]) {
       entries.push({ type, value: parts[1], options: parts.slice(3).filter(Boolean) });
     } else if (type === "FINAL") {
       // FINAL is a routing fallback, not a reusable ruleset entry.
@@ -52,6 +54,24 @@ export function dedupeEntries(entries: RuleSetEntry[]) {
   });
 }
 
+export function normalizePlatformSources(input: unknown): RuleSetPlatformSources {
+  let value = input;
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { value = {}; }
+  }
+  if (!value || typeof value !== "object") return {};
+  const record = value as Record<string, unknown>;
+  const result: RuleSetPlatformSources = {};
+  for (const platform of ["shadowrocket", "clash"] as const) {
+    const source = record[platform];
+    if (typeof source === "string" || Array.isArray(source)) {
+      const entries = parseRuleSetEntries(source);
+      if (entries.length) result[platform] = entries;
+    }
+  }
+  return result;
+}
+
 function generatedLine(entry: RuleSetEntry, policy: string) {
   if (entry.type === "GEOSITE") {
     const value = entry.value.startsWith("geosite:") ? entry.value : `geosite:${entry.value}`;
@@ -67,7 +87,7 @@ function rulePolicy(parts: string[]) {
 
 export type TemporaryRule = { groupName: string; type: string; value: string; policy?: string; options?: string[] };
 
-export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: string; entries: RuleSetEntry[]; status?: string; enabled?: boolean | number }>, bindings: Array<{ groupName: string; ruleSetId: string }> | Record<string, string>) {
+export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: string; entries: RuleSetEntry[]; platformSources?: RuleSetPlatformSources | string; status?: string; enabled?: boolean | number }>, bindings: Array<{ groupName: string; ruleSetId: string }> | Record<string, string>, platform: RuleSetPlatform = "shadowrocket") {
   const bindingEntries = Array.isArray(bindings) ? bindings : Object.entries(bindings).map(([groupName, ruleSetId]) => ({ groupName, ruleSetId }));
   const setById = new Map(ruleSets.filter((set) => set.status !== "deleted" && set.enabled !== false && set.enabled !== 0).map((set) => [set.id, set]));
   const bindingByGroup = new Map(bindingEntries.filter((item) => item.groupName && item.ruleSetId).map((item) => [item.groupName.trim().toLowerCase(), item.ruleSetId]));
@@ -94,7 +114,9 @@ export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: stri
   for (const [groupKey, ruleSetId] of bindingByGroup) {
     const set = setById.get(ruleSetId);
     if (!set) continue;
-    generated.set(groupKey, dedupeEntries(set.entries || []).map((entry) => generatedLine(entry, bindingEntries.find((item) => item.groupName.trim().toLowerCase() === groupKey)?.groupName.trim() || groupKey)));
+    const platformSources = normalizePlatformSources(set.platformSources);
+    const entries = platformSources[platform]?.length ? platformSources[platform] : set.entries;
+    generated.set(groupKey, dedupeEntries(entries || []).map((entry) => generatedLine(entry, bindingEntries.find((item) => item.groupName.trim().toLowerCase() === groupKey)?.groupName.trim() || groupKey)));
   }
   const fallbackIndex = Math.max(ruleStart + 1, lines.findIndex((line, index) => index > ruleStart && line.trim().toUpperCase().startsWith("FINAL,")));
   const insertAt = new Map<number, string[]>();

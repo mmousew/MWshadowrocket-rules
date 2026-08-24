@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
-import { parseRuleSetEntries } from "../../lib/rule-set-core";
+import { normalizePlatformSources, parseRuleSetEntries } from "../../lib/rule-set-core";
 import { createRuleSet, deleteRuleSet, ensureRuleSetLibrary, listRuleSetBindings, listRuleSetUsages, listRuleSets, toClient, updateRuleSet, type RuleSetUsageRow } from "../../lib/rule-sets";
 
 function clientRows(rows: Awaited<ReturnType<typeof listRuleSets>>, usages: RuleSetUsageRow[] = []) {
@@ -27,9 +27,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { name?: string; description?: string; entries?: string | unknown[]; source?: string };
+    const body = await request.json() as { name?: string; description?: string; entries?: string | unknown[]; platformSources?: unknown; source?: string };
     const entries = Array.isArray(body.entries) ? parseRuleSetEntries(body.entries) : parseRuleSetEntries(String(body.entries || ""));
-    const row = await createRuleSet({ name: String(body.name || ""), description: body.description, entries, source: body.source });
+    const row = await createRuleSet({ name: String(body.name || ""), description: body.description, entries, platformSources: normalizePlatformSources(body.platformSources), source: body.source });
     return NextResponse.json({ ruleSet: toClient(row), ruleSets: clientRows(await listRuleSets(), await listRuleSetUsages()) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "新增规则集失败" }, { status: 422 });
@@ -39,11 +39,11 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { id?: string; name?: string; description?: string; entries?: string | unknown[]; source?: string; visible?: boolean; enabled?: boolean };
+    const body = await request.json() as { id?: string; name?: string; description?: string; entries?: string | unknown[]; platformSources?: unknown; source?: string; visible?: boolean; enabled?: boolean };
     const id = String(body.id || "").trim();
     if (!id) throw new Error("规则集不存在");
     const entries = body.entries === undefined ? undefined : Array.isArray(body.entries) ? parseRuleSetEntries(body.entries) : parseRuleSetEntries(String(body.entries || ""));
-    const row = await updateRuleSet(id, { name: body.name, description: body.description, entries, source: body.source, visible: body.visible, enabled: body.enabled });
+    const row = await updateRuleSet(id, { name: body.name, description: body.description, entries, platformSources: body.platformSources === undefined ? undefined : normalizePlatformSources(body.platformSources), source: body.source, visible: body.visible, enabled: body.enabled });
     return NextResponse.json({ ruleSet: toClient(row), ruleSets: clientRows(await listRuleSets(), await listRuleSetUsages()) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "保存规则集失败" }, { status: 422 });

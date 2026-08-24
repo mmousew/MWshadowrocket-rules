@@ -578,6 +578,8 @@ button,input,select,textarea { max-width:100%; }
 .ruleLibraryModalForm label { display:block; color:#4e5e55; font-size:11px; font-weight:700; }
 .ruleLibraryModalForm input,.ruleLibraryModalForm textarea { width:100%; margin-top:7px; border:1px solid #dce3de; border-radius:10px; padding:11px 12px; color:var(--ink); background:#fbfcfb; outline:0; font:12px/1.5 inherit; }
 .ruleLibraryModalForm textarea { min-height:260px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace; line-height:1.55; }
+.ruleLibraryPlatformGrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.ruleLibraryPlatformGrid textarea { min-height:180px; }
 .ruleLibraryModalForm input:focus,.ruleLibraryModalForm textarea:focus { border-color:#5ba480; box-shadow:0 0 0 3px #5ba48026; }
 .ruleLibraryFieldHint { display:block; margin-top:5px; color:#87958c; font-size:9px; font-weight:400; line-height:1.5; }
 .ruleLibraryModalForm footer { display:flex; justify-content:flex-end; gap:9px; margin-top:4px; }
@@ -587,6 +589,7 @@ button,input,select,textarea { max-width:100%; }
   .ruleLibraryActions { width:100%; }
   .ruleLibraryActions button { flex:1; }
   .ruleLibraryModalForm .fieldGrid { grid-template-columns:1fr; }
+  .ruleLibraryPlatformGrid { grid-template-columns:1fr; }
   .ruleLibraryModalForm footer { flex-direction:column-reverse; }
   .ruleLibraryModalForm footer button { width:100%; }
 }

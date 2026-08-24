@@ -65,6 +65,7 @@ export const ruleSets = sqliteTable("rule_sets", {
   description: text("description").notNull().default(""),
   kind: text("kind").notNull().default("managed"),
   entries: text("entries").notNull().default("[]"),
+  platformSources: text("platform_sources").notNull().default("{}"),
   source: text("source").notNull().default(""),
   status: text("status").notNull().default("active"),
   visible: integer("visible", { mode: "boolean" }).notNull().default(true),
