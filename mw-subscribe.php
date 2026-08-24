@@ -5,7 +5,10 @@ declare(strict_types=1);
 // This relay only downloads and serves configuration text. It never carries
 // proxy traffic.
 const UPSTREAM_BASE = 'https://mw-rules-manager.mousew.chatgpt.site/api/';
-const CACHE_DIR = '/home/cardlife/.mw-subscription-cache';
+// The web PHP worker may not have write access to the account home directory
+// on shared hosting. Keep the cache outside the public document root, but in
+// the worker-writable system temporary directory.
+const CACHE_DIR = '/tmp/mw-subscription-cache-656577';
 
 function failResponse(int $status, string $message): never
 {
