@@ -97,6 +97,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     if (!airportUrls.length && !inlineContent.length) return new NextResponse("尚未配置机场来源", { status: 503 });
     const userAgent = request.headers.get("user-agent") || "";
     const requestedFormat = request.nextUrl.searchParams.get("format");
+    const requestedConfigName = request.nextUrl.searchParams.get("name")?.trim() || request.nextUrl.searchParams.get("filename")?.trim() || "";
     const shadowrocketRules = requestedFormat === "shadowrocket-rules";
     const shadowrocket = shadowrocketRules || requestedFormat === "shadowrocket" || /shadowrocket/i.test(userAgent);
     const subscriptionClient = shadowrocket ? "shadowrocket" as const : "clash" as const;
@@ -168,11 +169,12 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       : shadowrocket
         ? buildShadowrocketConfig(ruleContent, airportContent, hostMappings, ruleConfigName)
         : buildClashConfig(ruleContent, airportContent, hostMappings, ruleConfigName);
+    const outputName = (requestedConfigName || profileName).slice(0, 80).trim() || "订阅配置";
     return new NextResponse(config, {
       headers: {
         "Content-Type": shadowrocket ? "text/plain; charset=utf-8" : "text/yaml; charset=utf-8",
-        "Content-Disposition": configFilename(profileName, shadowrocketRules || shadowrocket ? "conf" : "yaml"),
-        "X-MW-Config-Name": encodeURIComponent(profileName),
+        "Content-Disposition": configFilename(outputName, shadowrocketRules || shadowrocket ? "conf" : "yaml"),
+        "X-MW-Config-Name": encodeURIComponent(outputName),
         // Always return the newest airport/rules merge after a client update.
         // Caching the generated profile can make one airport appear broken after
         // another source has just been fixed.
