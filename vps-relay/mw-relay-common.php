@@ -168,8 +168,8 @@ function mw_relay_send(string $body, array $meta, string $format, string $defaul
     header('X-Content-Type-Options: nosniff');
     $payload = mw_relay_apply_name($body, $format, $name);
     if (mw_relay_accepts_gzip()) {
-        $compressed = @gzencode($body, 6, ZLIB_ENCODING_GZIP);
-        if (is_string($compressed) && strlen($compressed) < strlen($body)) {
+        $compressed = @gzencode($payload, 6, ZLIB_ENCODING_GZIP);
+        if (is_string($compressed) && strlen($compressed) < strlen($payload)) {
             $payload = $compressed;
             header('Content-Encoding: gzip');
         }
@@ -187,10 +187,15 @@ function mw_relay_handle(array $options): never
     $name = mw_relay_clean_name($_GET['name'] ?? '');
     [$bodyFile, $metaFile] = mw_relay_cache_files($token, $cacheKey);
     $cached = mw_relay_read_cache($bodyFile, $metaFile, $format);
+    $requestCacheControl = strtolower((string) ($_SERVER['HTTP_CACHE_CONTROL'] ?? ''));
+    $forceRefresh = (($_GET['refresh'] ?? '') === '1')
+        || str_contains($requestCacheControl, 'no-cache')
+        || str_contains($requestCacheControl, 'no-store')
+        || strtolower((string) ($_SERVER['HTTP_PRAGMA'] ?? '')) === 'no-cache';
 
     // Existing subscriptions must never wait for a slow or blocked source.
     // Send stale data first; PHP-FPM can refresh it after the client receives it.
-    if ($cached !== null) {
+    if ($cached !== null && !$forceRefresh) {
         $state = $cached['age'] <= MW_RELAY_CACHE_TTL ? 'cache' : 'stale';
         mw_relay_send($cached['body'], $cached['meta'], $format, (string) $options['defaultFilename'], $state, $name);
         if ($cached['age'] <= MW_RELAY_CACHE_TTL) exit;
@@ -208,8 +213,14 @@ function mw_relay_handle(array $options): never
                 : '',
         ];
         mw_relay_write_cache($bodyFile, $metaFile, $body, $meta);
-        if ($cached === null) mw_relay_send($body, $meta, $format, (string) $options['defaultFilename'], 'fresh', $name);
-    } elseif ($cached === null) {
+        if ($forceRefresh || $cached === null) mw_relay_send($body, $meta, $format, (string) $options['defaultFilename'], 'fresh', $name);
+    } elseif ($cached !== null) {
+        // A client-initiated refresh must see the new source list immediately.
+        // If the upstream is unavailable, retain the last known-good response.
+        if ($forceRefresh) mw_relay_send($cached['body'], $cached['meta'], $format, (string) $options['defaultFilename'], 'fallback', $name);
+        // A stale non-refresh request already received its stale response and
+        // is only being refreshed in the background.
+    } else {
         mw_relay_fail(502, 'Subscription temporarily unavailable');
     }
     exit;

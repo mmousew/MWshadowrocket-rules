@@ -63,8 +63,15 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       encryptedSource = record.encrypted_source || null;
       try {
         const profile = await getClashProfile(record.profile_id || "default");
-        if (profile?.name?.trim()) profileName = profile.name.trim();
-        if (profile?.rule_config_id?.trim()) ruleConfigId = profile.rule_config_id.trim();
+        if (profile) {
+          // A managed link belongs to its profile. Always read the current
+          // profile source here instead of trusting the link's historical
+          // snapshot; this makes source removal/update effective even when an
+          // older link row or relay cache was not refreshed yet.
+          encryptedSource = profile.encrypted_source || null;
+          if (profile.name?.trim()) profileName = profile.name.trim();
+          if (profile.rule_config_id?.trim()) ruleConfigId = profile.rule_config_id.trim();
+        }
       } catch {
         // 文件名不能影响订阅本身的生成；数据库暂时不可用时使用通用名称。
       }
