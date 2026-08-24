@@ -192,11 +192,9 @@ function relayUrl(value: string, name: string, endpoint: "mw-subscribe.php" | "m
   const url = new URL(`https://656577.xyz/${endpoint}`);
   url.searchParams.set("token", token);
   if (name.trim()) url.searchParams.set("name", name.trim());
-  // Ask the VPS relay to refresh from the current profile on every client
-  // update. The relay still falls back to its last good cache if an upstream
-  // airport is temporarily unavailable, so removing a source is not hidden
-  // by an old five-minute response cache.
-  url.searchParams.set("refresh", "1");
+  // Public client links must stay fast and read the VPS last-known-good cache.
+  // The management page refreshes the profile separately; forcing an upstream
+  // fetch on every Shadowrocket scan makes the client wait for a blocked site.
   if (endpoint === "mw-clash.php") url.searchParams.set("compat", "clashxmeta");
   return url.toString();
 }

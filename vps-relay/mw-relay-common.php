@@ -194,7 +194,31 @@ function mw_relay_handle(array $options): never
         || strtolower((string) ($_SERVER['HTTP_PRAGMA'] ?? '')) === 'no-cache';
 
     // Existing subscriptions must never wait for a slow or blocked source.
-    // Send stale data first; PHP-FPM can refresh it after the client receives it.
+    // A forced refresh is used by the management page to make source changes
+    // visible. Return the last known-good response first, then refresh the
+    // cache after PHP-FPM has finished the client response. This is important
+    // for Shadowrocket, which treats a slow subscription endpoint as a timeout.
+    if ($cached !== null && $forceRefresh) {
+        mw_relay_send($cached['body'], $cached['meta'], $format, (string) $options['defaultFilename'], 'refreshing', $name);
+        mw_relay_finish_response();
+
+        [$ok, $body, $headers] = mw_relay_fetch((string) $options['upstream'], $format, 25);
+        if ($ok) {
+            $meta = [
+                'format' => $format,
+                'fetchedAt' => gmdate('c'),
+                'contentDisposition' => $headers['content-disposition'] ?? '',
+                'configName' => isset($headers['x-mw-config-name'])
+                    ? mw_relay_clean_name(rawurldecode((string) $headers['x-mw-config-name']))
+                    : '',
+            ];
+            mw_relay_write_cache($bodyFile, $metaFile, $body, $meta);
+        }
+        exit;
+    }
+
+    // Non-forced requests also serve stale data immediately and refresh it in
+    // the background when the cache has expired.
     if ($cached !== null && !$forceRefresh) {
         $state = $cached['age'] <= MW_RELAY_CACHE_TTL ? 'cache' : 'stale';
         mw_relay_send($cached['body'], $cached['meta'], $format, (string) $options['defaultFilename'], $state, $name);
