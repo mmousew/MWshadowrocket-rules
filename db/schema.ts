@@ -91,3 +91,18 @@ export const ruleSetMigrations = sqliteTable("rule_set_migrations", {
   version: integer("version").notNull(),
   createdAt: integer("created_at").notNull(),
 });
+
+export const groupTempRules = sqliteTable("group_temp_rules", {
+  id: text("id").primaryKey(),
+  ruleConfigId: text("rule_config_id").notNull(),
+  groupName: text("group_name").notNull(),
+  type: text("type").notNull(),
+  value: text("value").notNull(),
+  policy: text("policy").notNull(),
+  options: text("options").notNull().default("[]"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => ({
+  configIdx: index("group_temp_rules_config_idx").on(table.ruleConfigId),
+  groupIdx: index("group_temp_rules_group_idx").on(table.groupName),
+}));

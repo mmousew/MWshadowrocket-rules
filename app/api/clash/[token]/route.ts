@@ -4,7 +4,8 @@ import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
 import { ensureRuleConfigAssignments, getRuleConfig } from "../../../lib/rule-configs";
-import { composeBoundRuleSets } from "../../../lib/rule-set-core";
+import { composeBoundRuleSets, composeTemporaryRules } from "../../../lib/rule-set-core";
+import { listGroupTempRules } from "../../../lib/group-temp-rules";
 import { ensureRuleSetLibrary, listRuleSetBindings, repairChinaDirectState } from "../../../lib/rule-sets";
 
 const OWNER = "mmousew";
@@ -108,6 +109,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       const ruleSets = await ensureRuleSetLibrary();
       const bindings = await listRuleSetBindings(ruleConfigId);
       ruleContent = composeBoundRuleSets(ruleContent, ruleSets, bindings.map((item) => ({ groupName: item.group_name, ruleSetId: item.rule_set_id })));
+      const temporaryRules = await listGroupTempRules(ruleConfigId);
+      ruleContent = composeTemporaryRules(ruleContent, temporaryRules.map((item) => ({ groupName: item.groupName, type: item.type, value: item.value, policy: item.policy, options: item.options })));
     } catch (error) {
       console.error("[clash] shared rule-set composition failed", error);
       // The legacy content remains a safe fallback if the shared ruleset library is unavailable.

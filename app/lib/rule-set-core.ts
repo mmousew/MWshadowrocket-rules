@@ -65,6 +65,8 @@ function rulePolicy(parts: string[]) {
   return parts.length >= 3 ? parts[2].trim() : "";
 }
 
+export type TemporaryRule = { groupName: string; type: string; value: string; policy?: string; options?: string[] };
+
 export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: string; entries: RuleSetEntry[]; status?: string; enabled?: boolean | number }>, bindings: Array<{ groupName: string; ruleSetId: string }> | Record<string, string>) {
   const bindingEntries = Array.isArray(bindings) ? bindings : Object.entries(bindings).map(([groupName, ruleSetId]) => ({ groupName, ruleSetId }));
   const setById = new Map(ruleSets.filter((set) => set.status !== "deleted" && set.enabled !== false && set.enabled !== 0).map((set) => [set.id, set]));
@@ -109,4 +111,29 @@ export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: stri
   }
   if (insertAt.has(lines.length)) result.push(...Array.from(new Set(insertAt.get(lines.length))));
   return result.join("\n");
+}
+
+/** Add scheme-scoped temporary rules without changing the shared rule-set library. */
+export function composeTemporaryRules(content: string, temporaryRules: TemporaryRule[]) {
+  if (!temporaryRules.length) return content;
+  const lines = content.split(/\r?\n/);
+  const ruleStart = lines.findIndex((line) => line.trim() === "[Rule]");
+  if (ruleStart < 0) return content;
+  const ruleEnd = lines.findIndex((line, index) => index > ruleStart && /^\s*\[[^\]]+\]\s*$/.test(line));
+  const end = ruleEnd < 0 ? lines.length : ruleEnd;
+  const existing = new Set(lines.slice(ruleStart + 1, end).map((line) => line.trim()).filter(Boolean));
+  const generated: string[] = [];
+  for (const item of temporaryRules) {
+    const type = String(item.type || "").trim().toUpperCase();
+    const value = String(item.value || "").trim();
+    const policy = String(item.policy || item.groupName || "").trim();
+    if (!type || !value || !policy) continue;
+    const line = generatedLine({ type, value, options: item.options || [] }, policy);
+    if (!existing.has(line) && !generated.includes(line)) generated.push(line);
+  }
+  if (!generated.length) return content;
+  const finalIndex = lines.findIndex((line, index) => index > ruleStart && index < end && line.trim().toUpperCase().startsWith("FINAL,"));
+  const insertAt = finalIndex >= 0 ? finalIndex : end;
+  lines.splice(insertAt, 0, ...generated);
+  return lines.join("\n");
 }

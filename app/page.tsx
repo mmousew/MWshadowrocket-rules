@@ -10,6 +10,7 @@ type Rule = { index: number; type: string; value: string; policy: string; option
 type CatalogResult = { name: string; file: string; url: string; source: string };
 type RuleConfigRecord = { id: string; name: string; content: string; status: "active" | "deleted"; is_template_default?: number; created_at: number; updated_at: number; profile_count?: number };
 type RuleSetRecord = { id: string; name: string; description: string; kind: string; entries: Array<{ type: string; value: string; options?: string[] }>; source: string; status: string; visible: boolean; enabled: boolean; isBuiltin?: boolean; entryCount: number; sortOrder: number; createdAt: number; updatedAt: number; usedBy?: Array<{ configId: string; configName: string; groupNames: string[] }> };
+type TempRuleRecord = { id: string; configId: string; groupName: string; type: string; value: string; policy: string; options: string[]; createdAt: number; updatedAt: number };
 type Editor =
   | { mode: "group"; index: number | null; name: string; items: string; isNew?: boolean; ruleSetId?: string; regularKinds?: string[]; regularItems?: Record<string, string>; regularRuleSets?: Record<string, string>; customEnabled?: boolean; customName?: string; customItems?: string; customRuleSetId?: string; childKinds?: string[]; childItems?: Record<string, string>; availableGroupItems?: Record<string, string> }
   | { mode: "rule"; index: number | null; type: string; value: string; policy: string; options: string };
@@ -17,7 +18,7 @@ type GroupDeleteImpact = { rules: Rule[]; finalRule: Rule | null; parentGroups: 
 type DeleteTarget = { kind: "group"; group: Group; impact: GroupDeleteImpact } | { kind: "rule"; rule: Rule };
 type AirportSourceRecord = { id: string; name: string; kind: "url" | "content"; sourceUrl: string; hidden: boolean; nodeCount: number | null; createdAt: number; updatedAt: number };
 type AirportNodeRecord = { id: string; name: string; type: string; server: string; port: number | null; status: "valid" | "invalid" | "unloaded"; reason: string; latency?: number };
-type GroupRuleViewItem = { key: string; type: string; value: string; policy: string; source: string };
+type GroupRuleViewItem = { key: string; type: string; value: string; policy: string; source: string; tempId?: string };
 
 const RULE_TYPES = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "RULE-SET", "GEOSITE", "IP-CIDR", "IP-CIDR6", "GEOIP"];
 const RULE_TYPE_META: Record<string, { label: string; hint: string }> = {
@@ -234,6 +235,8 @@ export default function Home() {
   const [selectedRuleConfigId, setSelectedRuleConfigId] = useState(() => typeof window === "undefined" ? "default" : new URL(window.location.href).searchParams.get("config") || "default");
   const [availableRuleSets, setAvailableRuleSets] = useState<RuleSetRecord[]>([]);
   const [ruleSetBindings, setRuleSetBindings] = useState<Record<string, string>>({});
+  const [tempRulesByGroup, setTempRulesByGroup] = useState<Record<string, TempRuleRecord[]>>({});
+  const [tempRulesConfigId, setTempRulesConfigId] = useState("");
   const [ruleSetsLoading, setRuleSetsLoading] = useState(false);
   const [ruleSetBusy, setRuleSetBusy] = useState(false);
   const [ruleConfigBusy, setRuleConfigBusy] = useState(false);
@@ -309,6 +312,24 @@ export default function Home() {
       .finally(() => setRuleSetsLoading(false));
   }, [selectedRuleConfigId]);
 
+  useEffect(() => {
+    if (!selectedRuleConfigId) return;
+    fetch(`/api/group-temp-rules?config=${encodeURIComponent(selectedRuleConfigId)}`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (response.status === 401) { setAuthRequired(true); return; }
+        if (!response.ok) throw new Error(data.error || "读取临时规则失败");
+        const grouped: Record<string, TempRuleRecord[]> = {};
+        for (const item of (data.rules || []) as TempRuleRecord[]) {
+          const key = policyKey(item.groupName);
+          grouped[key] = [...(grouped[key] || []), item];
+        }
+        setTempRulesByGroup(grouped);
+        setTempRulesConfigId(selectedRuleConfigId);
+      })
+      .catch((cause) => { setTempRulesConfigId(""); setError(cause instanceof Error ? cause.message : "读取临时规则失败"); });
+  }, [selectedRuleConfigId]);
+
   const parsed = useMemo(() => parseConfig(content), [content]);
   const conflicts = useMemo(() => {
     const issues = [...getConflicts(parsed.groups, parsed.rules), ...validateRuleConfiguration(content)];
@@ -320,6 +341,7 @@ export default function Home() {
   }, [content, parsed.groups, parsed.rules, parsed.finalRule, parsed.finalRuleCount]);
   const duplicateRuleCount = useMemo(() => getDuplicateRuleCount(parsed.rules), [parsed.rules]);
   const selectedRuleConfig = useMemo(() => ruleConfigs.find((config) => config.id === selectedRuleConfigId), [ruleConfigs, selectedRuleConfigId]);
+  const activeTempRulesByGroup = tempRulesConfigId === selectedRuleConfigId ? tempRulesByGroup : {};
   const isSchemeView = schemeTabs.some((item) => item.id === view);
   const inlineRuleSets = useMemo(() => parsed.rules.filter((rule) => rule.type === "RULE-SET"), [parsed.rules]);
   const domainRules = useMemo(() => parsed.rules.filter((rule) => rule.type !== "RULE-SET" && rule.type !== "FINAL"), [parsed.rules]);
@@ -775,7 +797,9 @@ export default function Home() {
   function renderGroupRow(group: Group, system = false) {
     const linked = parsed.rules.filter((rule) => rule.policy === group.name);
     const isFinalGroup = parsed.finalRule?.policy === group.name;
-    const linkedCount = linked.length + (isFinalGroup ? 1 : 0);
+    const boundRuleSet = availableRuleSets.find((ruleSet) => ruleSet.id === ruleSetBindings[policyKey(group.name)]) || null;
+    const tempCount = activeTempRulesByGroup[policyKey(group.name)]?.length || 0;
+    const ruleSetSummary = boundRuleSet ? `${boundRuleSet.entryCount} 条${tempCount ? `，${tempCount} 条临时` : ""}` : tempCount ? `未绑定规则集 · ${tempCount} 条临时` : "未绑定规则集";
     const rowClass = `listRow groupListRow ${system ? "systemGroupRow" : ""} ${draggingGroup === group.name ? "dragging" : ""} ${dragTargetGroup === group.name && draggingGroup !== group.name ? "dropTarget" : ""}`;
     return <div
       className={rowClass}
@@ -801,7 +825,7 @@ export default function Home() {
       onPointerUp={() => finishGroupDrag()}
       onPointerCancel={() => finishGroupDrag("", "")}
       onKeyDown={(event) => moveGroupWithKeyboard(event, group)}
-    ><span aria-hidden="true">⠿</span></button>}<div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置这个分组使用的节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div>{!system && <div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div>}{policyKey(group.name) === "cn" && (() => { const chinaRuleSet = availableRuleSets.find((ruleSet) => ruleSet.isBuiltin && ruleSet.name.trim().toLowerCase() === "cn-国内直连（综合）".toLowerCase()) || availableRuleSets.find((ruleSet) => ruleSet.name.trim().toLowerCase() === "cn国内直连"); return chinaRuleSet ? <div className="groupRuleSetSwitches" aria-label="CN规则集开关"><label><input type="checkbox" checked={chinaRuleSet.visible !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "visible", event.target.checked)} />显示</label><label><input type="checkbox" checked={chinaRuleSet.enabled !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "enabled", event.target.checked)} />启用</label></div> : null; })()}<span className="pill">{linkedCount} 条规则</span><button onClick={() => showGroupRules(group)}>查看规则</button><button onClick={() => editGroup(group)}>节点筛选</button>{isProtectedGroupName(group.name) ? <span className="pill" title="系统保留分组，不能删除或改名">系统保留</span> : <button className="danger" onClick={() => removeGroup(group)}>删除</button>}</div>;
+    ><span aria-hidden="true">⠿</span></button>}<div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置这个分组使用的节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div>{!system && <div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div>}{policyKey(group.name) === "cn" && (() => { const chinaRuleSet = availableRuleSets.find((ruleSet) => ruleSet.isBuiltin && ruleSet.name.trim().toLowerCase() === "cn-国内直连（综合）".toLowerCase()) || availableRuleSets.find((ruleSet) => ruleSet.name.trim().toLowerCase() === "cn国内直连"); return chinaRuleSet ? <div className="groupRuleSetSwitches" aria-label="CN规则集开关"><label><input type="checkbox" checked={chinaRuleSet.visible !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "visible", event.target.checked)} />显示</label><label><input type="checkbox" checked={chinaRuleSet.enabled !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "enabled", event.target.checked)} />启用</label></div> : null; })()}<button type="button" className="ruleSetCallButton" onClick={() => showGroupRules(group)}><span>调用规则集</span><small>{ruleSetSummary}</small></button><button type="button" onClick={() => editGroup(group)}>节点筛选</button>{isProtectedGroupName(group.name) ? <span className="pill" title="系统保留分组，不能删除或改名">系统保留</span> : <button className="danger" onClick={() => removeGroup(group)}>删除</button>}</div>;
   }
 
   if (loading) return <div className="loading"><span className="brandMark">MW</span><p>正在读取 GitHub 配置…</p></div>;
@@ -851,7 +875,7 @@ export default function Home() {
       </section>
 
       {editor && <EditorModal editor={editor} setEditor={setEditor} policies={policies} countryGroups={parsed.groups.filter((group) => COUNTRY_GROUP_NAMES.has(group.name)).map((group) => group.name)} existingGroups={parsed.groups.filter((group) => !COUNTRY_GROUP_NAMES.has(group.name)).map((group) => group.name)} ruleSets={availableRuleSets} error={error} onSubmit={submitEditor} onImportCatalog={importCatalogRules} />}
-      {groupRulesModal && <GroupRulesModal group={groupRulesModal} rules={parsed.rules} finalRule={parsed.finalRule} ruleSet={availableRuleSets.find((ruleSet) => ruleSet.id === ruleSetBindings[policyKey(groupRulesModal.name)]) || null} query={groupRulesQuery} onQueryChange={setGroupRulesQuery} onClose={() => setGroupRulesModal(null)} />}
+      {groupRulesModal && <GroupRulesModal configId={selectedRuleConfigId} group={groupRulesModal} ruleSet={availableRuleSets.find((ruleSet) => ruleSet.id === ruleSetBindings[policyKey(groupRulesModal.name)]) || null} tempRules={activeTempRulesByGroup[policyKey(groupRulesModal.name)] || []} onTempRulesChange={(rules) => { setTempRulesConfigId(selectedRuleConfigId); setTempRulesByGroup((current) => ({ ...current, [policyKey(groupRulesModal.name)]: rules })); }} query={groupRulesQuery} onQueryChange={setGroupRulesQuery} onClose={() => setGroupRulesModal(null)} />}
       {deleteTarget && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭删除确认" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null); }} onKeyDown={(event) => { if (event.key === "Escape") setDeleteTarget(null); }}><section className="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><span className="confirmMark">!</span><h2 id="delete-title">确认删除？</h2><p>{deleteTarget.kind === "group" ? `将删除代理分组「${deleteTarget.group.name}」，并清理当前方案内的引用。` : `将删除规则「${deleteTarget.rule.value}」。`}</p>{deleteTarget.kind === "group" && <ul className="deleteImpactList"><li>{deleteTarget.impact.rules.length} 条规则会被移除</li><li>{deleteTarget.impact.parentGroups.length} 个分组会移除对它的引用{deleteTarget.impact.parentGroups.length ? "，空分组会自动保留 DIRECT" : ""}</li>{deleteTarget.impact.finalRule && <li>FINAL 会自动改为 DIRECT，保证配置仍可用</li>}</ul>}<small>删除会先暂存，点击“保存到 GitHub”后才会正式生效。</small><footer><button className="ghost" onClick={() => setDeleteTarget(null)}>取消</button><button className="deleteConfirm" onClick={confirmDelete}>确认删除</button></footer></section></div>}
       {preview && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭配置预览" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(false); }} onKeyDown={(event) => { if (event.key === "Escape") setPreview(false); }}><section className="previewModal" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header><div><h2 id="preview-title">配置预览</h2><p>{content.split(/\r?\n/).length.toLocaleString()} 行 · {repository}</p></div><button onClick={() => setPreview(false)}>×</button></header><pre>{content}</pre></section></div>}
     </main>
@@ -1507,14 +1531,14 @@ function AirportList({ sources, onSourcesChange, onError }: { sources: AirportSo
   </section>;
 }
 
-function GroupRulesModal({ group, rules, finalRule, ruleSet, query, onQueryChange, onClose }: { group: Group; rules: Rule[]; finalRule: Rule | null; ruleSet: RuleSetRecord | null; query: string; onQueryChange: (value: string) => void; onClose: () => void }) {
+function GroupRulesModal({ configId, group, ruleSet, tempRules, onTempRulesChange, query, onQueryChange, onClose }: { configId: string; group: Group; ruleSet: RuleSetRecord | null; tempRules: TempRuleRecord[]; onTempRulesChange: (rules: TempRuleRecord[]) => void; query: string; onQueryChange: (value: string) => void; onClose: () => void }) {
+  const [tempEditorId, setTempEditorId] = useState("");
+  const [tempType, setTempType] = useState("DOMAIN-SUFFIX");
+  const [tempValue, setTempValue] = useState("");
+  const [tempOptions, setTempOptions] = useState("");
+  const [tempError, setTempError] = useState("");
+  const [tempBusy, setTempBusy] = useState(false);
   const items = useMemo<GroupRuleViewItem[]>(() => {
-    const directRules = rules
-      .filter((rule) => policyKey(rule.policy) === policyKey(group.name))
-      .map((rule) => ({ key: `rule-${rule.index}`, type: rule.type, value: rule.value, policy: rule.policy, source: "直接规则" }));
-    const finalItems = finalRule && policyKey(finalRule.policy) === policyKey(group.name)
-      ? [{ key: `final-${finalRule.index}`, type: "FINAL", value: "未匹配流量", policy: finalRule.policy, source: "系统兜底" }]
-      : [];
     const ruleSetItems = ruleSet?.entries.map((entry, index) => ({
       key: `set-${ruleSet.id}-${index}`,
       type: entry.type,
@@ -1522,17 +1546,60 @@ function GroupRulesModal({ group, rules, finalRule, ruleSet, query, onQueryChang
       policy: group.name,
       source: `规则集 · ${ruleSet.name}`,
     })) || [];
-    return [...directRules, ...finalItems, ...ruleSetItems];
-  }, [finalRule, group.name, ruleSet, rules]);
+    const temporaryItems = tempRules.map((rule) => ({ key: `temp-${rule.id}`, type: rule.type, value: rule.value, policy: rule.policy || group.name, source: "临时规则", tempId: rule.id }));
+    return [...ruleSetItems, ...temporaryItems];
+  }, [group.name, ruleSet, tempRules]);
   const filteredItems = items.filter((item) => `${item.type} ${item.value} ${item.policy} ${item.source}`.toLowerCase().includes(query.trim().toLowerCase()));
   const ruleSetDisabled = Boolean(ruleSet && ruleSet.enabled === false);
 
+  function startTempEdit(rule?: TempRuleRecord) {
+    setTempError("");
+    setTempEditorId(rule?.id || "");
+    setTempType(rule?.type || "DOMAIN-SUFFIX");
+    setTempValue(rule?.value || "");
+    setTempOptions((rule?.options || []).join(","));
+  }
+
+  async function saveTempRule(event: FormEvent) {
+    event.preventDefault();
+    setTempBusy(true); setTempError("");
+    try {
+      const payload = { configId, groupName: group.name, type: tempType, value: tempValue, options: tempOptions.split(",").map((item) => item.trim()).filter(Boolean) };
+      const response = await fetch("/api/group-temp-rules", { method: tempEditorId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(tempEditorId ? { ...payload, id: tempEditorId } : payload) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存临时规则失败");
+      onTempRulesChange((data.rules || []) as TempRuleRecord[]);
+      startTempEdit();
+    } catch (cause) {
+      setTempError(cause instanceof Error ? cause.message : "保存临时规则失败");
+    } finally {
+      setTempBusy(false);
+    }
+  }
+
+  async function removeTempRule(rule: TempRuleRecord) {
+    if (!window.confirm(`删除「${rule.value}」这条临时规则？`)) return;
+    setTempBusy(true); setTempError("");
+    try {
+      const response = await fetch("/api/group-temp-rules", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id, configId, groupName: group.name }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "删除临时规则失败");
+      onTempRulesChange((data.rules || []) as TempRuleRecord[]);
+      if (tempEditorId === rule.id) startTempEdit();
+    } catch (cause) {
+      setTempError(cause instanceof Error ? cause.message : "删除临时规则失败");
+    } finally {
+      setTempBusy(false);
+    }
+  }
+
   return <div className="modalBackdrop" role="button" tabIndex={0} aria-label={`关闭${group.name}规则`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
     <section className="groupRulesModal" role="dialog" aria-modal="true" aria-labelledby="group-rules-title">
-      <header className="groupRulesModalHeader"><div><p className="eyebrow">GROUP RULES</p><h2 id="group-rules-title">{group.name}</h2><p>这里只显示已经加入当前分组的规则。</p></div><button type="button" aria-label="关闭" onClick={onClose}>×</button></header>
-      <div className="groupRulesSummary"><span><strong>{items.length}</strong> 条规则</span>{ruleSet ? <span className={ruleSetDisabled ? "groupRulesState disabled" : "groupRulesState"}>规则集：{ruleSet.name}{ruleSetDisabled ? " · 已停用" : ""}</span> : <span className="groupRulesState">未绑定规则集</span>}</div>
-      <label className="groupRulesSearch"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="搜索当前分组规则" aria-label="搜索当前分组规则" /></label>
-      <div className="groupRulesList">{filteredItems.length ? filteredItems.map((item) => <div className="groupRuleItem" key={item.key}><span className={`groupRuleType ${item.type === "FINAL" ? "final" : item.source.startsWith("规则集") ? "set" : ""}`}>{item.type}<small>{item.source}</small></span><div><strong>{item.value}</strong><p>策略：{item.policy}</p></div></div>) : <div className="groupRulesEmpty">{items.length ? "没有匹配的规则" : "当前分组暂无已加入规则"}</div>}</div>
+      <header className="groupRulesModalHeader"><div><p className="eyebrow">GROUP ROUTING</p><h2 id="group-rules-title">{group.name}</h2><p>规则集是共享内容；临时规则只影响当前方案的这个分组。</p></div><button type="button" aria-label="关闭" onClick={onClose}>×</button></header>
+      <div className="groupRulesSummary"><span><strong>{ruleSet?.entryCount || 0}</strong> 条规则{tempRules.length ? ` · ${tempRules.length} 条临时` : ""}</span>{ruleSet ? <span className={ruleSetDisabled ? "groupRulesState disabled" : "groupRulesState"}>调用规则集：{ruleSet.name}{ruleSetDisabled ? " · 已停用" : ""}</span> : <span className="groupRulesState">未调用规则集</span>}</div>
+      <label className="groupRulesSearch"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="搜索调用的规则或临时规则" aria-label="搜索调用的规则" /></label>
+      <div className="groupRulesList">{filteredItems.length ? filteredItems.map((item) => <div className="groupRuleItem" key={item.key}><span className={`groupRuleType ${item.source.startsWith("规则集") ? "set" : "temporary"}`}>{item.type}<small>{item.source}</small></span><div><strong>{item.value}</strong><p>策略：{item.policy}</p></div>{item.tempId && <div className="groupRuleItemActions"><button type="button" className="ghost" onClick={() => startTempEdit(tempRules.find((rule) => rule.id === item.tempId))}>编辑</button><button type="button" className="danger" disabled={tempBusy} onClick={() => { const rule = tempRules.find((candidate) => candidate.id === item.tempId); if (rule) void removeTempRule(rule); }}>删除</button></div>}</div>) : <div className="groupRulesEmpty">{items.length ? "没有匹配的规则" : "当前分组暂无规则集规则或临时规则"}</div>}</div>
+      <section className="temporaryRuleEditor"><div className="temporaryRuleEditorHead"><div><strong>{tempEditorId ? "编辑临时规则" : "添加临时规则"}</strong><small>只写入「{group.name}」和当前方案，不会修改规则集，也不会影响其它方案。</small></div>{tempEditorId && <button type="button" className="ghost" onClick={() => startTempEdit()}>新增一条</button>}</div><form onSubmit={saveTempRule}><div className="fieldGrid"><label>规则类型<select value={tempType} onChange={(event) => setTempType(event.target.value)}>{RULE_TYPES.map((type) => <option key={type} value={type}>{type} · {RULE_TYPE_META[type]?.label}</option>)}</select></label><label>附加选项<input value={tempOptions} onChange={(event) => setTempOptions(event.target.value)} placeholder="no-resolve（可留空）" /></label></div><label>规则内容 <small>{tempType === "DOMAIN-SUFFIX" ? "支持一行一条，保存时会批量添加" : RULE_TYPE_META[tempType]?.hint}</small><textarea rows={3} value={tempValue} onChange={(event) => setTempValue(event.target.value)} placeholder={tempType === "DOMAIN-SUFFIX" ? "例如：example.com\nexample.org" : "输入规则内容"} /></label>{tempError && <div className="temporaryRuleError" role="alert">{tempError}</div>}<footer><button type="submit" className="primary" disabled={tempBusy}>{tempBusy ? "保存中…" : tempEditorId ? "保存修改" : "添加临时规则"}</button></footer></form></section>
       <footer className="groupRulesModalFooter"><span>关闭后仍停留在当前方案。</span><button type="button" className="primary" onClick={onClose}>完成</button></footer>
     </section>
   </div>;
