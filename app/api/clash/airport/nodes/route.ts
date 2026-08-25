@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../../../lib/github-auth";
 import { getClashAirportSource } from "../../../../lib/clash-airport-sources";
-import { parseAirportProxies } from "../../../../lib/clash-config";
-import { getSourceSnapshot } from "../../../../lib/clash-links";
+import { getClashProxyId, parseAirportProxies } from "../../../../lib/clash-config";
+import { getClashProfile, getSourceSnapshot } from "../../../../lib/clash-links";
+import { decryptSourceUrl, parseSourceEntries } from "../../../../lib/clash-link";
 
 type ProxyRecord = Record<string, unknown>;
 
@@ -32,10 +33,30 @@ function validateProxy(proxy: ProxyRecord) {
 export async function GET(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   const id = request.nextUrl.searchParams.get("id")?.trim();
+  const profileId = request.nextUrl.searchParams.get("profileId")?.trim() || "";
   if (!id) return NextResponse.json({ error: "缺少机场来源 ID" }, { status: 422 });
 
   try {
-    const source = await getClashAirportSource(id);
+    let source = await getClashAirportSource(id);
+    if (!source && profileId) {
+      const profile = await getClashProfile(profileId);
+      const entries = profile?.encrypted_source ? parseSourceEntries(await decryptSourceUrl(profile.encrypted_source)) : [];
+      const entry = entries.find((item) => item.sourceId === id);
+      if (entry) {
+        source = {
+          id,
+          name: entry.name || "订阅来源",
+          kind: entry.kind,
+          sourceUrl: entry.kind === "url" ? entry.value : null,
+          content: entry.kind === "content" ? entry.value : null,
+          hidden: entry.hidden === true,
+          status: "active",
+          nodeCount: entry.kind === "content" ? parseAirportProxies(entry.value).length : null,
+          createdAt: 0,
+          updatedAt: 0,
+        };
+      }
+    }
     if (!source) return NextResponse.json({ error: "机场不存在" }, { status: 404 });
 
     let content = source.content;
@@ -51,7 +72,7 @@ export async function GET(request: NextRequest) {
       const server = text(record.server);
       const port = Number(record.port);
       return {
-        id: `${index}-${name}`,
+        id: getClashProxyId(proxy),
         name,
         type: text(record.type).toUpperCase() || "未知",
         server,

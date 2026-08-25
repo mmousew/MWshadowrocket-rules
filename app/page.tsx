@@ -1191,7 +1191,9 @@ function RuleConfigManager({ configs, selectedId, busy, onEdit, onCreate, onRena
 }
 
 function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports" }) {
-  type SourceRecord = { index: number; sourceId: string | null; name: string; kind: "url" | "content"; value: string | null; hidden: boolean; nodes: number | null };
+  type SourceSelection = { mode: "all" | "keyword" | "manual"; keywords: string; nodeIds: string[] };
+  type SourceRecord = { index: number; sourceId: string | null; name: string; kind: "url" | "content"; value: string | null; hidden: boolean; nodes: number | null; selection?: SourceSelection | null };
+  type ProfileNode = { id: string; name: string; type: string; server: string; port: number | null; status: "valid" | "invalid"; reason: string };
   type ProfileRecord = { id: string; name: string; ruleConfigId: string; ruleConfigName: string; sourceCount: number; nodeCount: number | null; updatedAt: number; sources?: SourceRecord[] };
   type RuleConfigOption = { id: string; name: string };
   type LinkRecord = { id: string; profileId: string; name: string; url: string; status: "active" | "revoked"; createdAt: number; revokedAt: number | null; legacy?: boolean };
@@ -1211,6 +1213,13 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
   const [qrLink, setQrLink] = useState("");
   const [qrLabel, setQrLabel] = useState("");
   const [ruleConfigs, setRuleConfigs] = useState<RuleConfigOption[]>([]);
+  const [nodePickerSource, setNodePickerSource] = useState<SourceRecord | null>(null);
+  const [nodePickerNodes, setNodePickerNodes] = useState<ProfileNode[]>([]);
+  const [nodePickerMode, setNodePickerMode] = useState<SourceSelection["mode"]>("all");
+  const [nodePickerKeywords, setNodePickerKeywords] = useState("");
+  const [nodePickerIds, setNodePickerIds] = useState<string[]>([]);
+  const [nodePickerBusy, setNodePickerBusy] = useState(false);
+  const [nodePickerError, setNodePickerError] = useState("");
 
   useEffect(() => { void loadPage(); }, []);
 
@@ -1318,6 +1327,58 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
     } finally { setBusy(false); }
   }
 
+  async function openNodePicker(source: SourceRecord) {
+    if (!editorProfileId || !source.sourceId) {
+      setError("这个来源缺少标识，无法保存独立筛选；请先更新当前配置后重试");
+      return;
+    }
+    const selection = source.selection || { mode: "all" as const, keywords: "", nodeIds: [] };
+    setNodePickerSource(source);
+    setNodePickerMode(selection.mode);
+    setNodePickerKeywords(selection.keywords || "");
+    setNodePickerIds(selection.nodeIds || []);
+    setNodePickerNodes([]);
+    setNodePickerError("");
+    setNodePickerBusy(true);
+    try {
+      const response = await fetch(`/api/clash/airport/nodes?id=${encodeURIComponent(source.sourceId)}&profileId=${encodeURIComponent(editorProfileId)}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "读取机场节点失败");
+      setNodePickerNodes(Array.isArray(data.nodes) ? data.nodes as ProfileNode[] : []);
+    } catch (cause) {
+      setNodePickerError(cause instanceof Error ? cause.message : "读取机场节点失败");
+    } finally {
+      setNodePickerBusy(false);
+    }
+  }
+
+  async function saveNodePicker() {
+    if (!editorProfileId || !nodePickerSource?.sourceId) return;
+    setNodePickerBusy(true); setNodePickerError("");
+    try {
+      const response = await fetch("/api/clash/source", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: editorProfileId, action: "selection", sourceId: nodePickerSource.sourceId, mode: nodePickerMode, keywords: nodePickerKeywords, nodeIds: nodePickerMode === "manual" ? nodePickerIds : [] }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存节点筛选失败");
+      updateProfileSources(editorProfileId, data.sources || []);
+      setNodePickerSource(null);
+    } catch (cause) {
+      setNodePickerError(cause instanceof Error ? cause.message : "保存节点筛选失败");
+    } finally {
+      setNodePickerBusy(false);
+    }
+  }
+
+  function toggleNodePickerId(id: string) {
+    setNodePickerIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function selectionSummary(source: SourceRecord) {
+    const selection = source.selection;
+    if (!selection || selection.mode === "all") return "节点筛选：全部节点";
+    if (selection.mode === "keyword") return `节点筛选：关键词 ${selection.keywords || "（未填写）"}`;
+    return `节点筛选：手动选择 ${selection.nodeIds.length} 个节点`;
+  }
+
   async function refreshProfile(profile: ProfileRecord) {
     setBusy(true); setError("");
     try {
@@ -1412,7 +1473,7 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
         return <article className="profileCard" key={profile.id}>
           <div className="profileCardHead"><div className="profileCardTitle"><input value={profile.name} onChange={(event) => setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, name: event.target.value } : item))} onBlur={() => { const name = profile.name.trim() || "订阅配置"; void fetch("/api/clash/profile", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: profile.id, name }) }).catch(() => setError("保存配置名称失败")); }} aria-label="订阅配置名称" /><p>{profile.sourceCount} 个来源 · {profile.nodeCount == null ? "节点数待更新" : "约 " + profile.nodeCount + " 个节点"} · {profileLinks.length} 条链接</p><label className="profileRuleConfig"><span>规则方案</span><select value={profile.ruleConfigId || "default"} disabled={busy || !ruleConfigs.length} onChange={(event) => void changeProfileRuleConfig(profile, event.target.value)}>{ruleConfigs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label></div><div className="profileCardHeadActions"><button type="button" className="ghost" disabled={busy || profile.sourceCount === 0} onClick={() => void createNewLink(profile)}>＋ 生成新链接</button><button type="button" className="ghost" disabled={busy || profile.sourceCount === 0} onClick={() => void refreshProfile(profile)}>更新当前配置</button><button type="button" className={editing ? "ghost" : "primary"} onClick={() => void openEditor(profile)}>{editing ? "收起编辑器" : "编辑来源"}</button></div></div>
           {editing && <section className="profileEditor"><div className="profileEditorHead"><div><h4>编辑「{profile.name}」的来源</h4><p>这里只能选择机场列表中的来源；移除只影响当前配置。</p></div><button type="button" className="ghost" onClick={() => { setEditorProfileId(null); setAirportPickerOpen(false); }}>关闭</button></div>
-            <div className="sourceList">{editorSources.length ? editorSources.map((source) => <div className={`sourceRow ${source.hidden ? "sourceHidden" : ""}`} key={`${profile.id}-${source.index}`}><div><strong>{source.name}</strong><small>{source.kind === "content" ? `本地文件 · ${source.nodes ?? 0} 个节点` : source.value || "在线订阅地址"}</small></div><button type="button" className="danger" disabled={busy} onClick={() => void removeSource(source.index)}>从当前配置移除</button></div>) : <p className="clashLoading">当前还没有来源，请从机场列表选择。</p>}</div>
+            <div className="sourceList">{editorSources.length ? editorSources.map((source) => <div className={`sourceRow ${source.hidden ? "sourceHidden" : ""}`} key={`${profile.id}-${source.index}`}><div><strong>{source.name}</strong><small>{source.kind === "content" ? `本地文件 · ${source.nodes ?? 0} 个节点` : source.value || "在线订阅地址"}</small><small className="sourceSelectionSummary">{selectionSummary(source)}</small></div><div className="sourceRowActions"><button type="button" className="ghost" disabled={busy || !source.sourceId} onClick={() => void openNodePicker(source)}>节点筛选</button><button type="button" className="danger" disabled={busy} onClick={() => void removeSource(source.index)}>从当前配置移除</button></div></div>) : <p className="clashLoading">当前还没有来源，请从机场列表选择。</p>}</div>
             <div className="sourceAddForm"><button className="primary addSourceButton" type="button" onClick={() => setAirportPickerOpen((value) => !value)} disabled={busy}>{airportPickerOpen ? "收起机场列表" : "＋ 从机场列表添加"}</button>{airportPickerOpen && <div className="airportPicker">{availableAirports(editorSources).map((source) => <div className="airportPickerRow" key={source.id}><div><strong>{source.name}</strong><small>{source.kind === "url" ? source.sourceUrl : "本地 YAML 文件"} · {source.nodeCount == null ? "节点数待更新" : source.nodeCount + " 个节点"}</small></div><button type="button" className="ghost" disabled={busy} onClick={() => void addAirportToProfile(source)}>添加</button></div>)}{availableAirports(editorSources).length === 0 && <p className="clashLoading">机场列表中没有可添加的订阅，请先去机场列表新增。</p>}</div>}</div>
           </section>}
           {profileLinks.length ? profileLinks.map(profileLinkCard) : <p className="clashLoading">还没有链接，请先添加来源后生成新链接。</p>}
@@ -1420,6 +1481,7 @@ function ClashSubscription({ mode = "private" }: { mode?: "private" | "airports"
       }) : <p className="clashLoading">还没有订阅配置，请先新增一个配置。</p>}</section>
       <ul><li>统一订阅地址会根据客户端自动返回 Clash YAML 或小火箭配置。</li><li>机场列表是总表，私有订阅这里只管理关联关系；移除来源不会删除机场列表中的订阅。</li><li>小火箭配置地址仍只包含规则与分组，不包含节点，适合单独导入或更新规则。</li></ul>
     </>}
+    {nodePickerSource && <div className="modalBackdrop nodePickerBackdrop" role="button" tabIndex={0} aria-label="关闭节点筛选" onMouseDown={(event) => { if (event.target === event.currentTarget && !nodePickerBusy) setNodePickerSource(null); }} onKeyDown={(event) => { if (event.key === "Escape" && !nodePickerBusy) setNodePickerSource(null); }}><section className="nodePickerModal" role="dialog" aria-modal="true" aria-labelledby="node-picker-title"><header><div><h2 id="node-picker-title">筛选「{nodePickerSource.name}」的节点</h2><p>只影响当前方案，不会修改机场列表总表，也不会影响其他方案。</p></div><button type="button" disabled={nodePickerBusy} onClick={() => setNodePickerSource(null)}>×</button></header><div className="nodePickerModes"><button type="button" className={nodePickerMode === "all" ? "active" : ""} onClick={() => setNodePickerMode("all")}>全部节点</button><button type="button" className={nodePickerMode === "keyword" ? "active" : ""} onClick={() => setNodePickerMode("keyword")}>关键词筛选</button><button type="button" className={nodePickerMode === "manual" ? "active" : ""} onClick={() => setNodePickerMode("manual")}>手动选择</button></div>{nodePickerMode === "keyword" && <label className="nodePickerField">节点关键词（用英文竖线 | 分隔）<input value={nodePickerKeywords} onChange={(event) => setNodePickerKeywords(event.target.value)} placeholder="例如：英国|UK|伦敦" /></label>}{nodePickerMode === "manual" && <div className="nodePickerList">{nodePickerBusy && !nodePickerNodes.length ? <p className="clashLoading">正在读取节点…</p> : nodePickerError ? <p className="nodePickerError">{nodePickerError}</p> : nodePickerNodes.length ? nodePickerNodes.map((node) => <label className="nodePickerRow" key={node.id}><input type="checkbox" checked={nodePickerIds.includes(node.id)} onChange={() => toggleNodePickerId(node.id)} /><span><strong>{node.name}</strong><small>{node.type} · {node.server}{node.port ? `:${node.port}` : ""}</small></span><em className={node.status === "valid" ? "nodeValid" : "nodeInvalid"}>{node.status === "valid" ? "参数完整" : node.reason}</em></label>) : <p className="clashLoading">没有识别到节点，请先更新这个来源。</p>}</div>}{nodePickerMode === "all" && <p className="nodePickerHint">生成订阅时会使用这个来源的全部节点；后续机场更新新增节点也会自动纳入。</p>}{nodePickerMode === "keyword" && <p className="nodePickerHint">生成订阅时只保留名称、服务器或协议类型命中关键词的节点；后续机场更新仍会自动重新筛选。</p>}{nodePickerMode === "manual" && <p className="nodePickerHint">已选择 {nodePickerIds.length} 个节点。机场更新后仍保留已选节点，找不到的节点会被自动跳过。</p>}<footer><button className="ghost" type="button" disabled={nodePickerBusy} onClick={() => setNodePickerSource(null)}>取消</button><button className="primary" type="button" disabled={nodePickerBusy} onClick={() => void saveNodePicker()}>{nodePickerBusy ? "处理中…" : "保存筛选"}</button></footer></section></div>}
     {pendingLinkAction && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭订阅操作确认" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingLinkAction(null); }} onKeyDown={(event) => { if (event.key === "Escape") setPendingLinkAction(null); }}><section className="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="link-action-title"><span className="confirmMark">!</span><h2 id="link-action-title">确认{pendingLinkAction.action === "delete" ? "删除" : "使链接失效"}？</h2><p>{pendingLinkAction.action === "delete" ? "删除后将无法恢复这条订阅链接。" : "失效后这条订阅链接将无法继续获取配置。"}</p><footer><button className="ghost" type="button" onClick={() => setPendingLinkAction(null)}>取消</button><button className="deleteConfirm" type="button" onClick={() => { const action = pendingLinkAction; setPendingLinkAction(null); void changeLink(action.id, action.action).catch((cause) => setError(cause instanceof Error ? cause.message : "操作链接失败")); }}>确认</button></footer></section></div>}
     {qrCode && <div className="modalBackdrop" role="button" tabIndex={0} aria-label="关闭二维码" onMouseDown={(event) => { if (event.target === event.currentTarget) { setQrCode(""); setQrLink(""); setQrLabel(""); } }} onKeyDown={(event) => { if (event.key === "Escape") { setQrCode(""); setQrLink(""); setQrLabel(""); } }}><section className="qrModal" role="dialog" aria-modal="true" aria-labelledby="qr-title"><header><div><h2 id="qr-title">{qrLabel} 二维码</h2><p>{qrLabel === "小火箭订阅" ? "请使用小火箭首页的扫码功能" : "使用对应客户端扫描"}</p></div><button type="button" onClick={() => { setQrCode(""); setQrLink(""); setQrLabel(""); }}>×</button></header><img src={qrCode} alt={`${qrLabel} 私有订阅二维码`} /><button type="button" className="ghost qrCopy" onClick={() => void copyLink(qrLink)}>{copied ? "已复制地址" : "复制二维码地址"}</button></section></div>}
   </section>;

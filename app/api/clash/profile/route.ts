@@ -5,6 +5,7 @@ import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { getAirportProxyCount } from "../../../lib/clash-config";
 import { createClashProfile, getClashProfile, getSourceSnapshot, listClashProfiles, renameClashProfile, updateClashProfileRuleConfig } from "../../../lib/clash-links";
 import { ensureRuleConfigAssignments, getRuleConfig } from "../../../lib/rule-configs";
+import { getProfileSourceSelection } from "../../../lib/clash-source-selections";
 
 function sourceName(entry: ClashSourceEntry, index: number) {
   if (entry.name?.trim()) return entry.name.trim();
@@ -12,13 +13,13 @@ function sourceName(entry: ClashSourceEntry, index: number) {
   try { return new URL(entry.value).hostname; } catch { return `订阅来源 ${index + 1}`; }
 }
 
-async function publicSources(value: string) {
+async function publicSources(value: string, profileId: string) {
   const entries = value ? parseSourceEntries(value) : [];
-  return Promise.all(entries.map(async (entry, index) => ({ index, sourceId: entry.sourceId || null, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null })));
+  return Promise.all(entries.map(async (entry, index) => ({ index, sourceId: entry.sourceId || null, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null, selection: entry.sourceId ? await getProfileSourceSelection(profileId, entry.sourceId) : null })));
 }
 
 async function publicProfile(profile: { id: string; name: string; encrypted_source: string; rule_config_id?: string; status: string; created_at: number; updated_at: number }) {
-  const sources = await publicSources(profile.encrypted_source);
+  const sources = await publicSources(profile.encrypted_source, profile.id);
   const nodeCount = sources.every((item) => item.nodes !== null) ? sources.reduce((total, item) => total + (item.nodes || 0), 0) : null;
   const ruleConfigId = profile.rule_config_id || "default";
   const ruleConfig = await getRuleConfig(ruleConfigId);

@@ -5,6 +5,7 @@ import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { getAirportProxyCount } from "../../../lib/clash-config";
 import { createClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot, updateClashProfileSource } from "../../../lib/clash-links";
 import { getClashAirportSource } from "../../../lib/clash-airport-sources";
+import { getProfileSourceSelection, upsertProfileSourceSelection, deleteProfileSourceSelection, type SourceSelectionMode } from "../../../lib/clash-source-selections";
 
 function sourceName(entry: ClashSourceEntry, index: number) {
   if (entry.name?.trim()) return entry.name.trim();
@@ -12,8 +13,17 @@ function sourceName(entry: ClashSourceEntry, index: number) {
   try { return new URL(entry.value).hostname; } catch { return `订阅来源 ${index + 1}`; }
 }
 
-async function publicSources(entries: ClashSourceEntry[]) {
-  return Promise.all(entries.map(async (entry, index) => ({ index, sourceId: entry.sourceId || null, name: sourceName(entry, index), kind: entry.kind, value: entry.kind === "url" ? entry.value : null, hidden: entry.hidden === true, nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null })));
+async function publicSources(entries: ClashSourceEntry[], profileId: string) {
+  return Promise.all(entries.map(async (entry, index) => ({
+    index,
+    sourceId: entry.sourceId || null,
+    name: sourceName(entry, index),
+    kind: entry.kind,
+    value: entry.kind === "url" ? entry.value : null,
+    hidden: entry.hidden === true,
+    nodes: entry.kind === "content" ? getAirportProxyCount(entry.value) : (await getSourceSnapshot(entry.value))?.node_count ?? null,
+    selection: entry.sourceId ? await getProfileSourceSelection(profileId, entry.sourceId) : null,
+  })));
 }
 
 async function currentState(profileId: string) {
@@ -33,7 +43,7 @@ export async function GET(request: NextRequest) {
   try {
     const profileId = request.nextUrl.searchParams.get("profileId") || "default";
     const { entries } = await currentState(profileId);
-    return NextResponse.json({ profileId, sources: await publicSources(entries) });
+    return NextResponse.json({ profileId, sources: await publicSources(entries, profileId) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "读取机场来源失败" }, { status: 422 });
   }
@@ -45,9 +55,13 @@ export async function POST(request: NextRequest) {
     const contentType = request.headers.get("content-type") || "";
     let profileId = "default";
     let sourceUrl = "";
-    let airportSourceId = "";
-    let file: File | null = null;
-    let action = "";
+  let airportSourceId = "";
+  let file: File | null = null;
+  let action = "";
+  let selectionSourceId = "";
+  let selectionMode: SourceSelectionMode | undefined;
+  let selectionKeywords = "";
+  let selectionNodeIds: string[] = [];
     if (contentType.includes("multipart/form-data")) {
       const form = await request.formData();
       profileId = String(form.get("profileId") || "default").trim();
@@ -56,13 +70,28 @@ export async function POST(request: NextRequest) {
       const value = form.get("sourceFile");
       file = value instanceof File ? value : null;
     } else {
-      const body = await request.json() as { profileId?: string; sourceUrl?: string; airportSourceId?: string; action?: string };
+      const body = await request.json() as { profileId?: string; sourceUrl?: string; airportSourceId?: string; action?: string; sourceId?: string; mode?: SourceSelectionMode; keywords?: string; nodeIds?: string[] };
       profileId = String(body.profileId || "default").trim();
       sourceUrl = String(body.sourceUrl || "").trim();
       airportSourceId = String(body.airportSourceId || "").trim();
       action = String(body.action || "");
+      selectionSourceId = String(body.sourceId || "").trim();
+      selectionMode = body.mode;
+      selectionKeywords = String(body.keywords || "");
+      selectionNodeIds = Array.isArray(body.nodeIds) ? body.nodeIds.map((item) => String(item)) : [];
     }
     const { profile, entries } = await currentState(profileId);
+    if (action === "selection") {
+      if (!selectionSourceId || !entries.some((entry) => entry.sourceId === selectionSourceId)) throw new Error("这个机场来源不属于当前订阅");
+      const selection = await upsertProfileSourceSelection({
+        profileId,
+        sourceId: selectionSourceId,
+        mode: selectionMode,
+        keywords: selectionKeywords,
+        nodeIds: selectionNodeIds,
+      });
+      return NextResponse.json({ profileId, selection, sources: await publicSources(entries, profileId) });
+    }
     if (action === "refresh") {
       const onlineEntries = entries.filter((entry): entry is Extract<ClashSourceEntry, { kind: "url" }> => entry.kind === "url" && entry.hidden !== true);
       const results = await Promise.allSettled(onlineEntries.map(async (entry) => {
@@ -75,12 +104,12 @@ export async function POST(request: NextRequest) {
         throw new Error("机场暂时无法读取，未更新当前配置。请稍后重试或上传 YAML 文件。");
       }
       await updateClashProfileSource(profileId, await encryptSourceUrl(entries));
-      return NextResponse.json({ profileId, sources: await publicSources(entries), refreshed: successful.length });
+      return NextResponse.json({ profileId, sources: await publicSources(entries, profileId), refreshed: successful.length });
     }
     if (action === "new-link") {
       if (!entries.some((entry) => entry.hidden !== true)) throw new Error("请先保留至少一个可用订阅来源");
       const created = await createClashLink(await encryptSourceUrl(entries), profile.name.trim() || "订阅配置", profileId);
-      return NextResponse.json({ profileId, sources: await publicSources(entries), link: publicLink(request, { id: created.id, profile_id: profileId, name: created.name, token: created.token, status: created.status, created_at: created.createdAt }) });
+      return NextResponse.json({ profileId, sources: await publicSources(entries, profileId), link: publicLink(request, { id: created.id, profile_id: profileId, name: created.name, token: created.token, status: created.status, created_at: created.createdAt }) });
     }
     if (airportSourceId) {
       const airportSource = await getClashAirportSource(airportSourceId);
@@ -89,7 +118,7 @@ export async function POST(request: NextRequest) {
       if (entries.some((entry) => entry.sourceId === airportSource.id || (entry.kind === added.kind && entry.value === added.value))) throw new Error("这个机场已经添加到当前配置");
       const nextEntries = [...entries, added];
       await updateClashProfileSource(profileId, await encryptSourceUrl(nextEntries));
-      return NextResponse.json({ profileId, sources: await publicSources(nextEntries), added: sourceName(added, nextEntries.length - 1) });
+      return NextResponse.json({ profileId, sources: await publicSources(nextEntries, profileId), added: sourceName(added, nextEntries.length - 1) });
     }
     if (!sourceUrl && !file) throw new Error("请选择机场列表中的订阅");
     let added: ClashSourceEntry;
@@ -97,16 +126,16 @@ export async function POST(request: NextRequest) {
       if (file.size > 900_000) throw new Error("文件过大，请先下载较小的 Clash YAML 文件");
       const content = await file.text();
       if (!getAirportProxyCount(content)) throw new Error("文件没有识别到节点，请确认是 Clash YAML 或 Shadowrocket 配置");
-      added = { kind: "content", value: content, name: file.name || "本地订阅文件" };
+      added = { kind: "content", value: content, name: file.name || "本地订阅文件", sourceId: crypto.randomUUID() };
     } else {
       const fetched = await fetchAirportSubscription(sourceUrl);
       await saveSourceSnapshot(sourceUrl, fetched.content, fetched.nodeCount);
-      added = { kind: "url", value: sourceUrl };
+      added = { kind: "url", value: sourceUrl, sourceId: crypto.randomUUID() };
     }
     if (entries.some((entry) => entry.kind === added.kind && (entry.kind === "url" ? entry.value === added.value : entry.name === added.name))) throw new Error("这个订阅来源已经添加过了");
     const nextEntries = [...entries, added];
     await updateClashProfileSource(profileId, await encryptSourceUrl(nextEntries));
-    return NextResponse.json({ profileId, sources: await publicSources(nextEntries), added: sourceName(added, nextEntries.length - 1) });
+    return NextResponse.json({ profileId, sources: await publicSources(nextEntries, profileId), added: sourceName(added, nextEntries.length - 1) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "更新订阅来源失败" }, { status: 422 });
   }
@@ -120,9 +149,11 @@ export async function DELETE(request: NextRequest) {
     const index = Number(body.index);
     const { entries } = await currentState(profileId);
     if (!Number.isInteger(index) || index < 0 || index >= entries.length) throw new Error("订阅来源不存在");
+    const removed = entries[index];
     const nextEntries = entries.filter((_, entryIndex) => entryIndex !== index);
     await updateClashProfileSource(profileId, await encryptSourceUrl(nextEntries));
-    return NextResponse.json({ profileId, sources: await publicSources(nextEntries) });
+    if (removed.sourceId) await deleteProfileSourceSelection(profileId, removed.sourceId);
+    return NextResponse.json({ profileId, sources: await publicSources(nextEntries, profileId) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "删除订阅来源失败" }, { status: 422 });
   }
@@ -156,7 +187,7 @@ export async function PATCH(request: NextRequest) {
       if (!inlineCount && !checks.some((check) => check.status === "fulfilled")) throw new Error("隐藏后剩余来源无法读取，请先确认其他订阅可用或上传 YAML 文件");
     }
     await updateClashProfileSource(profileId, await encryptSourceUrl(nextEntries));
-    return NextResponse.json({ profileId, sources: await publicSources(nextEntries) });
+    return NextResponse.json({ profileId, sources: await publicSources(nextEntries, profileId) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "更新订阅来源失败" }, { status: 422 });
   }

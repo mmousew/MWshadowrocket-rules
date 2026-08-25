@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig, filterHiddenGroups, resolveAirportProxyHosts } from "../../../lib/clash-config";
+import { buildClashConfig, buildShadowrocketConfig, buildShadowrocketRulesConfig, filterAirportContentBySelection, filterHiddenGroups, resolveAirportProxyHosts } from "../../../lib/clash-config";
 import { fetchAirportSubscription } from "../../../lib/airport-subscription";
 import { decryptSourceUrl } from "../../../lib/clash-link";
 import { findClashLink, getClashProfile, getSourceSnapshot, saveSourceSnapshot } from "../../../lib/clash-links";
@@ -7,6 +7,7 @@ import { ensureMwDefaultTemplateMerge, ensureRuleConfigAssignments, getRuleConfi
 import { composeBoundRuleSets, composeTemporaryRules } from "../../../lib/rule-set-core";
 import { listGroupTempRules } from "../../../lib/group-temp-rules";
 import { ensureRuleSetLibrary, listRuleSetBindings, repairChinaDirectState } from "../../../lib/rule-sets";
+import { listProfileSourceSelections } from "../../../lib/clash-source-selections";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -15,6 +16,7 @@ const FILE_PATH = "MW-Shadowrocket-Config.conf";
 const API_URL = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`;
 
 type GitHubFile = { content?: string; message?: string };
+type RenderSource = { sourceId: string | null; kind: "url" | "content"; value: string };
 
 function getAirportSnapshot() {
   let encoded = "";
@@ -45,6 +47,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
   const querySource = request.nextUrl.searchParams.get("source");
   let encryptedSource = querySource;
   let managedLink = false;
+  let profileId = "default";
   let profileName = "订阅配置";
   let ruleConfigId = "default";
   let ruleConfigName = "默认规则";
@@ -59,6 +62,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
     const record = await findClashLink(token);
     if (record) {
       managedLink = true;
+      profileId = record.profile_id || "default";
       if (record.status !== "active") return new NextResponse("订阅链接已失效", { status: 404 });
       encryptedSource = record.encrypted_source || null;
       try {
@@ -69,6 +73,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
           // snapshot; this makes source removal/update effective even when an
           // older link row or relay cache was not refreshed yet.
           encryptedSource = profile.encrypted_source || null;
+          profileId = record.profile_id || "default";
           if (profile.name?.trim()) profileName = profile.name.trim();
           if (profile.rule_config_id?.trim()) ruleConfigId = profile.rule_config_id.trim();
         }
@@ -91,22 +96,21 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
 
   try {
     const encryptedValue = encryptedSource ? await decryptSourceUrl(encryptedSource) : process.env.AIRPORT_SHADOWROCKET_URL || "";
-    let airportUrls: string[] = [];
-    const inlineContent: string[] = [];
+    let sourceEntries: RenderSource[] = [];
     try {
       const parsed = JSON.parse(encryptedValue);
       if (Array.isArray(parsed)) {
         for (const item of parsed) {
-          if (typeof item === "string") airportUrls.push(item);
-          else if (item?.kind === "url" && typeof item.value === "string" && item.hidden !== true) airportUrls.push(item.value);
-          else if (item?.kind === "content" && typeof item.value === "string" && item.hidden !== true) inlineContent.push(item.value);
+          if (typeof item === "string") sourceEntries.push({ sourceId: null, kind: "url", value: item });
+          else if (item?.kind === "url" && typeof item.value === "string" && item.hidden !== true) sourceEntries.push({ sourceId: typeof item.sourceId === "string" ? item.sourceId : null, kind: "url", value: item.value });
+          else if (item?.kind === "content" && typeof item.value === "string" && item.hidden !== true) sourceEntries.push({ sourceId: typeof item.sourceId === "string" ? item.sourceId : null, kind: "content", value: item.value });
         }
-      } else airportUrls = [encryptedValue];
+      } else sourceEntries = [{ sourceId: null, kind: "url", value: encryptedValue }];
     } catch {
-      airportUrls = [encryptedValue];
+      sourceEntries = [{ sourceId: null, kind: "url", value: encryptedValue }];
     }
-    airportUrls = airportUrls.map((url) => url.trim()).filter(Boolean);
-    if (!airportUrls.length && !inlineContent.length) return new NextResponse("尚未配置机场来源", { status: 503 });
+    sourceEntries = sourceEntries.map((entry) => ({ ...entry, value: entry.value.trim() })).filter((entry) => entry.value);
+    if (!sourceEntries.length) return new NextResponse("尚未配置机场来源", { status: 503 });
     const userAgent = request.headers.get("user-agent") || "";
     const requestedFormat = request.nextUrl.searchParams.get("format");
     const requestedConfigName = request.nextUrl.searchParams.get("name")?.trim() || request.nextUrl.searchParams.get("filename")?.trim() || "";
@@ -130,22 +134,33 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       console.error("[clash] shared rule-set composition failed", error);
       // The legacy content remains a safe fallback if the shared ruleset library is unavailable.
     }
-    const airportResult = await Promise.allSettled(airportUrls.map(async (url) => {
+    const selectionMap = new Map<string, Awaited<ReturnType<typeof listProfileSourceSelections>>[number]>();
+    try {
+      (await listProfileSourceSelections(profileId)).forEach((selection) => selectionMap.set(selection.sourceId, selection));
+    } catch { /* 旧数据库没有筛选表时按全部节点兼容 */ }
+    const airportResults = await Promise.allSettled(sourceEntries.map(async (entry) => {
+      let rawContent = entry.value;
+      let kind: "live" | "snapshot" | "inline" = entry.kind === "content" ? "inline" : "live";
+      if (entry.kind === "url") {
         try {
-          const fetched = await fetchAirportSubscription(url, subscriptionClient);
-          try { await saveSourceSnapshot(url, fetched.content, fetched.nodeCount, subscriptionClient); } catch { /* 快照写入失败不影响本次在线更新 */ }
-          return { kind: "live" as const, content: fetched.content };
+          const fetched = await fetchAirportSubscription(entry.value, subscriptionClient);
+          rawContent = fetched.content;
+          try { await saveSourceSnapshot(entry.value, fetched.content, fetched.nodeCount, subscriptionClient); } catch { /* 快照写入失败不影响本次在线更新 */ }
         } catch (error) {
           let snapshot = null;
-          try { snapshot = await getSourceSnapshot(url, subscriptionClient); } catch { /* 没有可用快照时继续记录失败 */ }
-          if (snapshot?.content) return { kind: "snapshot" as const, content: snapshot.content };
-          throw error;
+          try { snapshot = await getSourceSnapshot(entry.value, subscriptionClient); } catch { /* 没有可用快照时继续记录失败 */ }
+          if (!snapshot?.content) throw error;
+          rawContent = snapshot.content;
+          kind = "snapshot";
         }
-      })).then((results) => ({
-        content: [...inlineContent, ...results.flatMap((result) => result.status === "fulfilled" ? [result.value.content] : [])],
-        liveCount: results.filter((result) => result.status === "fulfilled" && result.value.kind === "live").length,
-        snapshotCount: results.filter((result) => result.status === "fulfilled" && result.value.kind === "snapshot").length,
-      }));
+      }
+      return { kind, content: filterAirportContentBySelection(rawContent, entry.sourceId ? selectionMap.get(entry.sourceId) : null) };
+    }));
+    const airportResult = {
+      content: airportResults.flatMap((result) => result.status === "fulfilled" ? [result.value.content] : []),
+      liveCount: airportResults.filter((result) => result.status === "fulfilled" && result.value.kind === "live").length,
+      snapshotCount: airportResults.filter((result) => result.status === "fulfilled" && result.value.kind === "snapshot").length,
+    };
     if (!ruleContent) {
       const ruleResponse = await fetch(`${API_URL}?ref=${encodeURIComponent(BRANCH)}`, {
         headers: {

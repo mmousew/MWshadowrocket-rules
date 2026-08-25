@@ -1,8 +1,9 @@
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import type { ClashSourceSelection } from "./clash-source-selections";
 
 type ShadowrocketGroup = { name: string; kind: string; items: string[] };
 type ShadowrocketRule = { type: string; value: string; policy: string; options: string[] };
-type ClashProxy = Record<string, unknown>;
+export type ClashProxy = Record<string, unknown>;
 type RuleProvider = { name: string; url: string; format: "text" | "yaml" };
 
 const FINAL_GROUP_SOURCE_NAME = "final";
@@ -687,6 +688,94 @@ export function parseAirportProxies(content: string): ClashProxy[] {
     names.add(nameKey);
     return true;
   });
+}
+
+function fnv1a(value: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function stableProxyValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableProxyValue).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${key}:${stableProxyValue(item)}`).join("|")}}`;
+  }
+  return String(value ?? "");
+}
+
+/**
+ * A node identifier that stays stable when the same airport refreshes, while
+ * avoiding putting passwords or UUIDs in the browser response.
+ */
+export function getClashProxyId(proxy: ClashProxy) {
+  const identity = [
+    proxy.type,
+    proxy.name,
+    proxy.server,
+    proxy.port,
+    proxy.uuid,
+    proxy.password,
+    proxy.cipher,
+    proxy.plugin,
+    proxy["server-name"],
+    proxy["ws-opts"],
+    proxy["grpc-opts"],
+    proxy["reality-opts"],
+  ].map(stableProxyValue).join("\u001f");
+  return `node-${fnv1a(identity)}`;
+}
+
+function sourceSelectionText(proxy: ClashProxy) {
+  return [proxy.name, proxy.server, proxy.type].map((value) => String(value ?? "")).join(" ").toLowerCase();
+}
+
+function selectedAirportProxies(proxies: ClashProxy[], selection: ClashSourceSelection) {
+  if (selection.mode === "all") return proxies;
+  if (selection.mode === "keyword") {
+    const keywords = selection.keywords.split("|").map((item) => item.trim().toLowerCase()).filter(Boolean);
+    if (!keywords.length) return [];
+    return proxies.filter((proxy) => {
+      const text = sourceSelectionText(proxy);
+      return keywords.some((keyword) => text.includes(keyword));
+    });
+  }
+  const ids = new Set(selection.nodeIds);
+  return proxies.filter((proxy) => ids.has(getClashProxyId(proxy)));
+}
+
+function filterNativeShadowrocketSource(content: string, selectedNames: Set<string>) {
+  const lines = content.split(/\r?\n/);
+  const proxyStart = lines.findIndex((line) => /^\s*\[Proxy\]\s*$/i.test(line));
+  if (proxyStart < 0) return content;
+  const proxyEnd = lines.findIndex((line, index) => index > proxyStart && /^\s*\[[^\]]+\]\s*$/.test(line));
+  const end = proxyEnd >= 0 ? proxyEnd : lines.length;
+  const filtered = lines.slice(proxyStart + 1, end).filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) return true;
+    const name = trimmed.slice(0, trimmed.indexOf("=")).trim().toLowerCase();
+    return selectedNames.has(name);
+  });
+  return [...lines.slice(0, proxyStart + 1), ...filtered, ...lines.slice(end)].join("\n");
+}
+
+/** Apply one profile's per-airport node selection before either client renderer runs. */
+export function filterAirportContentBySelection(content: string, selection: ClashSourceSelection | null | undefined) {
+  if (!selection || selection.mode === "all") return content;
+  const proxies = parseAirportProxies(content);
+  const selected = selectedAirportProxies(proxies, selection);
+  const selectedNames = new Set(selected.map((proxy) => String(proxy.name || "").trim().toLowerCase()).filter(Boolean));
+  if (/^\s*\[Proxy\]/mi.test(content)) return filterNativeShadowrocketSource(content, selectedNames);
+  try {
+    const parsed = parseYaml(content) as Record<string, unknown>;
+    if (parsed && typeof parsed === "object" && Array.isArray(parsed.proxies)) {
+      return stringifyYaml({ ...parsed, proxies: selected });
+    }
+  } catch { /* fall through to a portable YAML representation */ }
+  return stringifyYaml({ proxies: selected });
 }
 
 export function getAirportProxyCount(content: string) {

@@ -59,6 +59,20 @@ export const clashAirportSources = sqliteTable("clash_airport_sources", {
   statusIdx: index("clash_airport_sources_status_idx").on(table.status),
 }));
 
+export const clashProfileSourceSelections = sqliteTable("clash_profile_source_selections", {
+  id: text("id").primaryKey(),
+  profileId: text("profile_id").notNull(),
+  sourceId: text("source_id").notNull(),
+  mode: text("mode").notNull().default("all"),
+  keywords: text("keywords").notNull().default(""),
+  nodeIds: text("node_ids").notNull().default("[]"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => ({
+  profileIdx: index("clash_profile_source_selections_profile_idx").on(table.profileId),
+  sourceIdx: index("clash_profile_source_selections_source_idx").on(table.sourceId),
+}));
+
 export const ruleSets = sqliteTable("rule_sets", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
