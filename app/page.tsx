@@ -299,6 +299,7 @@ export default function Home() {
   const [selectedRuleConfigId, setSelectedRuleConfigId] = useState(() => typeof window === "undefined" ? "default" : new URL(window.location.href).searchParams.get("config") || "default");
   const [availableRuleSets, setAvailableRuleSets] = useState<RuleSetRecord[]>([]);
   const [ruleSetBindings, setRuleSetBindings] = useState<Record<string, string[]>>({});
+  const [ruleSetBindingEnabled, setRuleSetBindingEnabled] = useState<Record<string, boolean>>({});
   const [groupVisibility, setGroupVisibility] = useState<Record<string, boolean>>({});
   const [groupVisibilityBusy, setGroupVisibilityBusy] = useState(false);
   const [tempRulesByGroup, setTempRulesByGroup] = useState<Record<string, TempRuleRecord[]>>({});
@@ -384,15 +385,18 @@ export default function Home() {
         if (!response.ok) throw new Error(data.error || "读取规则集失败");
         setAvailableRuleSets((data.ruleSets || []) as RuleSetRecord[]);
         const bindings: Record<string, string[]> = {};
-        for (const item of (data.bindings || []) as Array<{ group_name?: string; rule_set_id?: string }>) {
+        const bindingEnabled: Record<string, boolean> = {};
+        for (const item of (data.bindings || []) as Array<{ group_name?: string; rule_set_id?: string; enabled?: boolean | number }>) {
           const groupName = String(item.group_name || "").trim();
           const ruleSetId = String(item.rule_set_id || "").trim();
           if (!groupName || !ruleSetId) continue;
           const key = policyKey(groupName);
           bindings[key] = bindings[key] || [];
           if (!bindings[key].includes(ruleSetId)) bindings[key].push(ruleSetId);
+          bindingEnabled[`${key}\u0000${ruleSetId}`] = item.enabled !== false && item.enabled !== 0;
         }
         setRuleSetBindings(bindings);
+        setRuleSetBindingEnabled(bindingEnabled);
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : "读取规则集失败"))
       .finally(() => setRuleSetsLoading(false));
@@ -545,16 +549,20 @@ export default function Home() {
     setEditor({ mode: "group", index: group.index, name: group.name, items: [group.kind, ...group.items].join("\n"), ruleSetIds: ruleSetBindings[policyKey(group.name)] || [], childKinds, childItems, availableGroupItems });
   }
 
-  async function toggleRuleSetFlag(ruleSet: RuleSetRecord, field: "visible" | "enabled", value: boolean) {
+  async function toggleRuleSetBindingFlag(group: Group, ruleSet: RuleSetRecord, value: boolean) {
     setRuleSetBusy(true); setError("");
     try {
-      const response = await fetch("/api/rule-set", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: ruleSet.id, [field]: value }) });
+      const response = await fetch("/api/rule-config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: selectedRuleConfigId, ruleSetBinding: { groupName: group.name, ruleSetId: ruleSet.id, enabled: value } }),
+      });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "更新规则集状态失败");
-      setAvailableRuleSets((data.ruleSets || []) as RuleSetRecord[]);
-      setToast(`${ruleSet.name} 已${field === "visible" ? (value ? "显示" : "隐藏") : (value ? "启用" : "停用")}`);
+      if (!response.ok) throw new Error(data.error || "更新方案规则集状态失败");
+      setRuleSetBindingEnabled((current) => ({ ...current, [`${policyKey(group.name)}\u0000${ruleSet.id}`]: value }));
+      setToast(`「${group.name}」的规则集已${value ? "启用" : "停用"}`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "更新规则集状态失败");
+      setError(cause instanceof Error ? cause.message : "更新方案规则集状态失败");
     } finally { setRuleSetBusy(false); }
   }
 
@@ -883,7 +891,7 @@ export default function Home() {
       const bindings = Object.entries(ruleSetBindings).flatMap(([groupKey, ruleSetIds]) => {
         const groupName = parsed.groups.find((group) => policyKey(group.name) === groupKey)?.name || (parsed.finalRule && policyKey(parsed.finalRule.policy) === groupKey ? parsed.finalRule.policy : groupKey);
         const ids = Array.isArray(ruleSetIds) ? ruleSetIds : [ruleSetIds];
-        return ids.filter(Boolean).map((ruleSetId) => ({ groupName, ruleSetId }));
+        return ids.filter(Boolean).map((ruleSetId) => ({ groupName, ruleSetId, enabled: ruleSetBindingEnabled[`${groupKey}\u0000${ruleSetId}`] !== false }));
       });
       const visibility = parsed.groups.map((group) => ({ groupName: group.name, visible: groupVisibility[policyKey(group.name)] !== false }));
       const response = await fetch("/api/rule-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: selectedRuleConfigId, content, ruleSetBindings: bindings, groupVisibility: visibility }) });
@@ -934,7 +942,7 @@ export default function Home() {
       onPointerUp={() => finishGroupDrag()}
       onPointerCancel={() => finishGroupDrag("", "")}
       onKeyDown={(event) => moveGroupWithKeyboard(event, group)}
-    ><span aria-hidden="true">⠿</span></button>}<div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置这个分组使用的节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div>{!system && <div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div>}{(() => { const isChinaGroup = policyKey(group.name) === "cn"; const chinaRuleSet = isChinaGroup ? availableRuleSets.find((ruleSet) => ruleSet.isBuiltin && ruleSet.name.trim().toLowerCase() === "cn-国内直连（综合）".toLowerCase()) || availableRuleSets.find((ruleSet) => ruleSet.name.trim().toLowerCase() === "cn国内直连") : null; return <div className="groupRuleSetSwitches" aria-label={`${group.name}客户端显示与规则集开关`}><label><input type="checkbox" checked={groupVisibility[policyKey(group.name)] !== false} disabled={groupVisibilityBusy} onChange={(event) => void toggleGroupVisibility(group, event.target.checked)} />客户端显示</label>{chinaRuleSet && <label><input type="checkbox" checked={chinaRuleSet.enabled !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetFlag(chinaRuleSet, "enabled", event.target.checked)} />规则集启用</label>}</div>; })()}<button type="button" className="ruleSetCallButton" onClick={() => showGroupRules(group)}><span>调用规则集</span><small>{ruleSetSummary}</small></button><button type="button" onClick={() => editGroup(group)}>节点筛选</button>{isProtectedGroupName(group.name) ? <span className="pill" title="系统保留分组，不能删除或改名">系统保留</span> : <button className="danger" onClick={() => removeGroup(group)}>删除</button>}</div>;
+    ><span aria-hidden="true">⠿</span></button>}<div className="rowMain"><strong>{group.name}</strong><p>{isFinalGroup ? `系统兜底规则 · 未匹配流量会进入「${group.name}」 · 可在“节点筛选”中配置这个分组使用的节点` : linked.length ? `${linked.length} 条分流规则 · ${linked.slice(0, 4).map((rule) => rule.value).join(" · ")}` : `${group.kind} · ${group.items.join(" · ")}`}</p></div>{!system && <div className="reorderButtons" aria-label={`调整「${group.name}」顺序`}><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, -1)} disabled={Boolean(query) || parsed.groups[0]?.name === group.name} aria-label={`上移「${group.name}」`} title="上移">↑</button><button type="button" className="reorderButton" onClick={() => moveGroupByOffset(group, 1)} disabled={Boolean(query) || parsed.groups.at(-1)?.name === group.name} aria-label={`下移「${group.name}」`} title="下移">↓</button></div>}{(() => { const isChinaGroup = policyKey(group.name) === "cn"; const chinaRuleSet = isChinaGroup ? availableRuleSets.find((ruleSet) => ruleSet.isBuiltin && ruleSet.name.trim().toLowerCase() === "cn-国内直连（综合）".toLowerCase()) || availableRuleSets.find((ruleSet) => ruleSet.name.trim().toLowerCase() === "cn国内直连") : null; return <div className="groupRuleSetSwitches" aria-label={`${group.name}客户端显示与规则集开关`}><label><input type="checkbox" checked={groupVisibility[policyKey(group.name)] !== false} disabled={groupVisibilityBusy} onChange={(event) => void toggleGroupVisibility(group, event.target.checked)} />客户端显示</label>{chinaRuleSet && <label><input type="checkbox" checked={ruleSetBindingEnabled[`${policyKey(group.name)}\u0000${chinaRuleSet.id}`] !== false} disabled={ruleSetBusy} onChange={(event) => void toggleRuleSetBindingFlag(group, chinaRuleSet, event.target.checked)} />规则集启用</label>}</div>; })()}<button type="button" className="ruleSetCallButton" onClick={() => showGroupRules(group)}><span>调用规则集</span><small>{ruleSetSummary}</small></button><button type="button" onClick={() => editGroup(group)}>节点筛选</button>{isProtectedGroupName(group.name) ? <span className="pill" title="系统保留分组，不能删除或改名">系统保留</span> : <button className="danger" onClick={() => removeGroup(group)}>删除</button>}</div>;
   }
 
   if (loading) return <div className="loading"><span className="brandMark">MW</span><p>正在读取 GitHub 配置…</p></div>;

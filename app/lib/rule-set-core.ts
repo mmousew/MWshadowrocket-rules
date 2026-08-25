@@ -87,7 +87,7 @@ function rulePolicy(parts: string[]) {
 
 export type TemporaryRule = { groupName: string; type: string; value: string; policy?: string; options?: string[] };
 
-export type RuleSetBindingInput = { groupName: string; ruleSetId: string };
+export type RuleSetBindingInput = { groupName: string; ruleSetId: string; enabled?: boolean | number };
 
 export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: string; entries: RuleSetEntry[]; platformSources?: RuleSetPlatformSources | string; status?: string; enabled?: boolean | number }>, bindings: Array<RuleSetBindingInput> | Record<string, string | string[]>, platform: RuleSetPlatform = "shadowrocket") {
   const bindingEntries: RuleSetBindingInput[] = [];
@@ -95,7 +95,7 @@ export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: stri
     bindingEntries.push(...bindings);
   } else {
     for (const [groupName, value] of Object.entries(bindings)) {
-      for (const ruleSetId of Array.isArray(value) ? value : [value]) bindingEntries.push({ groupName, ruleSetId });
+      for (const ruleSetId of Array.isArray(value) ? value : [value]) bindingEntries.push({ groupName, ruleSetId, enabled: true });
     }
   }
   const setById = new Map(ruleSets.filter((set) => set.status !== "deleted" && set.enabled !== false && set.enabled !== 0).map((set) => [set.id, set]));
@@ -103,7 +103,7 @@ export function composeBoundRuleSets(content: string, ruleSets: Array<{ id: stri
   for (const item of bindingEntries) {
     const groupName = String(item.groupName || "").trim();
     const ruleSetId = String(item.ruleSetId || "").trim();
-    if (!groupName || !ruleSetId) continue;
+    if (!groupName || !ruleSetId || item.enabled === false || item.enabled === 0) continue;
     const key = groupName.toLowerCase();
     const current = bindingByGroup.get(key) || { groupName, ruleSetIds: [] };
     if (!current.ruleSetIds.includes(ruleSetId)) current.ruleSetIds.push(ruleSetId);

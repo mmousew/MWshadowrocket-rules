@@ -127,7 +127,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       const ruleSets = await ensureRuleSetLibrary();
       await ensureMwDefaultTemplateMerge();
       const bindings = await listRuleSetBindings(ruleConfigId);
-      ruleContent = composeBoundRuleSets(ruleContent, ruleSets, bindings.map((item) => ({ groupName: item.group_name, ruleSetId: item.rule_set_id })), subscriptionClient);
+      ruleContent = composeBoundRuleSets(ruleContent, ruleSets, bindings.map((item) => ({ groupName: item.group_name, ruleSetId: item.rule_set_id, enabled: item.enabled !== false && item.enabled !== 0 })), subscriptionClient);
       const temporaryRules = await listGroupTempRules(ruleConfigId);
       ruleContent = composeTemporaryRules(ruleContent, temporaryRules.map((item) => ({ groupName: item.groupName, type: item.type, value: item.value, policy: item.policy, options: item.options })));
     } catch (error) {

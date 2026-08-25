@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getGitHubLogin } from "../../lib/github-auth";
 import { createRuleConfig, deleteRuleConfig, ensureDefaultRuleConfig, ensureDefaultRuleConfigTemplate, ensureMwDefaultTemplateMerge, ensureRuleConfigAssignments, getRuleConfig, listRuleConfigs, listRuleGroupVisibility, migrateLegacyGroupVisibility, replaceRuleGroupVisibility, restoreHaoziRuleConfig, setRuleConfigTemplateDefault, updateRuleConfig } from "../../lib/rule-configs";
 import { validateProtectedGroupChanges, validateRuleConfiguration } from "../../lib/rule-validation";
-import { ensureRuleSetLibrary, repairChinaDirectState, replaceRuleSetBindings } from "../../lib/rule-sets";
+import { ensureRuleSetLibrary, repairChinaDirectState, replaceRuleSetBindings, setRuleSetBindingEnabled } from "../../lib/rule-sets";
 
 const OWNER = "mmousew";
 const REPO = "MWshadowrocket-rules";
@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!await getGitHubLogin(request)) return NextResponse.json({ error: "请使用 GitHub 登录后访问" }, { status: 401 });
   try {
-    const body = await request.json() as { id?: string; name?: string; content?: string; setDefault?: boolean; recoverHaozi?: boolean; ruleSetBindings?: Array<{ groupName?: string; ruleSetId?: string }>; groupVisibility?: Array<{ groupName?: string; visible?: boolean }> };
+    const body = await request.json() as { id?: string; name?: string; content?: string; setDefault?: boolean; recoverHaozi?: boolean; ruleSetBindings?: Array<{ groupName?: string; ruleSetId?: string; enabled?: boolean }>; ruleSetBinding?: { groupName?: string; ruleSetId?: string; enabled?: boolean }; groupVisibility?: Array<{ groupName?: string; visible?: boolean }> };
     const id = String(body.id || "").trim();
     if (!id) throw new Error("规则方案不存在");
     if (body.recoverHaozi) {
@@ -97,7 +97,12 @@ export async function PATCH(request: NextRequest) {
     if (body.setDefault) await setRuleConfigTemplateDefault(id);
     const config = await updateRuleConfig(id, { name: body.name, content: body.content });
     if (Array.isArray(body.ruleSetBindings)) {
-      await replaceRuleSetBindings(id, body.ruleSetBindings.map((binding) => ({ groupName: String(binding.groupName || ""), ruleSetId: String(binding.ruleSetId || "") })));
+      await replaceRuleSetBindings(id, body.ruleSetBindings.map((binding) => ({ groupName: String(binding.groupName || ""), ruleSetId: String(binding.ruleSetId || ""), enabled: binding.enabled !== false })));
+    }
+    if (body.ruleSetBinding) {
+      const groupName = String(body.ruleSetBinding.groupName || "").trim();
+      const ruleSetId = String(body.ruleSetBinding.ruleSetId || "").trim();
+      if (groupName && ruleSetId) await setRuleSetBindingEnabled(id, groupName, ruleSetId, body.ruleSetBinding.enabled !== false);
     }
     if (Array.isArray(body.groupVisibility)) {
       await replaceRuleGroupVisibility(id, body.groupVisibility.map((setting) => ({ groupName: String(setting.groupName || ""), visible: setting.visible !== false })));

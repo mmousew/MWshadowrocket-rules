@@ -95,6 +95,7 @@ export const ruleSetBindings = sqliteTable("rule_set_bindings", {
   groupName: text("group_name").notNull(),
   ruleSetId: text("rule_set_id").notNull(),
   sortOrder: integer("sort_order").notNull().default(0),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 }, (table) => ({

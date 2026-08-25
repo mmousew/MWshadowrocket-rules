@@ -2,11 +2,12 @@ import { getReadyRawDb } from "../../db";
 import { dedupeEntries, normalizePlatformSources, parseRuleSetEntries, type RuleSetEntry, type RuleSetPlatformSources } from "./rule-set-core";
 
 export type RuleSetRow = { id: string; name: string; description: string; kind: string; entries: RuleSetEntry[]; platformSources: RuleSetPlatformSources; source: string; status: string; visible: number; enabled: number; sort_order: number; created_at: number; updated_at: number };
-export type RuleSetBindingRow = { id: string; rule_config_id: string; group_name: string; rule_set_id: string; sort_order: number; created_at: number; updated_at: number };
+export type RuleSetBindingRow = { id: string; rule_config_id: string; group_name: string; rule_set_id: string; sort_order: number; enabled: number; created_at: number; updated_at: number };
 export type RuleSetUsageRow = { rule_set_id: string; rule_config_id: string; config_name: string; group_names: string[] };
 
 const MIGRATION_ID = "rule-set-library-v1";
 const DEDUPE_MIGRATION_ID = "rule-set-library-dedupe-v1";
+const BINDING_SCOPE_MIGRATION_ID = "rule-set-binding-scope-v1";
 export const CHINA_DIRECT_RULE_SET_NAME = "CN-国内直连（综合）";
 const CHINA_DIRECT_RULE_SET_ALIASES = [CHINA_DIRECT_RULE_SET_NAME, "CN国内直连"];
 const SEED_NAMES = ["YouTube", "Disney", "Hbomax", "Netflix", "Bahamut", "Bilibili", "Spotify", "Steam", "Telegram", "Google", "Microsoft", "OpenAI", "PayPal", "TIKTOK", "Apple", "UK", "CA", "KR", "CN", "DE", "JP", "SG", "TW", "US", "HK"];
@@ -44,7 +45,7 @@ export async function listRuleSets() {
 }
 
 export async function listRuleSetBindings(configId: string) {
-  const result = await (await getReadyRawDb()).prepare("SELECT id, rule_config_id, group_name, rule_set_id, sort_order, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? ORDER BY group_name COLLATE NOCASE, sort_order ASC, created_at ASC, id ASC").bind(configId).all<RuleSetBindingRow>();
+  const result = await (await getReadyRawDb()).prepare("SELECT id, rule_config_id, group_name, rule_set_id, sort_order, enabled, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? ORDER BY group_name COLLATE NOCASE, sort_order ASC, created_at ASC, id ASC").bind(configId).all<RuleSetBindingRow>();
   return result.results;
 }
 
@@ -60,12 +61,12 @@ export async function listRuleSetUsages() {
   return Array.from(usages.values());
 }
 
-export async function replaceRuleSetBindings(configId: string, bindings: Array<{ groupName: string; ruleSetId: string }>) {
+export async function replaceRuleSetBindings(configId: string, bindings: Array<{ groupName: string; ruleSetId: string; enabled?: boolean }>) {
   const db = await getReadyRawDb();
   // Older databases may still have the former one-binding-per-group index.
   // Remove it here too so a save can immediately persist multiple rule sets.
   await db.prepare("DROP INDEX IF EXISTS rule_set_bindings_config_group_unique_idx").run();
-  const clean: Array<{ groupName: string; ruleSetId: string }> = [];
+  const clean: Array<{ groupName: string; ruleSetId: string; enabled: boolean }> = [];
   const seen = new Set<string>();
   for (const binding of bindings) {
     const groupName = String(binding.groupName || "").trim();
@@ -73,18 +74,30 @@ export async function replaceRuleSetBindings(configId: string, bindings: Array<{
     const key = `${groupName.toLowerCase()}\u0000${ruleSetId}`;
     if (groupName && ruleSetId && !seen.has(key)) {
       seen.add(key);
-      clean.push({ groupName, ruleSetId });
+      clean.push({ groupName, ruleSetId, enabled: binding.enabled !== false });
     }
   }
   const now = Date.now();
   await db.prepare("DELETE FROM rule_set_bindings WHERE rule_config_id = ?").bind(configId).run();
-  if (clean.length) await db.batch(clean.map((binding, sortOrder) => db.prepare("INSERT INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), configId, binding.groupName, binding.ruleSetId, sortOrder, now, now)));
+  if (clean.length) await db.batch(clean.map((binding, sortOrder) => db.prepare("INSERT INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, sort_order, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), configId, binding.groupName, binding.ruleSetId, sortOrder, binding.enabled ? 1 : 0, now, now)));
+  return listRuleSetBindings(configId);
+}
+
+export async function setRuleSetBindingEnabled(configId: string, groupName: string, ruleSetId: string, enabled: boolean) {
+  const db = await getReadyRawDb();
+  const now = Date.now();
+  const existing = await db.prepare("SELECT id FROM rule_set_bindings WHERE rule_config_id = ? AND lower(trim(group_name)) = lower(trim(?)) AND rule_set_id = ? LIMIT 1").bind(configId, groupName, ruleSetId).first<{ id: string }>();
+  if (existing) {
+    await db.prepare("UPDATE rule_set_bindings SET enabled = ?, updated_at = ? WHERE id = ?").bind(enabled ? 1 : 0, now, existing.id).run();
+  } else {
+    await db.prepare("INSERT INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, sort_order, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), configId, groupName.trim(), ruleSetId.trim(), 0, enabled ? 1 : 0, now, now).run();
+  }
   return listRuleSetBindings(configId);
 }
 
 export async function cloneRuleSetBindings(fromConfigId: string, toConfigId: string) {
   const bindings = await listRuleSetBindings(fromConfigId);
-  return replaceRuleSetBindings(toConfigId, bindings.map((item) => ({ groupName: item.group_name, ruleSetId: item.rule_set_id })));
+  return replaceRuleSetBindings(toConfigId, bindings.map((item) => ({ groupName: item.group_name, ruleSetId: item.rule_set_id, enabled: item.enabled !== false && item.enabled !== 0 })));
 }
 
 export async function createRuleSet(input: { name: string; description?: string; entries: string | RuleSetEntry[]; platformSources?: RuleSetPlatformSources | string; source?: string }) {
@@ -312,7 +325,7 @@ async function ensureChinaDirectBindings(db: ReadyDb, chinaRuleSetId: string) {
 
   for (const config of configs) {
 
-    const bindings = (await db.prepare("SELECT id, rule_set_id, group_name, sort_order, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? AND lower(trim(group_name)) = 'cn' ORDER BY sort_order ASC, updated_at DESC, created_at DESC, id ASC").bind(config.id).all<{ id: string; rule_set_id: string; group_name: string; sort_order: number; created_at: number; updated_at: number }>()).results;
+    const bindings = (await db.prepare("SELECT id, rule_set_id, group_name, sort_order, enabled, created_at, updated_at FROM rule_set_bindings WHERE rule_config_id = ? AND lower(trim(group_name)) = 'cn' ORDER BY sort_order ASC, updated_at DESC, created_at DESC, id ASC").bind(config.id).all<{ id: string; rule_set_id: string; group_name: string; sort_order: number; enabled: number; created_at: number; updated_at: number }>()).results;
     const seenRuleSetIds = new Set<string>();
     const uniqueBindings = bindings.filter((binding) => {
       if (!binding.rule_set_id || seenRuleSetIds.has(binding.rule_set_id)) return false;
@@ -326,9 +339,9 @@ async function ensureChinaDirectBindings(db: ReadyDb, chinaRuleSetId: string) {
       await db.batch(duplicateBindings.map((binding) => db.prepare("DELETE FROM rule_set_bindings WHERE id = ?").bind(binding.id)));
     }
     if (keep) {
-      await db.prepare("UPDATE rule_set_bindings SET group_name = 'CN', rule_set_id = ?, sort_order = ?, updated_at = ? WHERE id = ?").bind(chinaRuleSetId, keep.sort_order || 0, now, keep.id).run();
+      await db.prepare("UPDATE rule_set_bindings SET group_name = 'CN', rule_set_id = ?, sort_order = ?, enabled = ?, updated_at = ? WHERE id = ?").bind(chinaRuleSetId, keep.sort_order || 0, keep.enabled !== false && keep.enabled !== 0 ? 1 : 0, now, keep.id).run();
     } else {
-      await db.prepare("INSERT OR IGNORE INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, sort_order, created_at, updated_at) VALUES (?, ?, 'CN', ?, 0, ?, ?)").bind(crypto.randomUUID(), config.id, chinaRuleSetId, now, now).run();
+      await db.prepare("INSERT OR IGNORE INTO rule_set_bindings (id, rule_config_id, group_name, rule_set_id, sort_order, enabled, created_at, updated_at) VALUES (?, ?, 'CN', ?, 0, 1, ?, ?)").bind(crypto.randomUUID(), config.id, chinaRuleSetId, now, now).run();
     }
   }
 }
@@ -405,6 +418,13 @@ export async function ensureRuleSetLibrary() {
     } catch (error) {
       console.error("[rule-sets] all-scheme CN repair retry failed", error);
     }
+  }
+  const bindingScopeMarker = await db.prepare("SELECT id FROM rule_set_migrations WHERE id = ? LIMIT 1").bind(BINDING_SCOPE_MIGRATION_ID).first<{ id: string }>();
+  if (!bindingScopeMarker && chinaRuleSetId) {
+    const now = Date.now();
+    // Restore the protected library switch once; future toggles are per scheme/group.
+    await db.prepare("UPDATE rule_sets SET enabled = 1, updated_at = ? WHERE id = ?").bind(now, chinaRuleSetId).run();
+    await db.prepare("INSERT OR IGNORE INTO rule_set_migrations (id, version, created_at) VALUES (?, 1, ?)").bind(BINDING_SCOPE_MIGRATION_ID, now).run();
   }
   // The initial repair must happen before the one-time library migration so
   // the migration can discover legacy CN references. Run it once more after
