@@ -218,7 +218,32 @@ button,input,select,textarea { max-width:100%; }
 .sourceRow button { min-width:48px; padding:7px 9px; font-size:10px; }
 .sourceRowActions { display:flex; flex:0 0 auto; flex-wrap:wrap; align-items:center; gap:7px; }
 .sourceRowActions button { min-width:48px; }
-.sourceSelectionSummary { color:#2a7b58 !important; }
+.sourceSelectionSummary {
+  display:inline-flex !important;
+  align-items:center;
+  gap:7px;
+  width:fit-content;
+  max-width:100%;
+  margin-top:8px !important;
+  padding:6px 10px;
+  border:1px solid #a9d2ba;
+  border-radius:8px;
+  color:#176943 !important;
+  background:#edf8f1;
+  font-size:10px !important;
+  font-weight:800;
+  line-height:1.35;
+  box-shadow:0 1px 0 #17694312;
+}
+.sourceSelectionSummary::before {
+  content:"";
+  flex:0 0 7px;
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:#238557;
+  box-shadow:0 0 0 3px #23855718;
+}
 .nodePickerModal { width:min(720px,100%); max-height:88vh; overflow:auto; padding:20px; border-radius:17px; background:#fff; box-shadow:0 24px 80px #0005; }
 .nodePickerModal header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:16px; }
 .nodePickerModal header h2 { margin:0; color:#314139; font-size:18px; }
