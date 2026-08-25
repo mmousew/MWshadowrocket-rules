@@ -1061,10 +1061,18 @@ function expandShadowrocketIncludeAllGroups(config: string, proxyNames: string[]
 
     const left = raw.slice(0, separator).trim();
     const values = raw.slice(separator + 1).split(",").map((item) => item.trim()).filter(Boolean);
-    if (!values.some((item) => item.trim().toLowerCase() === "include-all-proxies=true")) return raw;
-
     const kind = values[0] || "select";
+    const includeAll = values.some((item) => item.trim().toLowerCase() === "include-all-proxies=true");
     const regex = findOption(values, "policy-regex-filter");
+    // `url-test`/`fallback` groups understand policy-regex-filter themselves,
+    // so keep that dynamic behaviour. A select group is different: in
+    // Shadowrocket, policy-regex-filter filters the select group's members
+    // (such as `Proxies` and `DIRECT`), not the actual airport nodes. Expand
+    // keyword-filtered select groups to concrete node names so the selected
+    // keywords really take effect while keeping helper groups available.
+    const expandKeywordSelect = !includeAll && Boolean(regex) && /^select$/i.test(kind);
+    if (!includeAll && !expandKeywordSelect) return raw;
+
     let matched = allNames;
     if (regex) {
       try {

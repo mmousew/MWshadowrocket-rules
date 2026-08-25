@@ -204,6 +204,37 @@ test("Shadowrocket preserves automatic and failover group types", () => {
   assert.doesNotMatch(config, /^Balance = .*DIRECT/m);
 });
 
+test("Shadowrocket expands keyword-filtered select groups against actual airport nodes", () => {
+  const scheme = `
+[Proxy Group]
+Proxies = select,自动选择,policy-regex-filter=英国,DIRECT
+自动选择 = url-test,policy-regex-filter=英国,url=https://www.gstatic.com/generate_204,interval=300
+
+[Rule]
+FINAL,Proxies
+`;
+  const keywordAirport = `
+proxies:
+  - name: 英国节点 1
+    type: ss
+    server: uk.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: test-uk
+  - name: 美国节点 1
+    type: ss
+    server: us.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: test-us
+`;
+  const config = buildShadowrocketConfig(scheme, keywordAirport);
+  assert.match(config, /^Proxies = select,自动选择,英国节点 1,DIRECT$/m);
+  assert.doesNotMatch(config, /^Proxies = .*policy-regex-filter=/m);
+  assert.match(config, /^自动选择 = url-test,policy-regex-filter=英国,/m);
+  assert.doesNotMatch(config, /美国节点 1,DIRECT$/m);
+});
+
 test("Shadowrocket embeds the subscription remark as the config name", () => {
   const config = buildShadowrocketConfig(rules, airport, {}, "MWPRO", "耗子专用");
   assert.match(config, /^#!name=耗子专用$/m);
